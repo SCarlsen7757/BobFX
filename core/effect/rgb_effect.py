@@ -2,7 +2,7 @@
 
 from typing import Callable, Iterator, Dict
 from enum import Enum
-from . import off, rainbow, solid
+from . import off, rainbow, solid, bob_fx
 
 
 class RGBEffect(Enum):
@@ -17,7 +17,7 @@ class RGBEffect(Enum):
     # RANDOM_COLOR = "random_color"
     # STROBE = "strobe"
     # BREATHING = "breathing"
-    # BOBFX = "bob_fx"
+    BOBFX = "bob_fx"
     OFF = "off"
 
 
@@ -43,7 +43,7 @@ class RGBEffectController:
             # RGBEffect.RANDOM_COLOR: "Random Color",
             # RGBEffect.STROBE: "Strobe",
             # RGBEffect.BREATHING: "Breathing",
-            # RGBEffect.BOBFX: "Bob FX",
+            RGBEffect.BOBFX: bob_fx.update,
             RGBEffect.OFF: off.update,
         }
 

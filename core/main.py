@@ -36,6 +36,7 @@ async def lifespan(api: FastAPI):
     api.state.colors: list[str] = []  # type: ignore
 
     api.state.rgb_effect_controller: RGBEffectController = RGBEffectController(number_of_leds=256)  # type: ignore
+    api.state.colors = None
 
     api.state.ws_led_clients: set[WebSocket] = set()  # type: ignore
 
@@ -144,6 +145,8 @@ async def websocket_led_endpoint(websocket: WebSocket):
     """WebSocket endpoint to stream LED color data for animation"""
     await websocket.accept()
     app.state.ws_led_clients.add(websocket)
+    if app.state.colors is not None:
+        await websocket.send_json(app.state.colors)  # type: ignore
     while not app.state.shutdown:
         try:
             await asyncio.sleep(1)
@@ -193,15 +196,15 @@ async def cyclic_led_task():
     """Cyclic task to manage LED"""
     while not app.state.shutdown:
         # Implement LED logic
-        colors, update = app.state.rgb_effect_controller.update()
+        app.state.colors, update = app.state.rgb_effect_controller.update()
         if update:
             if app.state.led_controller:
-                app.state.led_controller.update(colors)
+                app.state.led_controller.update(app.state.colors)
 
             # Broadcast to all connected web socket clients
             for ws in set(app.state.ws_led_clients):
                 try:
-                    await ws.send_json(colors)
+                    await ws.send_json(app.state.colors)
                 except WebSocketDisconnect:
                     app.state.ws_led_clients.remove(ws)
 
