@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from .led_controller import IS_WS2812B_COMPATIBLE, LEDController
 from .effect.rgb_effect import RGBEffectController
+from .effect.utility import ConvertTuplesRGBToTupleHex
 
 
 UDP_IP: str = "255.255.255.255"  # broadcast, or use fixed IPs
@@ -204,7 +205,8 @@ async def cyclic_led_task():
             # Broadcast to all connected web socket clients
             for ws in set(app.state.ws_led_clients):
                 try:
-                    await ws.send_json(app.state.colors)
+
+                    await ws.send_json(ConvertTuplesRGBToTupleHex(app.state.colors))
                 except WebSocketDisconnect:
                     app.state.ws_led_clients.remove(ws)
 

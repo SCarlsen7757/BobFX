@@ -1,19 +1,29 @@
-from typing import List, Iterator
+from typing import Iterator
+from .utility import ConvertHexStringToTupleRGB
 
 
 def update(
-    number_of_leds: int = 0, color: str = "#FF0000"
-) -> Iterator[tuple[tuple[str], bool]]:
+    number_of_leds: int = 0,
+    color: tuple[int, int, int] = ConvertHexStringToTupleRGB("#FF0000"),
+) -> Iterator[tuple[tuple[tuple[int, int, int], ...], bool]]:
     """Solid effect (all LEDs the same color)"""
-    matrix = render_text_5x7("BobFX", width=32, height=8, fg="#00FFD5", bg="#FF0000")
-    leds: List[str] = matrix_to_strip(matrix)
+    matrix = render_text_5x7(
+        "BobFX",
+        width=32,
+        height=8,
+        fg=ConvertHexStringToTupleRGB("#00FFD5"),
+        bg=ConvertHexStringToTupleRGB("#FF0000"),
+    )
+    leds: tuple[tuple[int, int, int]] = matrix_to_strip(matrix)
     step: int = 0
     while True:
-        color = (yield tuple(leds), True)  # type: ignore
+        _ = (yield tuple(leds), True)  # type: ignore
         step += 1
 
 
-def matrix_to_strip(matrix: List[List[str]]) -> List[str]:
+def matrix_to_strip(
+    matrix: list[list[tuple[int, int, int]]],
+) -> tuple[tuple[int, int, int]]:
     """Convert 2D matrix into 1D LED strip array"""
     height = len(matrix)
     width = len(matrix[0])
@@ -81,8 +91,12 @@ FONT_5x7 = {
 
 
 def render_text_5x7(
-    text: str, width: int = 32, height: int = 8, fg="#00FFD5", bg="#FF0000"
-) -> List[List[str]]:
+    text: str,
+    width: int = 32,
+    height: int = 8,
+    fg: tuple[int, int, int] = ConvertHexStringToTupleRGB("#00FFD5"),
+    bg: tuple[int, int, int] = ConvertHexStringToTupleRGB("#FF0000"),
+) -> list[list[tuple[int, int, int]]]:
     """Render text into 2D LED matrix using 5x7 font"""
     matrix = [[bg for _ in range(width)] for _ in range(height)]
 

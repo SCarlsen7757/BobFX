@@ -19,7 +19,7 @@ class LEDController:
             self.strip = PixelStrip(led_count, led_gpio)
             self.strip.begin()
 
-    async def update(self, colors: List[str]):
+    async def update(self, colors: tuple[tuple[int, int, int], ...]):
         """
         Update LED strip with a list of colors (hex strings, e.g. "#FF0000").
         """
@@ -28,8 +28,8 @@ class LEDController:
 
         # Convert hex to RGB
         for i, color in enumerate(colors):
-            r = int(color[1:3], 16)
-            g = int(color[3:5], 16)
-            b = int(color[5:7], 16)
+            r = colors[0]
+            g = colors[1]
+            b = colors[2]
             self.strip.setPixelColor(i, Color(r, g, b))
         self.strip.show()

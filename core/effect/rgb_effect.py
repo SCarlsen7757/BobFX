@@ -3,6 +3,7 @@
 from typing import Callable, Iterator, Dict
 from enum import Enum
 from . import off, rainbow, solid, bob_fx
+from .utility import ConvertHexStringToTupleRGB
 
 
 class RGBEffect(Enum):
@@ -22,7 +23,9 @@ class RGBEffect(Enum):
 
 
 # Define type alias for effect functions
-EffectFn = Callable[[int, str], Iterator[tuple[tuple[str], bool]]]
+EffectFn = Callable[
+    [int, tuple[int, int, int]], Iterator[tuple[tuple[tuple[int, int, int], ...], bool]]
+]
 
 
 class RGBEffectController:
@@ -31,7 +34,9 @@ class RGBEffectController:
     def __init__(self, number_of_leds: int) -> None:
         self.current_effect: RGBEffect = RGBEffect.RAINBOW
         self.number_of_leds: int = number_of_leds
-        self.color: str = "#FF0000"  # Default color (not used in all effects)
+        self.color: tuple[int, int, int] = ConvertHexStringToTupleRGB(
+            "#FF0000"
+        )  # Default color (not used in all effects)
 
         self.effects: Dict[RGBEffect, EffectFn] = {
             RGBEffect.SOLID: solid.update,
@@ -47,7 +52,9 @@ class RGBEffectController:
             RGBEffect.OFF: off.update,
         }
 
-        self._generator: Iterator[tuple[tuple[str], bool]] | None = None
+        self._generator: (
+            Iterator[tuple[tuple[tuple[int, int, int], ...], bool]] | None
+        ) = None
         self.set_effect(self.current_effect)
 
     def set_effect(self, effect: RGBEffect) -> None:
@@ -60,7 +67,7 @@ class RGBEffectController:
 
     def set_color(self, color: str) -> None:
         """Set the color for the current effect"""
-        self.color = color
+        self.color = ConvertHexStringToTupleRGB(color)
 
     def next_effect(self):
         """Cycle to the next effect"""
@@ -76,12 +83,14 @@ class RGBEffectController:
         previous_index = (current_index - 1) % len(effects)
         self.set_effect(effects[previous_index])
 
-    def update(self) -> tuple[tuple[str], bool]:
+    def update(self) -> tuple[tuple[tuple[int, int, int], ...], bool]:
         """Get next frame (list of colors) from current effect"""
         if self._generator is None:
             return tuple(), True  # type: ignore
         try:
-            colors = self._generator.send(self.color)
+            colors: tuple[tuple[tuple[int, int, int], ...], bool] = (
+                self._generator.send(self.color)
+            )
             return colors
         except StopIteration:
             # If generator ends, restart it
