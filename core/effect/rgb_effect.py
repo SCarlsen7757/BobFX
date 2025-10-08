@@ -2,7 +2,7 @@
 
 from typing import Callable, Iterator, Dict
 from enum import Enum
-from . import off, rainbow, solid, bob_fx
+from . import off, rainbow, solid, bob_fx, strobe, breathing, random_color, scanner
 from .utility import ConvertHexStringToTupleRGB
 
 
@@ -13,11 +13,11 @@ class RGBEffect(Enum):
     RAINBOW = "rainbow"
     # THEATER_CHASE = "theater_chase"
     # COLOR_WIPE = "color_wipe"
-    # SCANNER = "scanner"
+    SCANNER = "scanner"
     # FADE = "fade"
-    # RANDOM_COLOR = "random_color"
-    # STROBE = "strobe"
-    # BREATHING = "breathing"
+    RANDOM_COLOR = "random_color"
+    STROBE = "strobe"
+    BREATHING = "breathing"
     BOBFX = "bob_fx"
     OFF = "off"
 
@@ -43,11 +43,11 @@ class RGBEffectController:
             RGBEffect.RAINBOW: rainbow.update,
             # RGBEffect.THEATER_CHASE: "Theater Chase",
             # RGBEffect.COLOR_WIPE: "Color Wipe",
-            # RGBEffect.SCANNER: "Scanner",
+            RGBEffect.SCANNER: scanner.update,
             # RGBEffect.FADE: "Fade",
-            # RGBEffect.RANDOM_COLOR: "Random Color",
-            # RGBEffect.STROBE: "Strobe",
-            # RGBEffect.BREATHING: "Breathing",
+            RGBEffect.RANDOM_COLOR: random_color.update,
+            RGBEffect.STROBE: strobe.update,
+            RGBEffect.BREATHING: breathing.update,
             RGBEffect.BOBFX: bob_fx.update,
             RGBEffect.OFF: off.update,
         }
