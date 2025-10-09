@@ -1,4 +1,4 @@
-"""Main FastAPI app for countdown timer with UDP broadcast to ESP32 devices."""
+"""Main FastAPI app for countdown timer with UDP WLED broadcast to ESP32 devices."""
 
 import time
 import asyncio
@@ -9,13 +9,13 @@ from fastapi import FastAPI, Request, WebSocket, Body, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from .udp_client import UdpClient
-from .sound_player import SoundPlayer
-from .effect.rgb_effect import RGBEffectController, RGBEffect
-from .effect.utility import ConvertTuplesRGBToTupleHex
+from udp_client import UdpClient
+from sound_player import SoundPlayer
+from effect.rgb_effect import RGBEffectController, RGBEffect
+from effect.utility import ConvertTuplesRGBToTupleHex
 
 UDP_IP: str = "255.255.255.255"  # broadcast, or use fixed IPs
-UDP_PORT: int = 4210
+UDP_PORT: int = 21324
 UDP_SEND: bool = False  # Set to True to enable UDP sending
 
 
@@ -25,17 +25,17 @@ async def lifespan(api: FastAPI):
     # Setup phase
     api.state.shutdown = False
     # Web setup
-    api.mount("/static", StaticFiles(directory="core/static"), name="static")
-    api.state.templates = Jinja2Templates(directory="core/templates")
+    api.mount("/static", StaticFiles(directory="static"), name="static")
+    api.state.templates = Jinja2Templates(directory="templates")
 
     api.state.end_time = 0.0
     api.state.running = False
-    api.state.colors: list[str] = []  # type: ignore
+    api.state.colors = []
 
-    api.state.rgb_effect_controller: RGBEffectController = RGBEffectController(number_of_leds=256)  # type: ignore
+    api.state.rgb_effect_controller = RGBEffectController(number_of_leds=256)
     api.state.colors = None
 
-    api.state.ws_led_clients: set[WebSocket] = set()  # type: ignore
+    api.state.ws_led_clients = set()
 
     # UDP setup (broadcast to ESP32s)
     udp_socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -46,21 +46,19 @@ async def lifespan(api: FastAPI):
     sound_dir = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "static", "sound")
     )
-    api.state.sound_player = SoundPlayer(sound_dir)  # type: ignore
+    api.state.sound_player = SoundPlayer(sound_dir)
 
     countdown_task = asyncio.create_task(cyclic_countdown_task())
-    upd_task = asyncio.create_task(cyclic_udp_task())
     led_task = asyncio.create_task(cyclic_led_task())
     yield
     # Shutdown phase
     api.state.shutdown = True
 
     countdown_task.cancel()
-    upd_task.cancel()
     led_task.cancel()
 
     try:
-        await asyncio.gather(countdown_task, upd_task, led_task)
+        await asyncio.gather(countdown_task, led_task)
     except asyncio.CancelledError:
         pass
 
@@ -81,15 +79,14 @@ async def home(request: Request):
 @app.get("/favicon.ico")
 async def favicon():
     """Serve favicon"""
-    return FileResponse("core/static/favicon.ico")
+    return FileResponse("static/favicon.ico")
 
 
 @app.post("/countdown/start")
 async def start_countdown(minutes: int = Body(..., embed=True)):
     """Start a countdown for given minutes"""
 
-    await starting_sequence()
-    app.state.end_time = time.time() + (minutes * 60)
+    await starting_sequence(minutes)
 
     app.state.sound_player.play_current_sound()
     return {"status": "started"}
@@ -152,7 +149,7 @@ async def websocket_led_endpoint(websocket: WebSocket):
     await websocket.accept()
     app.state.ws_led_clients.add(websocket)
     if app.state.colors is not None:
-        await websocket.send_json(app.state.colors)  # type: ignore
+        await websocket.send_json(app.state.colors)
     while not app.state.shutdown:
         try:
             await asyncio.sleep(1)
@@ -160,7 +157,7 @@ async def websocket_led_endpoint(websocket: WebSocket):
             app.state.ws_led_clients.remove(websocket)
 
 
-async def starting_sequence():
+async def starting_sequence(minutes: int):
     """A simple starting sequence for the LEDs"""
     app.state.rgb_effect_controller.set_color("#0000FF")
     app.state.rgb_effect_controller.set_effect(RGBEffect.SCANNER)
@@ -170,6 +167,7 @@ async def starting_sequence():
     app.state.rgb_effect_controller.set_color("#00FF00")
     app.state.rgb_effect_controller.set_effect(RGBEffect.STROBE)
     app.state.running = True
+    app.state.end_time = time.time() + (minutes * 60)
 
     await asyncio.sleep(2)
 
@@ -203,21 +201,10 @@ async def cyclic_countdown_task():
                 app.state.running = False
 
 
-async def cyclic_udp_task():
-    """Cyclic task to manage UDP"""
-    while UDP_SEND and not app.state.shutdown:
-        await asyncio.sleep(1)
-        # Broadcast status over UDP
-
-        seconds_left: int = remaining_time()
-        msg: str = str(seconds_left > 0)
-        app.state.udp_socket.sendto(msg.encode(), (UDP_IP, UDP_PORT))
-
-
 async def cyclic_led_task():
     """Cyclic task to manage LED"""
 
-    udp_client: UdpClient = UdpClient("192.168.137.255", 21324)
+    udp_client: UdpClient = UdpClient(UDP_IP, UDP_PORT)
     udp_client.EnableBroadCastMode()
 
     while not app.state.shutdown:

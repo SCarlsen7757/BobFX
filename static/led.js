@@ -8,6 +8,7 @@ function connectLedWs() {
         setTimeout(connectLedWs, 1000); // reconnect
     };
 }
+
 connectLedWs();
 
 function renderLeds(colors, containerId) {

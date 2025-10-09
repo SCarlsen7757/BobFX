@@ -4,6 +4,7 @@
         "colormath",
         "DGRAM",
         "fastapi",
-        "pygame"
+        "pygame",
+        "WLED"
     ]
 }

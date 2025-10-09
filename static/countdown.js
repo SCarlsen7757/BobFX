@@ -8,6 +8,7 @@ function connectCountdownWs() {
         setTimeout(connectCountdownWs, 1000); // reconnect
     };
 }
+
 connectCountdownWs();
 
 async function startCountdown(minutes  = 1) {

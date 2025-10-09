@@ -7,7 +7,7 @@
             "request": "launch",
             "module": "uvicorn",
             "args": [
-                "core.main:app",
+                "main:app",
                 "--reload",
                 "--host",
                 "0.0.0.0",
@@ -22,7 +22,7 @@
             "request": "launch",
             "module": "uvicorn",
             "args": [
-                "core.main:app",
+                "main:app",
                 "--reload",
                 "--port",
                 "8000"
