@@ -3,15 +3,16 @@
 import time
 import asyncio
 import socket
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, Body, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from .led_controller import IS_WS2812B_COMPATIBLE, LEDController
-from .effect.rgb_effect import RGBEffectController
+from .udp_client import UdpClient
+from .sound_player import SoundPlayer
+from .effect.rgb_effect import RGBEffectController, RGBEffect
 from .effect.utility import ConvertTuplesRGBToTupleHex
-
 
 UDP_IP: str = "255.255.255.255"  # broadcast, or use fixed IPs
 UDP_PORT: int = 4210
@@ -27,11 +28,6 @@ async def lifespan(api: FastAPI):
     api.mount("/static", StaticFiles(directory="core/static"), name="static")
     api.state.templates = Jinja2Templates(directory="core/templates")
 
-    if IS_WS2812B_COMPATIBLE:
-        api.state.led_controller = LEDController()
-    else:
-        api.state.led_controller = None
-
     api.state.end_time = 0.0
     api.state.running = False
     api.state.colors: list[str] = []  # type: ignore
@@ -45,6 +41,12 @@ async def lifespan(api: FastAPI):
     udp_socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     api.state.udp_socket = udp_socket
+
+    # Sound setup
+    sound_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "static", "sound")
+    )
+    api.state.sound_player = SoundPlayer(sound_dir)  # type: ignore
 
     countdown_task = asyncio.create_task(cyclic_countdown_task())
     upd_task = asyncio.create_task(cyclic_udp_task())
@@ -85,8 +87,11 @@ async def favicon():
 @app.post("/countdown/start")
 async def start_countdown(minutes: int = Body(..., embed=True)):
     """Start a countdown for given minutes"""
+
+    await starting_sequence()
     app.state.end_time = time.time() + (minutes * 60)
-    app.state.running = True
+
+    app.state.sound_player.play_current_sound()
     return {"status": "started"}
 
 
@@ -155,6 +160,22 @@ async def websocket_led_endpoint(websocket: WebSocket):
             app.state.ws_led_clients.remove(websocket)
 
 
+async def starting_sequence():
+    """A simple starting sequence for the LEDs"""
+    app.state.rgb_effect_controller.set_color("#0000FF")
+    app.state.rgb_effect_controller.set_effect(RGBEffect.SCANNER)
+
+    await asyncio.sleep(5)
+
+    app.state.rgb_effect_controller.set_color("#00FF00")
+    app.state.rgb_effect_controller.set_effect(RGBEffect.STROBE)
+    app.state.running = True
+
+    await asyncio.sleep(2)
+
+    app.state.rgb_effect_controller.set_effect(RGBEffect.BREATHING)
+
+
 # ---------------- Helpers ----------------
 def remaining_time() -> int:
     """Seconds left until countdown finishes"""
@@ -195,13 +216,14 @@ async def cyclic_udp_task():
 
 async def cyclic_led_task():
     """Cyclic task to manage LED"""
+
+    udp_client: UdpClient = UdpClient("192.168.137.255", 21324)
+    udp_client.EnableBroadCastMode()
+
     while not app.state.shutdown:
         # Implement LED logic
         app.state.colors, update = app.state.rgb_effect_controller.update()
         if update:
-            if app.state.led_controller:
-                app.state.led_controller.update(app.state.colors)
-
             # Broadcast to all connected web socket clients
             for ws in set(app.state.ws_led_clients):
                 try:
@@ -210,4 +232,14 @@ async def cyclic_led_task():
                 except WebSocketDisconnect:
                     app.state.ws_led_clients.remove(ws)
 
+            # Send to UDP
+            flat_bytes = bytearray([2, 2])  # Header for RGB [Mode, Timeout]
+
+            for r, g, b in app.state.colors:
+                flat_bytes.extend((r, g, b))
+
+            udp_client.SendData(flat_bytes)
+
         await asyncio.sleep(0.05)
+
+    udp_client.socket.close()

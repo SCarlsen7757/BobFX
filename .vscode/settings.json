@@ -3,6 +3,7 @@
         "BOBFX",
         "colormath",
         "DGRAM",
-        "fastapi"
+        "fastapi",
+        "pygame"
     ]
 }

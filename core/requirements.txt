@@ -1,3 +1,2 @@
 "fastapi[standard-no-fastapi-cloud-cli]"
-# only needed when running on RPi
-rpi_ws281x; sys_platform == "linux"
+pygame
