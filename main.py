@@ -2,7 +2,6 @@
 
 import time
 import asyncio
-import socket
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, Body, WebSocketDisconnect
@@ -13,10 +12,7 @@ from udp_client import UdpClient
 from sound_player import SoundPlayer
 from effect.rgb_effect import RGBEffectController, RGBEffect
 from effect.utility import ConvertTuplesRGBToTupleHex
-
-UDP_IP: str = "255.255.255.255"  # broadcast, or use fixed IPs
-UDP_PORT: int = 21324
-UDP_SEND: bool = False  # Set to True to enable UDP sending
+import settings
 
 
 @asynccontextmanager
@@ -30,17 +26,17 @@ async def lifespan(api: FastAPI):
 
     api.state.end_time = 0.0
     api.state.running = False
-    api.state.colors = []
+    api.state.colors = tuple[(255, 255, 255)]
 
-    api.state.rgb_effect_controller = RGBEffectController(number_of_leds=256)
-    api.state.colors = None
+    api.state.rgb_effect_controller = RGBEffectController(
+        number_of_leds=settings.NUMBER_OF_LEDS
+    )
 
     api.state.ws_led_clients = set()
 
-    # UDP setup (broadcast to ESP32s)
-    udp_socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    api.state.udp_socket = udp_socket
+    udp_client: UdpClient = UdpClient(settings.UDP_IP, settings.UDP_PORT)
+    udp_client.enable_broad_cast_mode()
+    api.state.udp_client = udp_client
 
     # Sound setup
     sound_dir = os.path.abspath(
@@ -62,7 +58,7 @@ async def lifespan(api: FastAPI):
     except asyncio.CancelledError:
         pass
 
-    udp_socket.close()
+    api.state.udp_client.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -204,9 +200,6 @@ async def cyclic_countdown_task():
 async def cyclic_led_task():
     """Cyclic task to manage LED"""
 
-    udp_client: UdpClient = UdpClient(UDP_IP, UDP_PORT)
-    udp_client.EnableBroadCastMode()
-
     while not app.state.shutdown:
         # Implement LED logic
         app.state.colors, update = app.state.rgb_effect_controller.update()
@@ -214,19 +207,20 @@ async def cyclic_led_task():
             # Broadcast to all connected web socket clients
             for ws in set(app.state.ws_led_clients):
                 try:
-
                     await ws.send_json(ConvertTuplesRGBToTupleHex(app.state.colors))
                 except WebSocketDisconnect:
                     app.state.ws_led_clients.remove(ws)
 
-            # Send to UDP
-            flat_bytes = bytearray([2, 2])  # Header for RGB [Mode, Timeout]
-
-            for r, g, b in app.state.colors:
-                flat_bytes.extend((r, g, b))
-
-            udp_client.SendData(flat_bytes)
+            if settings.UDP_SEND:
+                await send_led_data(app.state.colors)
 
         await asyncio.sleep(0.05)
 
-    udp_client.socket.close()
+
+async def send_led_data(colors: tuple[tuple[int, int, int], ...]) -> None:
+    """Send LED data via UDP"""
+    packet = bytearray([2, 2])  # Header for RGB [Mode, Timeout]
+    for r, g, b in colors:
+        packet.extend((r, g, b))
+
+    app.state.udp_client.send_data(packet)
