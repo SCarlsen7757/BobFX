@@ -1,0 +1,57 @@
+﻿@page "/countdown"
+@using BobFx.Core.Services
+@inject CountdownService CountdownService
+
+<PageTitle>Countdown</PageTitle>
+
+<h1>Countdown Timer</h1>
+
+<div class="countdown-display">
+    <h1>@timeRemaining</h1>
+</div>
+
+<div style="margin-top:10px;">
+    <label>Minutes: </label>
+    <input type="number" @bind="minutes" min="0" style="width:60px;" />
+    <label>Seconds: </label>
+    <input type="number" @bind="seconds" min="0" max="59" style="width:60px;" />
+</div>
+
+<div style="margin-top:10px;">
+    <button @onclick="StartCountdown" disabled="@CountdownService.IsRunning">Start</button>
+    <button @onclick="StopCountdown" disabled="@(CountdownService.IsRunning == false)">Stop</button>
+</div>
+
+@code {
+    private int minutes = 15;
+    private int seconds = 0;
+    private string timeRemaining = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        CountdownService.OnTick += OnTick;
+        timeRemaining = CountdownService.Remaining.ToString(@"hh\:mm\:ss");
+    }
+
+    private void OnTick()
+    {
+        timeRemaining = CountdownService.Remaining.ToString(@"hh\:mm\:ss");
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void StartCountdown()
+    {
+        var duration = new TimeSpan(0, minutes, seconds);
+        CountdownService.Start(duration);
+    }
+
+    private void StopCountdown()
+    {
+        CountdownService.Stop();
+    }
+
+    public void Dispose()
+    {
+        CountdownService.OnTick -= OnTick;
+    }
+}

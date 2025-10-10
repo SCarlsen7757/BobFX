@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36518.9 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BobFx.Core", "BobFx.Core\BobFx.Core.csproj", "{47A3BE62-0E92-4295-9EBE-63A3C05188BD}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{47A3BE62-0E92-4295-9EBE-63A3C05188BD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{47A3BE62-0E92-4295-9EBE-63A3C05188BD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{47A3BE62-0E92-4295-9EBE-63A3C05188BD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{47A3BE62-0E92-4295-9EBE-63A3C05188BD}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {72B4F600-31A0-4A4E-8E38-EFC9EAE144BD}
+	EndGlobalSection
+EndGlobal

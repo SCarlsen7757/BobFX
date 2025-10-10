@@ -1,0 +1,94 @@
+﻿@page "/drgb"
+@using BobFx.Core.Services
+@inject BobFx.Core.Services.DRgbService LedService
+
+<h3>DRGB LED Controller</h3>
+
+<p>Current effect: <b>@currentEffect</b></p>
+<p>Speed: <b>@LedService.Speed.TotalMilliseconds</b> ms</p>
+
+<select @bind="selectedEffect">
+    @foreach (var effect in Enum.GetValues<BobFx.Core.Services.RgbEffect>())
+    {
+        <option value="@effect">@effect</option>
+    }
+</select>
+
+<input type="number" @bind="SpeedMs" min="10" max="500" /> ms
+
+<input type="number" @bind="LedCount" min="1" max="300" /> LEDs
+
+<div>
+    <button @onclick="StartEffect">Start</button>
+    <button @onclick="StopEffect">Stop</button>
+</div>
+
+<div class="led-preview" style="display:flex;gap:2px;margin-top:10px;">
+    @foreach (var led in LedService.Leds)
+    {
+        <div style="width:10px;height:20px;background:@ToCssColor(led);"></div>
+    }
+</div>
+
+@code {
+    private RgbEffect selectedEffect = RgbEffect.Rainbow;
+    private RgbEffect currentEffect =RgbEffect.Off;
+
+    private int speedMs = 100;
+    public int SpeedMs {
+        get => speedMs; 
+        set
+        {
+            if (speedMs == value) return;
+            speedMs = value;
+            LedService.SetSpeed(TimeSpan.FromMilliseconds(value));
+        }
+    }
+
+    private int ledCount = 30;
+    public int LedCount
+    {
+        get => ledCount;
+        set
+        {
+            if (ledCount == value) return;
+            ledCount = value;
+            LedService.SetLedCount(value);
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        LedService.OnUpdate += UpdateLed;
+    }
+
+    private void UpdateLed()
+    {
+        currentEffect = LedService.CurrentEffect;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task StartEffect()
+    {
+        await LedService.StartEffectAsync(selectedEffect, TimeSpan.FromMilliseconds(SpeedMs));
+    }
+
+    private void StopEffect()
+    {
+
+        LedService.StopEffect();
+    }
+
+    private string ToCssColor(System.Numerics.Vector3 rgb)
+    {
+        int r = (int)(Math.Clamp(rgb.X, 0, 1) * 255);
+        int g = (int)(Math.Clamp(rgb.Y, 0, 1) * 255);
+        int b = (int)(Math.Clamp(rgb.Z, 0, 1) * 255);
+        return $"rgb({r},{g},{b})";
+    }
+
+    public void Dispose()
+    {
+        LedService.OnUpdate -= UpdateLed;
+    }
+}
