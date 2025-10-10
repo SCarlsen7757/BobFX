@@ -18,26 +18,25 @@
     </div>
 
     <!-- Buttons -->
-    <div>
+     <div>
         <h2>Controls</h2>
-        <button type="button" onclick="startCountdown(document.getElementById('duration').value || 1);">Start</button>
-        <button type="button" onclick="stopCountdown();">Stop</button>
-    </div>
-
-    <div>
-        <h2>LED Control</h2>
-        <button type="button" onclick="nextEffect();">Next Effect</button>
-        <button type="button" onclick="prevEffect();">Previous Effect</button>
-    </div>
-
-    <div>
-        <input type="color" id="colorPicker" value="#ff0000">
-        <button onclick="sendColor()">Set Color</button>
+        <div class="control-buttons-group">
+            <button type="button" onclick="startCountdown(document.getElementById('duration').value || 1);">Start</button>
+            <button type="button" onclick="stopCountdown();">Stop</button>
+        </div>
     </div>
     
-    <div id="led-strip" style="margin-top: 20px;"></div>
+    <div>
+        <button type="button" onclick="window.location.href='/test/led'">LED Test</button>
+    </div>
     
+
     <script src="/static/countdown.js"></script>
-    <script src="/static/led.js"></script>
+
+    <script>
+        function toLedTestPage(){
+
+        }
+    </script>
 </body>
 </html>

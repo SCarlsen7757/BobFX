@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>BobFX Countdown</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h1>BobFX LED test page</h1>
+
+    <!-- Buttons -->
+     <div>
+        <h2>Controls</h2>
+        <div class="control-buttons-group">
+            <button type="button" onclick="startCountdown(document.getElementById('duration').value || 1);">Start</button>
+            <button type="button" onclick="stopCountdown();">Stop</button>
+        </div>
+    </div>
+
+    <div>
+        <h2>LED Control</h2>
+        <div class="control-buttons-group">
+            <button type="button" onclick="nextEffect();">Next Effect</button>
+            <button type="button" onclick="prevEffect();">Previous Effect</button>
+        </div>
+    </div>
+    
+    <div id="led-strip" style="margin-top: 20px;"></div>
+    
+    <script src="/static/led.js"></script>
+</body>
+</html>

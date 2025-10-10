@@ -72,6 +72,12 @@ async def home(request: Request):
     )
 
 
+@app.get("/test/led", response_class=HTMLResponse)
+async def test_led(request: Request):
+    """Serve the LED test page"""
+    return app.state.templates.TemplateResponse("led_test.html", {"request": request})
+
+
 @app.get("/favicon.ico")
 async def favicon():
     """Serve favicon"""
