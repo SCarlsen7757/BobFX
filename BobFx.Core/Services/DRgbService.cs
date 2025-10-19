@@ -263,5 +263,13 @@ namespace BobFx.Core.Services
             // Normalize to 0..1
             return new Vector3(r / 255f, g / 255f, b / 255f);
         }
+
+        public static string RgbToHex(Vector3 color)
+        {
+            int r = (int)(Math.Clamp(color.X, 0f, 1f) * 255);
+            int g = (int)(Math.Clamp(color.Y, 0f, 1f) * 255);
+            int b = (int)(Math.Clamp(color.Z, 0f, 1f) * 255);
+            return $"#{r:X2}{g:X2}{b:X2}";
+        }
     }
 }

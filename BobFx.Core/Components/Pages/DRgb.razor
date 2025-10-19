@@ -18,6 +18,8 @@
 
 <input type="number" @bind="LedCount" min="1" max="300" /> LEDs
 
+<input type="color"
+
 <div>
     <button @onclick="StartEffect">Start</button>
     <button @onclick="StopEffect">Stop</button>
@@ -57,8 +59,32 @@
         }
     }
 
+    private string primaryColor = string.Empty;
+    public string PrimaryColor { 
+        get => primaryColor;
+        set
+        {
+            if (value == primaryColor) return;
+            primaryColor = value;
+            LedService.SetPrimaryColor(value);
+        }
+    }
+
+    private string secondaryColor = string.Empty;
+    public string SecondaryColor { 
+        get => secondaryColor;
+        set
+        {
+            if (value == secondaryColor) return;
+            secondaryColor = value;
+            LedService.SetSecondaryColor(value);
+        }
+    }
+
     protected override void OnInitialized()
     {
+        primaryColor = DRgbService.RgbToHex(LedService.PrimaryColor);
+        secondaryColor = DRgbService.RgbToHex(LedService.SecondaryColor);
         LedService.OnUpdate += UpdateLed;
     }
 
