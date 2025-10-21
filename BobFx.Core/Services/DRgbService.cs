@@ -228,6 +228,25 @@ namespace BobFx.Core.Services
             return data;
         }
 
+        // Non-allocating copy into a provided span. Caller must ensure the span length is at least Leds.Length*3.
+        public void CopyTo(Span<byte> dest)
+        {
+            int required = Leds.Length * 3;
+            if (dest.Length < required)
+                throw new ArgumentException($"Destination span is too small. Required {required} bytes.", nameof(dest));
+
+            lock (@lock)
+            {
+                for (int i = 0; i < Leds.Length; i++)
+                {
+                    int index = i * 3;
+                    dest[index] = (byte)(Math.Clamp(Leds[i].X, 0f, 1f) * 255); // R
+                    dest[index + 1] = (byte)(Math.Clamp(Leds[i].Y, 0f, 1f) * 255); // G
+                    dest[index + 2] = (byte)(Math.Clamp(Leds[i].Z, 0f, 1f) * 255); // B
+                }
+            }
+        }
+
         // --- Helper to convert HSV to RGB ---
         private static Vector3 HsvToRgb(float h, float s, float v)
         {
