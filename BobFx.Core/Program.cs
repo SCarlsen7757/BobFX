@@ -1,6 +1,5 @@
 using BobFx.Core.Components;
 using BobFx.Core.Services;
-using System.Threading.Channels;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -8,35 +7,42 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
+var ledCount = builder.Configuration.GetValue<int?>("LedConfiguration:LedCount") ?? 30;
+var udpTargetAddress = builder.Configuration.GetValue<string?>("UdpConfiguration:TargetAddress") ?? "255.255.255.255";
+var udpTargetPort = builder.Configuration.GetValue<int?>("UdpConfiguration:TargetPort") ?? 21324;
+
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+// Core Services
 builder.Services.AddSingleton<CountdownService>();
+builder.Services.AddSingleton<DRgbService>(sp => new(ledCount));
+
+// UDP Client for WLED communication
 builder.Services.AddSingleton<UdpClientService>(sp => new(
-    "255.255.255.255",
-    21324,
-    sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<UdpClientService>>()
+    udpTargetAddress,
+    udpTargetPort,
+    sp.GetRequiredService<ILogger<UdpClientService>>()
 ));
 
-builder.Services.AddSingleton<DRgbService>(sp => new(30));
+// Logic/Orchestration Layer
+builder.Services.AddSingleton<RgbControlService>();
 
-// Create a bounded channel of frames with capacity 1 and DropOldest policy for coalescing
-builder.Services.AddSingleton(_ =>
-    Channel.CreateBounded<(byte[] Buffer, int Length)>(new BoundedChannelOptions(1)
-    {
-        SingleWriter = true,
-        SingleReader = true,
-        FullMode = BoundedChannelFullMode.DropOldest
-    }));
+// Background service that broadcasts to WLED controllers
+builder.Services.AddHostedService<WledBroadcastService>();
 
-// Producer writes frames to the channel
-builder.Services.AddHostedService<FrameSender>();
-
-// Consumer reads frames from the channel and sends them via UDP
-builder.Services.AddHostedService<ChannelFrameSender>();
+builder.Logging.AddSimpleConsole(options =>
+{
+    options.SingleLine = true;
+    options.ColorBehavior = Microsoft.Extensions.Logging.Console.LoggerColorBehavior.Enabled;
+});
 
 var app = builder.Build();
+
+// Initialize RgbControlService to ensure it subscribes to countdown events
+// This is important because the service needs to be created to wire up event handlers
+_ = app.Services.GetRequiredService<RgbControlService>();
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())

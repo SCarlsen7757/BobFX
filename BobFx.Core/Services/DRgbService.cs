@@ -4,7 +4,7 @@ namespace BobFx.Core.Services
 {
     public class DRgbService
     {
-
+        private readonly ILogger<DRgbService> logger;
         private readonly Lock @lock = new();
         private CancellationTokenSource? cts;
         private RgbEffect currentEffect = RgbEffect.Off;
@@ -24,10 +24,15 @@ namespace BobFx.Core.Services
         public Vector3 PrimaryColor { get; private set; } = new Vector3(1, 0, 0); //Red
         public Vector3 SecondaryColor { get; private set; } = new Vector3(1, 1, 1); //Black
 
-        public DRgbService(int ledCount = 30)
+        public bool IsUdpActive { get; set; } = false;
+
+        public DRgbService(int ledCount = 30, ILogger<DRgbService>? logger = null)
         {
-            this.LedCount = ledCount;
+            this.logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DRgbService>.Instance;
+            LedCount = ledCount;
             Leds = new Vector3[ledCount];
+            this.logger.LogInformation("DRgbService initialized with {LedCount} LEDs", ledCount);
+
         }
 
         public void SetLedCount(int newCount)
@@ -47,12 +52,21 @@ namespace BobFx.Core.Services
                 {
                     Leds[i] = Vector3.Zero;
                 }
+                logger.LogInformation("LED count set to {LedCount}", newCount);
             }
         }
 
-        public void SetPrimaryColor(string color) => PrimaryColor = HexToRgb(color);
+        public void SetPrimaryColor(string color)
+        {
+            PrimaryColor = HexToRgb(color);
+            logger.LogInformation("Primary color set to {Color}", color);
+        }
 
-        public void SetSecondaryColor(string color) => SecondaryColor = HexToRgb(color);
+        public void SetSecondaryColor(string color)
+        {
+            SecondaryColor = HexToRgb(color);
+            logger.LogInformation("Secondary color set to {Color}", color);
+        }
 
         public async Task StartEffectAsync(RgbEffect effect, TimeSpan? speed = null)
         {
@@ -108,6 +122,7 @@ namespace BobFx.Core.Services
 
                 cts = new CancellationTokenSource();
                 effectTask = RunEffectAsync(cts.Token);
+                logger.LogInformation("Started effect {Effect} with speed {Speed}ms", effect, this.speed.TotalMilliseconds);
             }
         }
 
@@ -117,6 +132,7 @@ namespace BobFx.Core.Services
             lock (@lock)
             {
                 StopEffectInternal();
+                logger.LogInformation("Stopped effect");
             }
         }
 
@@ -125,6 +141,7 @@ namespace BobFx.Core.Services
             lock (@lock)
             {
                 this.speed = speed;
+                logger.LogInformation("Effect speed set to {Speed}ms", speed.TotalMilliseconds);
             }
         }
 
@@ -170,6 +187,10 @@ namespace BobFx.Core.Services
                                 direction = 1;
                             break;
 
+                        case RgbEffect.Solid:
+                            ApplySolid();
+                            break;
+
                         case RgbEffect.Off:
                         default:
                             ClearStrip();
@@ -211,6 +232,12 @@ namespace BobFx.Core.Services
             ClearStrip();
             int pos = step % LedCount;
             Leds[pos] = PrimaryColor;
+        }
+
+        private void ApplySolid()
+        {
+            for (int i = 0; i < LedCount; i++)
+                Leds[i] = PrimaryColor;
         }
 
         public byte[] ToByteArray()

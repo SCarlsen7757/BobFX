@@ -1,2 +1,0 @@
-"fastapi[standard-no-fastapi-cloud-cli]"
-pygame

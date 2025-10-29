@@ -5,6 +5,7 @@
         Off,
         Rainbow,
         Strobe,
-        Scanner
+        Scanner,
+        Solid,
     }
 }

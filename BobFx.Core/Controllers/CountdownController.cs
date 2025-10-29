@@ -37,6 +37,13 @@ namespace BobFx.Core.Controllers
                 remainingSeconds = (int)countdown.Remaining.TotalSeconds
             });
         }
+
+        [HttpPost("start-with-pre")]
+        public async Task<IActionResult> StartWithPre([FromQuery] int preSeconds = 5, [FromQuery] int mainSeconds = 10)
+        {
+            await countdown.StartWithPreCountdownAsync(TimeSpan.FromSeconds(preSeconds), TimeSpan.FromSeconds(mainSeconds));
+            return Ok(new { message = $"Pre-countdown {preSeconds}s, then main {mainSeconds}s" });
+        }
     }
 }
 

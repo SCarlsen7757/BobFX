@@ -1,4 +1,6 @@
-﻿namespace BobFx.Core.Services
+﻿using Microsoft.Extensions.Logging;
+
+namespace BobFx.Core.Services
 {
     public class CountdownService
     {
@@ -6,25 +8,27 @@
         private readonly ILogger<CountdownService> logger;
         private CancellationTokenSource? cts;
         private TimeSpan remaining = TimeSpan.Zero;
-        private bool isRunning;
 
         public event Action? OnTick;
         public event Action? OnStartOfEvent;
         public event Action? OnEndOfEvent;
+        public event Action? OnPreCountdown;
 
-        public bool IsRunning => isRunning;
+        public bool IsRunning { get; private set; } = false;
+        public bool IsPreCountdownRunning { get; private set; } = false;
         public TimeSpan Remaining => remaining;
 
         public CountdownService(ILogger<CountdownService> logger)
         {
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            logger.LogInformation("CountdownService initialized");
         }
 
         public void Start(TimeSpan duration)
         {
             lock (@lock)
             {
-                if (isRunning)
+                if (IsRunning)
                 {
                     logger.LogDebug("Countdown Start called but already running");
                     return;
@@ -32,7 +36,7 @@
 
                 remaining = duration;
                 cts = new CancellationTokenSource();
-                isRunning = true;
+                IsRunning = true;
                 logger.LogInformation("Countdown started for {Seconds} seconds", duration.TotalSeconds);
                 OnStartOfEvent?.Invoke();
                 OnTick?.Invoke();
@@ -40,19 +44,30 @@
             }
         }
 
+        public async Task StartWithPreCountdownAsync(TimeSpan preDuration, TimeSpan mainDuration)
+        {
+            IsPreCountdownRunning = true;
+            OnPreCountdown?.Invoke();
+            await Task.Delay(preDuration);
+            IsPreCountdownRunning = false;
+            Start(mainDuration);
+        }
+
         public void Stop()
         {
             lock (@lock)
             {
-                if (!isRunning)
+                if (!IsRunning)
                 {
                     logger.LogDebug("Countdown Stop called but not running");
+                    return;
                 }
 
                 cts?.Cancel();
-                isRunning = false;
+                IsRunning = false;
                 remaining = TimeSpan.Zero;
                 logger.LogInformation("Countdown stopped");
+                OnCountdownEnded();
             }
         }
 
@@ -76,12 +91,20 @@
             {
                 lock (@lock)
                 {
-                    isRunning = false;
+                    IsRunning = false;
                 }
                 OnTick?.Invoke();
                 OnEndOfEvent?.Invoke();
                 logger.LogInformation("Countdown ended");
             }
+        }
+
+        private void OnCountdownStarted()
+        {
+        }
+
+        private void OnCountdownEnded()
+        {
         }
     }
 }

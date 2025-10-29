@@ -18,8 +18,9 @@
 </div>
 
 <div style="margin-top:10px;">
-    <button @onclick="StartCountdown" disabled="@CountdownService.IsRunning">Start</button>
-    <button @onclick="StopCountdown" disabled="@(CountdownService.IsRunning == false)">Stop</button>
+    <button @onclick="StartCountdown" disabled="@(CountdownService.IsRunning || CountdownService.IsPreCountdownRunning)">Start</button>
+    <button @onclick="StartWithPreCountdown" disabled="@(CountdownService.IsRunning || CountdownService.IsPreCountdownRunning)">Start with Pre</button>
+    <button @onclick="StopCountdown" disabled="@(!CountdownService.IsRunning)">Stop</button>
 </div>
 
 @code {
@@ -43,6 +44,13 @@
     {
         var duration = new TimeSpan(0, minutes, seconds);
         CountdownService.Start(duration);
+    }
+
+    private async Task StartWithPreCountdown()
+    {
+        var preDuration = TimeSpan.FromSeconds(5);
+        var mainDuration = new TimeSpan(0, minutes, seconds);
+        await CountdownService.StartWithPreCountdownAsync(preDuration, mainDuration);
     }
 
     private void StopCountdown()
