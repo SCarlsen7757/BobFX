@@ -1,6 +1,4 @@
 using System.Buffers;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 
 namespace BobFx.Core.Services
 {
@@ -74,9 +72,9 @@ namespace BobFx.Core.Services
             {
                 // WLED DRGB Protocol Header:
                 // Byte 0: Protocol/Mode (2 = DRGB - Direct RGB)
-                // Byte 1: Timeout in seconds (2 = 2 seconds)
+                // Byte 1: Timeout in seconds (1 = 1 seconds)
                 buffer[0] = 2;
-                buffer[1] = 2;
+                buffer[1] = 1;
 
                 // Copy RGB data from the service
                 rgbService.CopyTo(buffer.AsSpan(2, rgbDataSize));
