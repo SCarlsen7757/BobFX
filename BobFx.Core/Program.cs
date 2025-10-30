@@ -55,7 +55,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<WledBroadcastServi
 
 builder.Logging.AddSimpleConsole(options =>
 {
-  options.SingleLine = true;
+    options.SingleLine = true;
     options.ColorBehavior = Microsoft.Extensions.Logging.Console.LoggerColorBehavior.Enabled;
 });
 

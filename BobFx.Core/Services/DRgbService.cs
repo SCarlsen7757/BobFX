@@ -191,6 +191,11 @@ namespace BobFx.Core.Services
                             ApplySolid();
                             break;
 
+                        case RgbEffect.FadeIn:
+                            ApplyFadeIn(step);
+                            step++;
+                            break;
+
                         case RgbEffect.Off:
                         default:
                             ClearStrip();
@@ -238,6 +243,16 @@ namespace BobFx.Core.Services
         {
             for (int i = 0; i < LedCount; i++)
                 Leds[i] = PrimaryColor;
+        }
+
+        private void ApplyFadeIn(int step)
+        {
+            // Calculate brightness from 0% to 100% over 100 steps
+            float brightness = Math.Min(step / 100f, 1.0f);
+            Vector3 fadedColor = PrimaryColor * brightness;
+
+            for (int i = 0; i < LedCount; i++)
+                Leds[i] = fadedColor;
         }
 
         public byte[] ToByteArray()

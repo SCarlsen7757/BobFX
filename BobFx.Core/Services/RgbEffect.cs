@@ -7,5 +7,6 @@
         Strobe,
         Scanner,
         Solid,
+        FadeIn,
     }
 }

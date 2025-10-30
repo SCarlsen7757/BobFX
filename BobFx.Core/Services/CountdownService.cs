@@ -1,6 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
-
-namespace BobFx.Core.Services
+﻿namespace BobFx.Core.Services
 {
     public class CountdownService
     {
@@ -10,9 +8,9 @@ namespace BobFx.Core.Services
         private TimeSpan remaining = TimeSpan.Zero;
 
         public event Action? OnTick;
-        public event Action? OnStartOfEvent;
+        public event Action<TimeSpan>? OnStartOfEvent;
         public event Action? OnEndOfEvent;
-        public event Action? OnPreCountdown;
+        public event Action<TimeSpan>? OnPreCountdown;
 
         public bool IsRunning { get; private set; } = false;
         public bool IsPreCountdownRunning { get; private set; } = false;
@@ -38,7 +36,7 @@ namespace BobFx.Core.Services
                 cts = new CancellationTokenSource();
                 IsRunning = true;
                 logger.LogInformation("Countdown started for {Seconds} seconds", duration.TotalSeconds);
-                OnStartOfEvent?.Invoke();
+                OnStartOfEvent?.Invoke(duration);
                 OnTick?.Invoke();
                 _ = RunCountdownAsync(cts.Token);
             }
@@ -47,7 +45,7 @@ namespace BobFx.Core.Services
         public async Task StartWithPreCountdownAsync(TimeSpan preDuration, TimeSpan mainDuration)
         {
             IsPreCountdownRunning = true;
-            OnPreCountdown?.Invoke();
+            OnPreCountdown?.Invoke(preDuration);
             await Task.Delay(preDuration);
             IsPreCountdownRunning = false;
             Start(mainDuration);

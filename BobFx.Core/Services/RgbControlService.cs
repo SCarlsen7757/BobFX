@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Logging;
-
 namespace BobFx.Core.Services
 {
     /// <summary>
@@ -77,22 +75,21 @@ namespace BobFx.Core.Services
 
         // --- Countdown Event Handlers ---
 
-        private void OnPreCountdown()
+        private void OnPreCountdown(TimeSpan duration)
         {
-            logger.LogInformation("Pre-countdown started - activating white strobe");
+            logger.LogInformation("Pre-countdown started - activating fade-in effect");
             rgbService.IsUdpActive = true;
-            rgbService.SetPrimaryColor("#FFFFFF");
-            rgbService.SetSecondaryColor("#000000");
-            rgbService.SetSpeed(TimeSpan.FromMilliseconds(100));
-            _ = rgbService.StartEffectAsync(RgbEffect.Strobe);
+            rgbService.SetPrimaryColor("#0000ff");
+            _ = rgbService.StartEffectAsync(RgbEffect.FadeIn, TimeSpan.FromMilliseconds(50));
         }
 
-        private void OnCountdownStarted()
+        private void OnCountdownStarted(TimeSpan duration)
         {
             logger.LogInformation("Countdown started - activating green strobe");
             rgbService.IsUdpActive = true;
-            rgbService.SetPrimaryColor("#00FF00");
-            _ = rgbService.StartEffectAsync(RgbEffect.Strobe);
+            rgbService.SetPrimaryColor("#00ff00");
+            rgbService.SetSecondaryColor("#a2ff00");
+            _ = rgbService.StartEffectAsync(RgbEffect.Strobe, TimeSpan.FromMilliseconds(250));
 
             // Switch to solid green after 5 seconds
             _ = SwitchToRunningEffectAsync();
@@ -111,8 +108,9 @@ namespace BobFx.Core.Services
         private void OnCountdownEnded()
         {
             logger.LogInformation("Countdown ended - activating red strobe");
-            rgbService.SetPrimaryColor("#FF0000");
-            _ = rgbService.StartEffectAsync(RgbEffect.Strobe);
+            rgbService.SetPrimaryColor("#ff0000");
+            rgbService.SetSecondaryColor("#ffff00");
+            _ = rgbService.StartEffectAsync(RgbEffect.Strobe, TimeSpan.FromMilliseconds(250));
 
             // Stop UDP after showing red strobe for 5 seconds
             _ = StopUdpAfterDelayAsync();
