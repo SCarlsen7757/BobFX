@@ -18,19 +18,6 @@
         "ASPNETCORE_URLS": "http://localhost:5159"
       },
       "distributionName": ""
-    },
-    "Container (Dockerfile)": {
-      "commandName": "Docker",
-      "launchBrowser": true,
-      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
-      "httpPort": 5159,
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "LED_COUNT": "30",
-        "UDP_TARGET_ADDRESS": "255.255.255.255",
-        "UDP_TARGET_PORT": "21324"
-      },
-      "useSSL": false
     }
   },
   "$schema": "https://json.schemastore.org/launchsettings.json"

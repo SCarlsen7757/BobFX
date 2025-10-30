@@ -1,11 +1,13 @@
 using System.Buffers;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace BobFx.Core.Services
 {
     /// <summary>
     /// Background service that continuously broadcasts LED data to WLED controllers via UDP.
     /// Reads from DRgbService and sends WLED DRGB protocol packets over broadcast address.
-    /// Sends at a fixed rate (~60 FPS) to prevent WLED timeout and ensure smooth display.
+    /// Sends at a configurable rate to prevent WLED timeout and ensure smooth display.
     /// </summary>
     public class WledBroadcastService : BackgroundService
     {
@@ -13,24 +15,25 @@ namespace BobFx.Core.Services
         private readonly UdpClientService udpClient;
         private readonly ILogger<WledBroadcastService> logger;
         private readonly ArrayPool<byte> bufferPool = ArrayPool<byte>.Shared;
-
-        // Fixed broadcast interval for smooth WLED display (10ms = ~100 FPS)
-        private static readonly TimeSpan BroadcastInterval = TimeSpan.FromMilliseconds(16);
+        private readonly TimeSpan broadcastInterval;
 
         public WledBroadcastService(
-     DRgbService rgbService,
-UdpClientService udpClient,
-   ILogger<WledBroadcastService> logger)
+            DRgbService rgbService,
+            UdpClientService udpClient,
+            ILogger<WledBroadcastService> logger,
+            TimeSpan broadcastInterval)
         {
             this.rgbService = rgbService ?? throw new ArgumentNullException(nameof(rgbService));
             this.udpClient = udpClient ?? throw new ArgumentNullException(nameof(udpClient));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            this.broadcastInterval = broadcastInterval;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            logger.LogInformation("WLED Broadcast Service started - Target: {Target}, Interval: {Interval}ms",
-         udpClient.TargetEndpoint, BroadcastInterval.TotalMilliseconds);
+            var fps = (int)(1000.0 / broadcastInterval.TotalMilliseconds);
+            logger.LogInformation("WLED Broadcast Service started - Target: {Target}, Interval: {Interval}ms ({Fps} FPS)",
+                udpClient.TargetEndpoint, broadcastInterval.TotalMilliseconds, fps);
 
             try
             {
@@ -45,8 +48,8 @@ UdpClientService udpClient,
 
                     await SendFrameAsync(stoppingToken);
 
-                    // Always send at fixed interval for smooth display
-                    await Task.Delay(BroadcastInterval, stoppingToken);
+                    // Send at configured interval for smooth display
+                    await Task.Delay(broadcastInterval, stoppingToken);
                 }
             }
             catch (OperationCanceledException)

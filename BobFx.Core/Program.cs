@@ -7,9 +7,23 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
-var ledCount = builder.Configuration.GetValue<int?>("LedConfiguration:LedCount") ?? 30;
-var udpTargetAddress = builder.Configuration.GetValue<string?>("UdpConfiguration:TargetAddress") ?? "255.255.255.255";
-var udpTargetPort = builder.Configuration.GetValue<int?>("UdpConfiguration:TargetPort") ?? 21324;
+// Read configuration from environment variables and appsettings.json
+// Priority: Environment Variables (LED_COUNT, TARGET_ADDRESS, etc.) > appsettings.json > Defaults
+var ledCount = builder.Configuration.GetValue<int?>("LED_COUNT")
+    ?? builder.Configuration.GetValue<int?>("LedConfiguration:LedCount")
+    ?? 30;
+
+var udpTargetAddress = builder.Configuration.GetValue<string?>("TARGET_ADDRESS")
+    ?? builder.Configuration.GetValue<string?>("UdpConfiguration:TargetAddress")
+    ?? "255.255.255.255";
+
+var udpTargetPort = builder.Configuration.GetValue<int?>("TARGET_PORT")
+    ?? builder.Configuration.GetValue<int?>("UdpConfiguration:TargetPort")
+    ?? 21324;
+
+var updateIntervalMs = builder.Configuration.GetValue<int?>("UPDATE_INTERVAL_MS")
+    ?? builder.Configuration.GetValue<int?>("UdpConfiguration:UpdateIntervalMs")
+    ?? 16; // Default 16ms = 60 FPS
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -30,11 +44,18 @@ builder.Services.AddSingleton<UdpClientService>(sp => new(
 builder.Services.AddSingleton<RgbControlService>();
 
 // Background service that broadcasts to WLED controllers
-builder.Services.AddHostedService<WledBroadcastService>();
+// Pass the update interval to the service
+builder.Services.AddSingleton<WledBroadcastService>(sp => new(
+    sp.GetRequiredService<DRgbService>(),
+    sp.GetRequiredService<UdpClientService>(),
+    sp.GetRequiredService<ILogger<WledBroadcastService>>(),
+    TimeSpan.FromMilliseconds(updateIntervalMs)
+));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<WledBroadcastService>());
 
 builder.Logging.AddSimpleConsole(options =>
 {
-    options.SingleLine = true;
+  options.SingleLine = true;
     options.ColorBehavior = Microsoft.Extensions.Logging.Console.LoggerColorBehavior.Enabled;
 });
 
