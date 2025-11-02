@@ -9,8 +9,10 @@
     <DockerServiceName>bobfx</DockerServiceName>
   </PropertyGroup>
   <ItemGroup>
+    <None Include=".github\workflows\build-and-release.yml" />
     <None Include="docker-compose.yml" />
     <None Include="docker-compose.override.yml" />
     <None Include=".dockerignore" />
+    <None Include="GitVersion.yml" />
   </ItemGroup>
 </Project>
