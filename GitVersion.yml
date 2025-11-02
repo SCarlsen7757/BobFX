@@ -11,6 +11,11 @@ branches:
     label: alpha
     increment: Minor
     track-merge-target: true
+  hotfix:
+    regex: ^hotfix(es)?[/-]
+    label: ""
+    increment: Patch
+    track-merge-target: false
 ignore:
   sha: []
 merge-message-formats: {}
