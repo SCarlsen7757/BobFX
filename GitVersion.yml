@@ -1,0 +1,16 @@
+mode: ContinuousDelivery
+branches:
+  main:
+    regex: ^main$
+    label: ""
+    increment: Minor
+    track-merge-target: false
+    is-main-branch: true
+  develop:
+    regex: ^dev(elop)?(ment)?$
+    label: alpha
+    increment: Minor
+    track-merge-target: true
+ignore:
+  sha: []
+merge-message-formats: {}
