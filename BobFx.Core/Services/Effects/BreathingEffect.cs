@@ -11,8 +11,6 @@ public class BreathingEffect : RgbEffectBase
     public float MinBrightness { get; set; } = 0f;
     public float MaxBrightness { get; set; } = 1f;
 
-    private bool fadeIn = true;
-
     public override bool Apply(Span<Vector3> leds, CancellationToken token)
     {
         var elapsed = DateTime.UtcNow - StartTime;
