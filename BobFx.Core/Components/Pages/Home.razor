@@ -56,6 +56,8 @@
 @code {
     private bool showBobMessage = false;
     private bool showGameOver = false;
+    private CancellationTokenSource? bobMessageCts;
+    private CancellationTokenSource? gameOverCts;
 
     protected override void OnInitialized()
     {
@@ -71,12 +73,28 @@
 
     private async void OnCountdownStart(TimeSpan duration)
     {
+        // Cancel any existing game over display
+        gameOverCts?.Cancel();
+
         showBobMessage = true;
         showGameOver = false;
         await InvokeAsync(StateHasChanged);
-        await Task.Delay(2500); // Show "BOB!" for 2.5 seconds
-        showBobMessage = false;
-        await InvokeAsync(StateHasChanged);
+
+        // Create new cancellation token for BOB message
+        bobMessageCts?.Cancel();
+        bobMessageCts = new CancellationTokenSource();
+
+        try
+        {
+            await Task.Delay(2500, bobMessageCts.Token); // Show "BOB!" for 2.5 seconds
+            showBobMessage = false;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException)
+        {
+            // Task was cancelled, just clean up
+            showBobMessage = false;
+        }
     }
 
     private async void OnCountdownEnd()
@@ -84,14 +102,29 @@
         showGameOver = true;
         await InvokeAsync(StateHasChanged);
 
-        // Auto-dismiss game over after 15 seconds
-        await Task.Delay(15000);
-        showGameOver = false;
-        await InvokeAsync(StateHasChanged);
+        // Create new cancellation token for game over message
+        gameOverCts?.Cancel();
+        gameOverCts = new CancellationTokenSource();
+
+        try
+        {
+            // Auto-dismiss game over after 15 seconds
+            await Task.Delay(15000, gameOverCts.Token);
+            showGameOver = false;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException)
+        {
+            // Task was cancelled, state is already managed elsewhere
+        }
     }
 
     private async Task StartCountdown()
     {
+        // Cancel any pending timers
+        bobMessageCts?.Cancel();
+        gameOverCts?.Cancel();
+
         showGameOver = false; // Reset game over message
         await CountdownService.StartWithPreCountdownAsync();
     }
@@ -100,11 +133,14 @@
     {
         // Show confirmation dialog
         var confirmed = await JSRuntime.InvokeAsync<bool>(
-       "confirm", 
+       "confirm",
        "Are you sure you want to stop the countdown?");
-        
+
         if (confirmed)
-   {
+        {
+            // Cancel any pending timers
+            bobMessageCts?.Cancel();
+
             CountdownService.Stop();
             showBobMessage = false;
         }
@@ -120,5 +156,11 @@
         CountdownService.OnTick -= OnTick;
         CountdownService.OnStartOfEvent -= OnCountdownStart;
         CountdownService.OnEndOfEvent -= OnCountdownEnd;
+
+        // Cancel and dispose of cancellation token sources
+        bobMessageCts?.Cancel();
+        bobMessageCts?.Dispose();
+        gameOverCts?.Cancel();
+        gameOverCts?.Dispose();
     }
 }
