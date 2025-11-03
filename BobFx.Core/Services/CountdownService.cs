@@ -68,6 +68,11 @@
 
         public async Task StartWithPreCountdownAsync()
         {
+            await StartWithPreCountdownAsync(PreCountdownDuration, CountdownDuration, CountdownDeviation);
+        }
+
+        public async Task StartWithPreCountdownAsync(TimeSpan preCountdownDuration, TimeSpan countdownDuration, TimeSpan countdownDeviation)
+        {
             lock (@lock)
             {
                 if (IsPreCountdownRunning || IsRunning)
@@ -78,12 +83,12 @@
 
                 cts = new CancellationTokenSource();
                 IsPreCountdownRunning = true;
-                preCountdownRemaining = (TimeSpan)PreCountdownDuration;
+                preCountdownRemaining = preCountdownDuration;
             }
 
-            OnPreCountdown?.Invoke((TimeSpan)PreCountdownDuration);
+            OnPreCountdown?.Invoke(preCountdownDuration);
             OnTick?.Invoke();
-            logger.LogInformation("Pre-countdown started for {Seconds} seconds", PreCountdownDuration.TotalSeconds);
+            logger.LogInformation("Pre-countdown started for {Seconds} seconds", preCountdownDuration.TotalSeconds);
 
             try
             {
@@ -103,7 +108,7 @@
                         preCountdownRemaining = TimeSpan.Zero;
                     }
                     logger.LogInformation("Pre-countdown completed");
-                    Start();
+                    Start(countdownDuration, countdownDeviation);
                 }
             }
             catch (TaskCanceledException)
