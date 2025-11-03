@@ -161,10 +161,13 @@ namespace BobFx.Core.Services
                 {
                     await oldTask;
                 }
-                catch (TaskCanceledException) { }
+                catch (TaskCanceledException ex)
+                {
+                    logger.LogDebug(ex, "Task was canceled while waiting for the current effect to stop.");
+                }
                 catch (OperationCanceledException ex)
                 {
-                    logger.LogDebug(ex, "Effect task was cancelled.");
+                    logger.LogDebug(ex, "Operation was canceled while waiting for the current effect to stop.");
                 }
                 finally
                 {
