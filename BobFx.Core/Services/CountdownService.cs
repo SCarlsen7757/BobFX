@@ -6,6 +6,7 @@
         private readonly ILogger<CountdownService> logger;
         private CancellationTokenSource? cts;
         private TimeSpan remaining = TimeSpan.Zero;
+        private TimeSpan preCountdownRemaining = TimeSpan.Zero;
 
         public event Action? OnTick;
         public event Action<TimeSpan>? OnStartOfEvent;
@@ -15,47 +16,118 @@
         public bool IsRunning { get; private set; } = false;
         public bool IsPreCountdownRunning { get; private set; } = false;
         public TimeSpan Remaining => remaining;
+        public TimeSpan PreCountdownRemaining => preCountdownRemaining;
 
-        public CountdownService(ILogger<CountdownService> logger)
+        public TimeSpan PreCountdownDuration { get; init; } = TimeSpan.FromSeconds(5);
+        public TimeSpan CountdownDuration { get; init; } = TimeSpan.FromSeconds(600);
+        public TimeSpan CountdownDeviation { get; init; } = TimeSpan.FromSeconds(120);
+
+        public CountdownService(ILogger<CountdownService> logger,
+                                TimeSpan preCountdownDuration,
+                                TimeSpan countdownDuration,
+                                TimeSpan countdownDeviation)
         {
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            PreCountdownDuration = preCountdownDuration;
+            CountdownDuration = countdownDuration;
+            CountdownDeviation = countdownDeviation;
             logger.LogInformation("CountdownService initialized");
         }
 
-        public void Start(TimeSpan duration)
+        public TimeSpan Start()
+        {
+            return Start(CountdownDuration, CountdownDeviation);
+        }
+
+        public TimeSpan Start(TimeSpan duration, TimeSpan deviation)
         {
             lock (@lock)
             {
                 if (IsRunning)
                 {
                     logger.LogDebug("Countdown Start called but already running");
-                    return;
+                    return remaining;
                 }
 
-                remaining = duration;
+                var deviationSeconds = (int)deviation.TotalSeconds;
+                var randomOffset = Random.Shared.Next(-deviationSeconds, deviationSeconds + 1);
+                var actualDuration = duration.Add(TimeSpan.FromSeconds(randomOffset));
+
+                remaining = actualDuration;
                 cts = new CancellationTokenSource();
                 IsRunning = true;
-                logger.LogInformation("Countdown started for {Seconds} seconds", duration.TotalSeconds);
-                OnStartOfEvent?.Invoke(duration);
+                logger.LogInformation("Countdown started for {Seconds} seconds (base: {Base}, offset: {Offset})",
+                    actualDuration.TotalSeconds, duration.TotalSeconds, randomOffset);
+                OnStartOfEvent?.Invoke(actualDuration);
                 OnTick?.Invoke();
                 _ = RunCountdownAsync(cts.Token);
+
+                return actualDuration;
             }
         }
 
-        public async Task StartWithPreCountdownAsync(TimeSpan preDuration, TimeSpan mainDuration)
+        public async Task StartWithPreCountdownAsync()
         {
-            IsPreCountdownRunning = true;
-            OnPreCountdown?.Invoke(preDuration);
-            await Task.Delay(preDuration);
-            IsPreCountdownRunning = false;
-            Start(mainDuration);
+            await StartWithPreCountdownAsync(PreCountdownDuration, CountdownDuration, CountdownDeviation);
+        }
+
+        public async Task StartWithPreCountdownAsync(TimeSpan preCountdownDuration, TimeSpan countdownDuration, TimeSpan countdownDeviation)
+        {
+            lock (@lock)
+            {
+                if (IsPreCountdownRunning || IsRunning)
+                {
+                    logger.LogDebug("StartWithPreCountdown called but already running");
+                    return;
+                }
+
+                cts = new CancellationTokenSource();
+                IsPreCountdownRunning = true;
+                preCountdownRemaining = preCountdownDuration;
+            }
+
+            OnPreCountdown?.Invoke(preCountdownDuration);
+            OnTick?.Invoke();
+            logger.LogInformation("Pre-countdown started for {Seconds} seconds", preCountdownDuration.TotalSeconds);
+
+            try
+            {
+                while (preCountdownRemaining > TimeSpan.Zero && !cts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(1000, cts.Token);
+                    preCountdownRemaining = preCountdownRemaining.Subtract(TimeSpan.FromSeconds(1));
+                    logger.LogDebug("Pre-countdown tick: {Remaining}s", preCountdownRemaining.TotalSeconds);
+                    OnTick?.Invoke();
+                }
+
+                if (!cts.Token.IsCancellationRequested)
+                {
+                    lock (@lock)
+                    {
+                        IsPreCountdownRunning = false;
+                        preCountdownRemaining = TimeSpan.Zero;
+                    }
+                    logger.LogInformation("Pre-countdown completed");
+                    Start(countdownDuration, countdownDeviation);
+                }
+            }
+            catch (TaskCanceledException)
+            {
+                logger.LogInformation("Pre-countdown cancelled");
+                lock (@lock)
+                {
+                    IsPreCountdownRunning = false;
+                    preCountdownRemaining = TimeSpan.Zero;
+                }
+                OnTick?.Invoke();
+            }
         }
 
         public void Stop()
         {
             lock (@lock)
             {
-                if (!IsRunning)
+                if (!IsRunning && !IsPreCountdownRunning)
                 {
                     logger.LogDebug("Countdown Stop called but not running");
                     return;
@@ -63,7 +135,9 @@
 
                 cts?.Cancel();
                 IsRunning = false;
+                IsPreCountdownRunning = false;
                 remaining = TimeSpan.Zero;
+                preCountdownRemaining = TimeSpan.Zero;
                 logger.LogInformation("Countdown stopped");
             }
         }

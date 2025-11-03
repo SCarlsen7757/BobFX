@@ -1,7 +1,166 @@
 ﻿@page "/"
+@using BobFx.Core.Services
+@inject CountdownService CountdownService
+@inject IJSRuntime JSRuntime
+@implements IDisposable
 
 <PageTitle>Home</PageTitle>
 
-<h1>Hello, world!</h1>
+<div class="home-container">
+    <h1>BobFx Controller</h1>
 
-Welcome to your new app.
+    <div class="countdown-section">
+        @if (!CountdownService.IsRunning && !CountdownService.IsPreCountdownRunning)
+        {
+            @if (showGameOver)
+            {
+                <div class="game-over-display">
+                    <div class="game-over-message">Game Over!</div>
+                </div>
+            }
+
+            <button class="btn-countdown btn-start" @onclick="StartCountdown">
+                <span class="btn-icon">▶</span>
+                <span class="btn-text">Start Countdown</span>
+            </button>
+        }
+        else if (CountdownService.IsPreCountdownRunning)
+        {
+            <div class="pre-countdown-display">
+                <div class="pre-countdown-label">Pre-Countdown Active</div>
+                <div class="pre-countdown-time">@FormatTime(CountdownService.PreCountdownRemaining)</div>
+            </div>
+        }
+        else
+        {
+            @if (showBobMessage)
+            {
+                <div class="bob-message-display">
+                    <div class="bob-message">BOB!</div>
+                </div>
+            }
+            else
+            {
+                <div class="countdown-running-display">
+                    <div class="countdown-running-time">Game on!</div>
+                </div>
+                <button class="btn-countdown btn-stop" @onclick="StopCountdown">
+                    <span class="btn-icon">■</span>
+                    <span class="btn-text">Stop Countdown</span>
+                </button>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private bool showBobMessage = false;
+    private bool showGameOver = false;
+    private CancellationTokenSource? bobMessageCts;
+    private CancellationTokenSource? gameOverCts;
+
+    protected override void OnInitialized()
+    {
+        CountdownService.OnTick += OnTick;
+        CountdownService.OnStartOfEvent += OnCountdownStart;
+        CountdownService.OnEndOfEvent += OnCountdownEnd;
+    }
+
+    private void OnTick()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async void OnCountdownStart(TimeSpan duration)
+    {
+        // Cancel any existing game over display
+        gameOverCts?.Cancel();
+
+        showBobMessage = true;
+        showGameOver = false;
+        await InvokeAsync(StateHasChanged);
+
+        // Create new cancellation token for BOB message
+        bobMessageCts?.Cancel();
+        bobMessageCts = new CancellationTokenSource();
+
+        try
+        {
+            await Task.Delay(2500, bobMessageCts.Token); // Show "BOB!" for 2.5 seconds
+            showBobMessage = false;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException)
+        {
+            // Task was cancelled, just clean up
+            showBobMessage = false;
+        }
+    }
+
+    private async void OnCountdownEnd()
+    {
+        showGameOver = true;
+        await InvokeAsync(StateHasChanged);
+
+        // Create new cancellation token for game over message
+        gameOverCts?.Cancel();
+        gameOverCts = new CancellationTokenSource();
+
+        try
+        {
+            // Auto-dismiss game over after 15 seconds
+            await Task.Delay(15000, gameOverCts.Token);
+            showGameOver = false;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException)
+        {
+            // Task was cancelled, state is already managed elsewhere
+        }
+    }
+
+    private async Task StartCountdown()
+    {
+        // Cancel any pending timers
+        bobMessageCts?.Cancel();
+        gameOverCts?.Cancel();
+
+        showGameOver = false; // Reset game over message
+        await CountdownService.StartWithPreCountdownAsync();
+    }
+
+    private async Task StopCountdown()
+    {
+        // Show confirmation dialog
+        var confirmed = await JSRuntime.InvokeAsync<bool>(
+       "confirm",
+       "Are you sure you want to stop the countdown?");
+
+        if (confirmed)
+        {
+            // Cancel any pending timers
+            bobMessageCts?.Cancel();
+
+            CountdownService.Stop();
+            showBobMessage = false;
+        }
+    }
+
+    private string FormatTime(TimeSpan time)
+    {
+        return $"{(int)time.TotalSeconds}";
+    }
+
+    public void Dispose()
+    {
+        CountdownService.OnTick -= OnTick;
+        CountdownService.OnStartOfEvent -= OnCountdownStart;
+        CountdownService.OnEndOfEvent -= OnCountdownEnd;
+
+        // Cancel and dispose of cancellation token sources
+        bobMessageCts?.Cancel();
+        bobMessageCts?.Dispose();
+        gameOverCts?.Cancel();
+        gameOverCts?.Dispose();
+    }
+}

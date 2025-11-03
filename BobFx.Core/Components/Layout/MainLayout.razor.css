@@ -13,8 +13,8 @@ main {
 }
 
 .top-row {
-    background-color: #f7f7f7;
-    border-bottom: 1px solid #d6d5d5;
+    background-color: #2d2d2d;
+    border-bottom: 1px solid #3a3a3a;
     justify-content: flex-end;
     height: 3.5rem;
     display: flex;
@@ -25,25 +25,27 @@ main {
         white-space: nowrap;
         margin-left: 1.5rem;
         text-decoration: none;
+        color: #4dabf7;
     }
 
-    .top-row ::deep a:hover, .top-row ::deep .btn-link:hover {
-        text-decoration: underline;
-    }
+        .top-row ::deep a:hover, .top-row ::deep .btn-link:hover {
+            text-decoration: underline;
+            color: #74c0fc;
+        }
 
-    .top-row ::deep a:first-child {
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
+        .top-row ::deep a:first-child {
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
 
 @media (max-width: 640.98px) {
     .top-row {
         justify-content: space-between;
     }
 
-    .top-row ::deep a, .top-row ::deep .btn-link {
-        margin-left: 0;
-    }
+        .top-row ::deep a, .top-row ::deep .btn-link {
+            margin-left: 0;
+        }
 }
 
 @media (min-width: 641px) {
@@ -64,11 +66,11 @@ main {
         z-index: 1;
     }
 
-    .top-row.auth ::deep a:first-child {
-        flex: 1;
-        text-align: right;
-        width: 0;
-    }
+        .top-row.auth ::deep a:first-child {
+            flex: 1;
+            text-align: right;
+            width: 0;
+        }
 
     .top-row, article {
         padding-left: 2rem !important;
@@ -77,10 +79,10 @@ main {
 }
 
 #blazor-error-ui {
-    color-scheme: light only;
-    background: lightyellow;
+    color-scheme: dark;
+    background: #3a0f0f;
     bottom: 0;
-    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.5);
     box-sizing: border-box;
     display: none;
     left: 0;
@@ -88,6 +90,7 @@ main {
     position: fixed;
     width: 100%;
     z-index: 1000;
+    color: #ff6b6b;
 }
 
     #blazor-error-ui .dismiss {
@@ -95,4 +98,5 @@ main {
         position: absolute;
         right: 0.75rem;
         top: 0.5rem;
+        color: #ff6b6b;
     }

@@ -1,0 +1,587 @@
+.home-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 16px;
+    text-align: center;
+}
+
+h1 {
+    margin-bottom: 32px;
+    margin-top: 16px;
+    color: #e0e0e0;
+    font-size: clamp(1.75rem, 5vw, 2.5rem);
+}
+
+.countdown-section {
+    background: #2d2d2d;
+    border-radius: 16px;
+    padding: clamp(24px, 5vw, 40px);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.5);
+    max-width: 100%;
+    border: 1px solid #3a3a3a;
+}
+
+.duration-controls {
+    margin-bottom: 32px;
+}
+
+    .duration-controls h3 {
+        margin-bottom: 24px;
+        color: #b0b0b0;
+        font-size: clamp(1.25rem, 4vw, 1.5rem);
+    }
+
+.time-inputs {
+    display: flex;
+    justify-content: center;
+    gap: clamp(16px, 4vw, 30px);
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.time-input-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    min-width: 100px;
+    flex: 0 1 auto;
+}
+
+    .time-input-group label {
+        font-weight: 600;
+        color: #a0a0a0;
+        font-size: clamp(1rem, 3vw, 1.1rem);
+    }
+
+    .time-input-group input {
+        width: 100%;
+        max-width: 120px;
+        min-width: 80px;
+        padding: clamp(10px, 2vw, 12px);
+        font-size: clamp(1.25rem, 4vw, 1.5rem);
+        text-align: center;
+        border: 2px solid #4a4a4a;
+        border-radius: 8px;
+        transition: border-color 0.2s;
+        -webkit-appearance: none;
+        -moz-appearance: textfield;
+        background-color: #1a1a1a;
+        color: #e0e0e0;
+    }
+
+        /* Remove spinner arrows on number inputs */
+        .time-input-group input::-webkit-outer-spin-button,
+        .time-input-group input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .time-input-group input:focus {
+            outline: none;
+            border-color: #28a745;
+            background-color: #252525;
+        }
+
+.pre-countdown-section {
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 2px solid #3a3a3a;
+}
+
+.pre-countdown-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+    .pre-countdown-toggle input[type="checkbox"] {
+        width: 24px;
+        height: 24px;
+        cursor: pointer;
+    }
+
+    .pre-countdown-toggle label {
+        font-size: clamp(1rem, 3vw, 1.125rem);
+        font-weight: 600;
+        color: #b0b0b0;
+        cursor: pointer;
+        user-select: none;
+    }
+
+.pre-countdown-input {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+    .pre-countdown-input label {
+        font-weight: 600;
+        color: #a0a0a0;
+        font-size: clamp(1rem, 3vw, 1.1rem);
+    }
+
+    .pre-countdown-input input {
+        width: 100%;
+        max-width: 120px;
+        min-width: 80px;
+        padding: clamp(10px, 2vw, 12px);
+        font-size: clamp(1.25rem, 4vw, 1.5rem);
+        text-align: center;
+        border: 2px solid #4a4a4a;
+        border-radius: 8px;
+        transition: border-color 0.2s;
+        -webkit-appearance: none;
+        -moz-appearance: textfield;
+        background-color: #1a1a1a;
+        color: #e0e0e0;
+    }
+
+        .pre-countdown-input input::-webkit-outer-spin-button,
+        .pre-countdown-input input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .pre-countdown-input input:focus {
+            outline: none;
+            border-color: #ffc107;
+            background-color: #252525;
+        }
+
+.pre-countdown-display {
+    margin-bottom: 0;
+    padding: 32px;
+    background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
+    border-radius: 12px;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.pre-countdown-label {
+    font-size: clamp(1rem, 3vw, 1.25rem);
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.pre-countdown-time {
+    font-size: clamp(3rem, 10vw, 5rem);
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+    line-height: 1;
+}
+
+.pre-countdown-message {
+    font-size: clamp(2rem, 6vw, 3rem);
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.bob-message-display {
+    margin-bottom: 0;
+    padding: 40px;
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    border-radius: 12px;
+    animation: bob-flash 1.5s ease-in-out;
+}
+
+.bob-message {
+    font-size: clamp(4rem, 15vw, 8rem);
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 3px 3px 6px rgba(0, 0, 0, 0.4);
+    line-height: 1;
+    letter-spacing: 0.1em;
+}
+
+.game-over-display {
+    margin-bottom: 32px;
+    padding: 40px;
+    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+    border-radius: 12px;
+    animation: game-over-flash 2s ease-in-out;
+}
+
+.game-over-message {
+    font-size: clamp(3.5rem, 14vw, 7rem);
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 3px 3px 6px rgba(0, 0, 0, 0.4);
+    line-height: 1;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.countdown-running-display {
+    margin-bottom: 32px;
+    padding: 40px 32px;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-radius: 12px;
+}
+
+.countdown-running-time {
+    font-size: clamp(3.5rem, 12vw, 6rem);
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 3px 3px 6px rgba(0, 0, 0, 0.4);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+
+@keyframes bob-flash {
+    0% {
+        transform: scale(0.5);
+        opacity: 0;
+    }
+
+    50% {
+        transform: scale(1.1);
+        opacity: 1;
+    }
+
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+
+    50% {
+        transform: scale(1.05);
+        opacity: 0.9;
+    }
+}
+
+@keyframes game-over-flash {
+    0% {
+        transform: scale(0.8);
+        opacity: 0;
+    }
+
+    20% {
+        transform: scale(1.15);
+        opacity: 1;
+    }
+
+    40% {
+        transform: scale(0.95);
+    }
+
+    60% {
+        transform: scale(1.05);
+    }
+
+    80% {
+        transform: scale(0.98);
+    }
+
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.btn-countdown {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(10px, 3vw, 15px);
+    padding: clamp(20px, 4vw, 25px) clamp(40px, 8vw, 50px);
+    font-size: clamp(1.25rem, 4vw, 1.5rem);
+    font-weight: bold;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    width: 100%;
+    max-width: 400px;
+    min-height: 64px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+    .btn-countdown:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .btn-countdown:active {
+        transform: translateY(0);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+.btn-start {
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    color: white;
+}
+
+    .btn-start:hover {
+        background: linear-gradient(135deg, #218838 0%, #1ba87e 100%);
+    }
+
+.btn-stop {
+    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+    color: white;
+}
+
+    .btn-stop:hover {
+        background: linear-gradient(135deg, #c82333 0%, #bd2130 100%);
+    }
+
+.btn-icon {
+    font-size: clamp(1.5rem, 5vw, 2rem);
+    line-height: 1;
+}
+
+.btn-text {
+    font-size: clamp(1.25rem, 4vw, 1.5rem);
+    line-height: 1;
+}
+
+/* Tablet breakpoint (portrait) */
+@media (max-width: 768px) {
+    .home-container {
+        padding: 12px;
+    }
+
+    h1 {
+        margin-bottom: 24px;
+    }
+
+    .countdown-section {
+        padding: 24px 16px;
+    }
+
+    .time-inputs {
+        gap: 20px;
+    }
+
+    .btn-countdown {
+        max-width: 100%;
+    }
+}
+
+/* iPad and larger tablets (portrait and landscape) */
+@media (min-width: 768px) and (max-width: 1024px) {
+    .home-container {
+        max-width: 700px;
+    }
+
+    .countdown-section {
+        padding: 32px 24px;
+    }
+
+    .btn-countdown {
+        max-width: 500px;
+    }
+
+    /* Optimize for touch on iPad */
+    .btn-countdown {
+        min-height: 70px;
+    }
+}
+
+/* iPad Pro and larger tablets (landscape) */
+@media (min-width: 1024px) and (max-width: 1366px) {
+    .home-container {
+        max-width: 900px;
+    }
+
+    .countdown-section {
+        padding: 40px 32px;
+    }
+}
+
+/* Mobile breakpoint */
+@media (max-width: 480px) {
+    .home-container {
+        padding: 8px;
+    }
+
+    h1 {
+        margin-top: 8px;
+        margin-bottom: 16px;
+    }
+
+    .countdown-section {
+        border-radius: 12px;
+        padding: 20px 12px;
+    }
+
+    .time-inputs {
+        flex-direction: column;
+        gap: 16px;
+        align-items: center;
+    }
+
+    .time-input-group {
+        width: 100%;
+        max-width: 200px;
+    }
+
+        .time-input-group input {
+            max-width: 100%;
+        }
+
+    .duration-controls {
+        margin-bottom: 24px;
+    }
+
+    .btn-countdown {
+        padding: 18px 32px;
+        min-height: 60px;
+    }
+
+    .pre-countdown-display {
+        padding: 24px;
+        margin-bottom: 0;
+    }
+
+    .bob-message-display {
+        padding: 24px;
+        margin-bottom: 0;
+    }
+
+    .game-over-display {
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .countdown-running-display {
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+}
+
+/* Landscape mobile breakpoint */
+@media (max-height: 500px) and (orientation: landscape) {
+    .home-container {
+        padding: 8px;
+    }
+
+    h1 {
+        margin-top: 8px;
+        margin-bottom: 12px;
+        font-size: 1.5rem;
+    }
+
+    .countdown-section {
+        padding: 16px;
+    }
+
+    .duration-controls h3 {
+        margin-bottom: 12px;
+        font-size: 1.125rem;
+    }
+
+    .time-inputs {
+        margin-bottom: 12px;
+        flex-direction: row;
+    }
+
+    .btn-countdown {
+        padding: 12px 24px;
+        min-height: 48px;
+    }
+
+    .pre-countdown-display {
+        padding: 16px;
+        margin-bottom: 0;
+    }
+
+    .bob-message-display {
+        padding: 16px;
+        margin-bottom: 0;
+    }
+
+    .game-over-display {
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+
+    .countdown-running-display {
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+}
+
+/* Accessibility: Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .btn-countdown {
+        transition: none;
+    }
+
+        .btn-countdown:hover {
+            transform: none;
+        }
+
+        .btn-countdown:active {
+            transform: none;
+        }
+
+    .pre-countdown-display {
+        animation: none;
+    }
+
+    .bob-message-display {
+        animation: none;
+    }
+
+    .game-over-display {
+        animation: none;
+    }
+}
+
+/* Touch device improvements */
+@media (hover: none) and (pointer: coarse) {
+    /* Remove hover effects on touch devices */
+    .btn-countdown:hover {
+        transform: none;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    .btn-countdown:active {
+        transform: scale(0.98);
+        transition: transform 0.1s;
+    }
+
+    /* Prevent iOS zoom on input focus */
+    .time-input-group input,
+    .pre-countdown-input input {
+        font-size: 16px;
+    }
+}
+
+/* Additional iPad-specific optimizations */
+@media (hover: none) and (pointer: coarse) and (min-width: 768px) {
+    /* Larger touch targets for iPad */
+    .btn-countdown {
+        min-height: 72px;
+        padding: clamp(24px, 5vw, 28px) clamp(48px, 10vw, 60px);
+    }
+
+    .pre-countdown-toggle input[type="checkbox"] {
+        width: 28px;
+        height: 28px;
+    }
+
+    .pre-countdown-toggle label {
+        font-size: 1.125rem;
+    }
+}
+
+/* High DPI displays */

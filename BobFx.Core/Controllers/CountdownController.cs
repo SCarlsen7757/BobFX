@@ -15,10 +15,10 @@ namespace BobFx.Core.Controllers
         }
 
         [HttpPost("start")]
-        public IActionResult Start([FromQuery] int seconds = 10)
+        public IActionResult Start()
         {
-            countdown.Start(TimeSpan.FromSeconds(seconds));
-            return Ok(new { message = $"Countdown started for {seconds} seconds" });
+            countdown.Start();
+            return Ok();
         }
 
         [HttpPost("stop")]
@@ -39,10 +39,10 @@ namespace BobFx.Core.Controllers
         }
 
         [HttpPost("start-with-pre")]
-        public async Task<IActionResult> StartWithPre([FromQuery] int preSeconds = 5, [FromQuery] int mainSeconds = 10)
+        public async Task<IActionResult> StartWithPre()
         {
-            await countdown.StartWithPreCountdownAsync(TimeSpan.FromSeconds(preSeconds), TimeSpan.FromSeconds(mainSeconds));
-            return Ok(new { message = $"Pre-countdown {preSeconds}s, then main {mainSeconds}s" });
+            await countdown.StartWithPreCountdownAsync();
+            return Ok();
         }
     }
 }

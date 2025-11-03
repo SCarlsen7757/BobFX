@@ -1,6 +1,7 @@
 ﻿@page "/countdown"
 @using BobFx.Core.Services
 @inject CountdownService CountdownService
+@implements IDisposable
 
 <PageTitle>Countdown</PageTitle>
 
@@ -18,6 +19,19 @@
 </div>
 
 <div style="margin-top:10px;">
+    <label>Pre-Countdown (seconds): </label>
+    <input type="number" @bind="preCountdownSeconds" min="1" max="60" style="width:60px;" />
+</div>
+
+<div style="margin-top:10px;">
+    <label>Deviation (seconds): </label>
+    <input type="number" @bind="deviationSeconds" min="0" max="300" style="width:60px;" />
+    <span style="margin-left:10px; color: #a0a0a0; font-size: 0.9em;">
+      (±@deviationSeconds seconds random variation)
+</span>
+</div>
+
+<div style="margin-top:10px;">
     <button @onclick="StartCountdown" disabled="@(CountdownService.IsRunning || CountdownService.IsPreCountdownRunning)">Start</button>
     <button @onclick="StartWithPreCountdown" disabled="@(CountdownService.IsRunning || CountdownService.IsPreCountdownRunning)">Start with Pre</button>
     <button @onclick="StopCountdown" disabled="@(!CountdownService.IsRunning)">Stop</button>
@@ -26,6 +40,8 @@
 @code {
     private int minutes = 15;
     private int seconds = 0;
+    private int preCountdownSeconds = 5;
+    private int deviationSeconds = 120;
     private string timeRemaining = string.Empty;
 
     protected override void OnInitialized()
@@ -43,14 +59,16 @@
     private void StartCountdown()
     {
         var duration = new TimeSpan(0, minutes, seconds);
-        CountdownService.Start(duration);
+        var deviation = TimeSpan.FromSeconds(deviationSeconds);
+        CountdownService.Start(duration, deviation);
     }
 
     private async Task StartWithPreCountdown()
     {
-        var preDuration = TimeSpan.FromSeconds(5);
-        var mainDuration = new TimeSpan(0, minutes, seconds);
-        await CountdownService.StartWithPreCountdownAsync(preDuration, mainDuration);
+        var preCountdownDuration = TimeSpan.FromSeconds(preCountdownSeconds);
+        var countdownDuration = new TimeSpan(0, minutes, seconds);
+        var countdownDeviation = TimeSpan.FromSeconds(deviationSeconds);
+        await CountdownService.StartWithPreCountdownAsync(preCountdownDuration, countdownDuration, countdownDeviation);
     }
 
     private void StopCountdown()

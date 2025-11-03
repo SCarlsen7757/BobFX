@@ -9,15 +9,23 @@
       "dotnetRunMessages": true,
       "applicationUrl": "http://localhost:5159"
     },
-    "WSL": {
-      "commandName": "WSL2",
+    "http (Production)": {
+      "commandName": "Project",
       "launchBrowser": true,
-      "launchUrl": "http://localhost:5159",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "ASPNETCORE_URLS": "http://localhost:5159"
+        "ASPNETCORE_ENVIRONMENT": "Production"
       },
-      "distributionName": ""
+      "dotnetRunMessages": true,
+      "applicationUrl": "http://localhost:5159"
+    },
+    "http ext": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "dotnetRunMessages": true,
+      "applicationUrl": "http://0.0.0.0:5159"
     }
   },
   "$schema": "https://json.schemastore.org/launchsettings.json"

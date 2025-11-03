@@ -12,6 +12,12 @@ services:
       - TARGET_ADDRESS=255.255.255.255
       - TARGET_PORT=21324
       - UPDATE_INTERVAL_MS=10
+      
+      # Countdown Configuration
+      - PRE_COUNTDOWN_TIME_SECONDS=5
+      - COUNTDOWN_TIME_SECONDS=600
+      - COUNTDOWN_DEVIATION_SECONDS=120
+
 
       # ASP.NET Core Configuration
       - ASPNETCORE_ENVIRONMENT=Production

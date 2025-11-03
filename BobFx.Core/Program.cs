@@ -1,12 +1,15 @@
 using BobFx.Core.Components;
 using BobFx.Core.Services;
 using BobFx.Core.Services.Effects;
+using Microsoft.AspNetCore.Hosting.StaticWebAssets;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Ensure console logging is enabled
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
+
+StaticWebAssetsLoader.UseStaticWebAssets(builder.Environment, builder.Configuration);
 
 // Read configuration from environment variables and appsettings.json
 // Priority: Environment Variables (LED_COUNT, TARGET_ADDRESS, etc.) > appsettings.json > Defaults
@@ -26,6 +29,19 @@ var updateIntervalMs = builder.Configuration.GetValue<int?>("UPDATE_INTERVAL_MS"
     ?? builder.Configuration.GetValue<int?>("UdpConfiguration:UpdateIntervalMs")
     ?? 16; // Default 16ms = 60 FPS
 
+var preCountdownDurationSeconds = builder.Configuration.GetValue<int?>("PRE_COUNTDOWN_DURATION_SECONDS")
+    ?? builder.Configuration.GetValue<int?>("CountdownConfiguration:PreDurationSeconds")
+    ?? 3; // Default 3 seconds
+
+var countdownDurationSeconds = builder.Configuration.GetValue<int?>("COUNTDOWN_DURATION_SECONDS")
+    ?? builder.Configuration.GetValue<int?>("CountdownConfiguration:DurationSeconds")
+    ?? 60; // Default 60 seconds
+
+var countdownDeviationSeconds = builder.Configuration.GetValue<int?>("COUNTDOWN_DEVIATION_SECONDS")
+    ?? builder.Configuration.GetValue<int?>("CountdownConfiguration:DeviationSeconds")
+    ?? 5; // Default 5 seconds
+
+
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
@@ -37,7 +53,7 @@ builder.Services.AddControllers();
 builder.Services.AddSingleton<IRgbEffectFactory, RgbEffectFactory>();
 
 // Core Services
-builder.Services.AddSingleton<CountdownService>();
+builder.Services.AddSingleton<CountdownService>(sp => new(sp.GetRequiredService<ILogger<CountdownService>>(), TimeSpan.FromSeconds(preCountdownDurationSeconds), TimeSpan.FromSeconds(countdownDurationSeconds), TimeSpan.FromSeconds(countdownDeviationSeconds)));
 builder.Services.AddSingleton<DRgbService>(sp => new(ledCount, sp.GetRequiredService<ILogger<DRgbService>>(), sp.GetRequiredService<IRgbEffectFactory>()));
 
 // UDP Client for WLED communication

@@ -7,6 +7,8 @@
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
     <DockerfileContext>..</DockerfileContext>
     <DockerComposeProjectPath>..\docker-compose.dcproj</DockerComposeProjectPath>
+    <!-- Generate static web assets during build for all configurations -->
+    <GenerateStaticWebAssetsPropsFile>true</GenerateStaticWebAssetsPropsFile>
   </PropertyGroup>
 
   <ItemGroup>
