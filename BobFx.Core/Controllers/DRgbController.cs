@@ -65,11 +65,11 @@ namespace BobFx.Core.Controllers
         public IActionResult GetAvailableEffects()
         {
             var effects = effectFactory.GetRegisteredEffects()
-    .Select(e => new
-    {
-        type = e.ToString(),
-        info = RgbEffectDefaults.EffectInfo.TryGetValue(e, out var info) ? info : null
-    });
+                .Select(e => new
+                {
+                    type = e.ToString(),
+                    info = RgbEffectDefaults.EffectInfo.TryGetValue(e, out var info) ? info : null
+                });
 
             return Ok(effects);
         }
