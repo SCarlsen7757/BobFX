@@ -169,7 +169,7 @@
     private RgbEffect selectedEffect = RgbEffect.Rainbow;
     private RgbEffect currentEffect = RgbEffect.Off;
     private RgbEffectInfo? effectInfo;
-    private List<string> effectColors = new(); // Support up to 5 colors
+    private readonly List<string> effectColors = new(); // Support up to 5 colors
     private string? errorMessage;
 
     private int speedMs = 100;
