@@ -1,12 +1,15 @@
 using BobFx.Core.Components;
 using BobFx.Core.Services;
 using BobFx.Core.Services.Effects;
+using Microsoft.AspNetCore.Hosting.StaticWebAssets;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Ensure console logging is enabled
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
+
+StaticWebAssetsLoader.UseStaticWebAssets(builder.Environment, builder.Configuration);
 
 // Read configuration from environment variables and appsettings.json
 // Priority: Environment Variables (LED_COUNT, TARGET_ADDRESS, etc.) > appsettings.json > Defaults
