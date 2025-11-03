@@ -162,7 +162,10 @@ namespace BobFx.Core.Services
                     await oldTask;
                 }
                 catch (TaskCanceledException) { }
-                catch (OperationCanceledException) { }
+                catch (OperationCanceledException ex)
+                {
+                    logger.LogDebug(ex, "Effect task was cancelled.");
+                }
                 finally
                 {
                     oldCts?.Dispose();
