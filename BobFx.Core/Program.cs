@@ -1,5 +1,6 @@
 using BobFx.Core.Components;
 using BobFx.Core.Services;
+using BobFx.Core.Services.Effects;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,9 +30,15 @@ var updateIntervalMs = builder.Configuration.GetValue<int?>("UPDATE_INTERVAL_MS"
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+// Add controllers for API endpoints
+builder.Services.AddControllers();
+
+// Register RGB Effect Factory
+builder.Services.AddSingleton<IRgbEffectFactory, RgbEffectFactory>();
+
 // Core Services
 builder.Services.AddSingleton<CountdownService>();
-builder.Services.AddSingleton<DRgbService>(sp => new(ledCount));
+builder.Services.AddSingleton<DRgbService>(sp => new(ledCount, sp.GetRequiredService<ILogger<DRgbService>>(), sp.GetRequiredService<IRgbEffectFactory>()));
 
 // UDP Client for WLED communication
 builder.Services.AddSingleton<UdpClientService>(sp => new(
@@ -74,6 +81,7 @@ if (!app.Environment.IsDevelopment())
 app.UseAntiforgery();
 
 app.MapStaticAssets();
+app.MapControllers(); // Add this to enable API controllers
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 

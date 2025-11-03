@@ -9,10 +9,12 @@ namespace BobFx.Core.Services
         private readonly CountdownService countdownService;
         private readonly DRgbService rgbService;
         private readonly ILogger<RgbControlService> logger;
+        private CancellationTokenSource? switchEffectCts;
+        private CancellationTokenSource? stopUdpCts;
 
         public RgbControlService(CountdownService countdownService,
-                                 DRgbService rgbService,
-                                 ILogger<RgbControlService> logger)
+            DRgbService rgbService,
+            ILogger<RgbControlService> logger)
         {
             this.countdownService = countdownService ?? throw new ArgumentNullException(nameof(countdownService));
             this.rgbService = rgbService ?? throw new ArgumentNullException(nameof(rgbService));
@@ -26,70 +28,40 @@ namespace BobFx.Core.Services
             logger.LogInformation("RgbControlService initialized and subscribed to countdown events");
         }
 
-        /// <summary>
-        /// Manually start an RGB effect (independent of countdown).
-        /// </summary>
-        public async Task StartEffectAsync(RgbEffect effect, TimeSpan? speed = null)
-        {
-            logger.LogInformation("Manually starting RGB effect: {Effect}", effect);
-            rgbService.IsUdpActive = true;
-            await rgbService.StartEffectAsync(effect, speed);
-        }
-
-        /// <summary>
-        /// Stop all RGB effects.
-        /// </summary>
-        public void StopEffect()
-        {
-            logger.LogInformation("Stopping RGB effect");
-            rgbService.IsUdpActive = false;
-            rgbService.StopEffect();
-        }
-
-        /// <summary>
-        /// Set the primary color for effects.
-        /// </summary>
-        public void SetPrimaryColor(string hexColor)
-        {
-            rgbService.SetPrimaryColor(hexColor);
-            logger.LogDebug("Primary color set to {Color}", hexColor);
-        }
-
-        /// <summary>
-        /// Set the secondary color for effects.
-        /// </summary>
-        public void SetSecondaryColor(string hexColor)
-        {
-            rgbService.SetSecondaryColor(hexColor);
-            logger.LogDebug("Secondary color set to {Color}", hexColor);
-        }
-
-        /// <summary>
-        /// Set the speed/delay between effect frames.
-        /// </summary>
-        public void SetSpeed(TimeSpan speed)
-        {
-            rgbService.SetSpeed(speed);
-            logger.LogDebug("Speed set to {Speed}ms", speed.TotalMilliseconds);
-        }
-
         // --- Countdown Event Handlers ---
 
         private void OnPreCountdown(TimeSpan duration)
         {
-            logger.LogInformation("Pre-countdown started - activating fade-in effect");
+            // Cancel any pending switch effect or stop UDP operations
+            CancelSwitchEffect();
+            CancelStopUdp();
+
             rgbService.IsUdpActive = true;
-            rgbService.SetPrimaryColor("#0000ff");
-            _ = rgbService.StartEffectAsync(RgbEffect.FadeIn, TimeSpan.FromMilliseconds(50));
+
+            _ = rgbService.StartEffectAsync(builder =>
+            {
+                builder.WithEffect(RgbEffect.FadeIn)
+                    .WithColor("#0000ff") // Blue
+                    .WithSpeed(10)
+                    .WithFadeDuration(duration);
+            });
         }
 
         private void OnCountdownStarted(TimeSpan duration)
         {
-            logger.LogInformation("Countdown started - activating green strobe");
+            // Cancel any pending switch effect or stop UDP operations
+            CancelSwitchEffect();
+            CancelStopUdp();
+
             rgbService.IsUdpActive = true;
-            rgbService.SetPrimaryColor("#00ff00");
-            rgbService.SetSecondaryColor("#a2ff00");
-            _ = rgbService.StartEffectAsync(RgbEffect.Strobe, TimeSpan.FromMilliseconds(250));
+
+            _ = rgbService.StartEffectAsync(builder =>
+            {
+                builder.WithEffect(RgbEffect.Blink)
+                    .WithColor("#00ff00")
+                    .WithColor("#a2ff00")
+                    .WithSpeed(200);
+            });
 
             // Switch to solid green after 5 seconds
             _ = SwitchToRunningEffectAsync();
@@ -97,20 +69,41 @@ namespace BobFx.Core.Services
 
         private async Task SwitchToRunningEffectAsync()
         {
-            await Task.Delay(5000);
-            if (countdownService.IsRunning)
+            // Create a new cancellation token for this switch operation
+            switchEffectCts?.Dispose();
+            switchEffectCts = new CancellationTokenSource();
+
+            try
             {
-                logger.LogInformation("Switching to solid green (running state)");
-                await rgbService.StartEffectAsync(RgbEffect.Solid);
+                await Task.Delay(5000, switchEffectCts.Token);
+
+                if (countdownService.IsRunning)
+                {
+                    await rgbService.StartEffectAsync(builder =>
+                    {
+                        builder.WithEffect(RgbEffect.Twinkle)
+                            .WithColor("#a2ff00");
+                    });
+                }
+            }
+            catch (TaskCanceledException)
+            {
+                logger.LogInformation("Switch to running effect was cancelled");
             }
         }
 
         private void OnCountdownEnded()
         {
-            logger.LogInformation("Countdown ended - activating red strobe");
-            rgbService.SetPrimaryColor("#ff0000");
-            rgbService.SetSecondaryColor("#ffff00");
-            _ = rgbService.StartEffectAsync(RgbEffect.Strobe, TimeSpan.FromMilliseconds(250));
+            // Cancel any pending switch effect
+            CancelSwitchEffect();
+
+            _ = rgbService.StartEffectAsync(builder =>
+            {
+                builder.WithEffect(RgbEffect.Blink)
+                    .WithColor("#ff0000")
+                    .WithColor("#ffff00")
+                    .WithSpeed(250);
+            });
 
             // Stop UDP after showing red strobe for 5 seconds
             _ = StopUdpAfterDelayAsync();
@@ -118,10 +111,39 @@ namespace BobFx.Core.Services
 
         private async Task StopUdpAfterDelayAsync()
         {
-            await Task.Delay(5000);
-            logger.LogInformation("Stopping RGB after countdown end delay");
-            rgbService.IsUdpActive = false;
-            rgbService.StopEffect();
+            // Create a new cancellation token for this stop operation
+            stopUdpCts?.Dispose();
+            stopUdpCts = new CancellationTokenSource();
+
+            try
+            {
+                await Task.Delay(5000, stopUdpCts.Token);
+                logger.LogInformation("Stopping RGB after countdown end delay");
+                rgbService.IsUdpActive = false;
+                rgbService.StopEffect();
+            }
+            catch (TaskCanceledException)
+            {
+                logger.LogInformation("Stop UDP after delay was cancelled");
+            }
+        }
+
+        private void CancelSwitchEffect()
+        {
+            if (switchEffectCts != null && !switchEffectCts.IsCancellationRequested)
+            {
+                logger.LogDebug("Cancelling pending switch effect");
+                switchEffectCts.Cancel();
+            }
+        }
+
+        private void CancelStopUdp()
+        {
+            if (stopUdpCts != null && !stopUdpCts.IsCancellationRequested)
+            {
+                logger.LogDebug("Cancelling pending stop UDP");
+                stopUdpCts.Cancel();
+            }
         }
     }
 }

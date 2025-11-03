@@ -1,44 +1,181 @@
 ﻿@page "/drgb"
 @using BobFx.Core.Services
+@using BobFx.Core.Services.Effects
 @inject BobFx.Core.Services.DRgbService LedService
+@implements IDisposable
 
 <h3>DRGB LED Controller</h3>
 
 <p>Current effect: <b>@currentEffect</b></p>
 <p>Speed: <b>@LedService.Speed.TotalMilliseconds</b> ms</p>
 
-<select @bind="selectedEffect">
+<select @bind="selectedEffect" @bind:after="OnEffectChanged">
     @foreach (var effect in Enum.GetValues<BobFx.Core.Services.RgbEffect>())
     {
         <option value="@effect">@effect</option>
     }
 </select>
 
-<input type="number" @bind="SpeedMs" min="10" max="500" /> ms
-
-<input type="number" @bind="LedCount" min="1" max="300" /> LEDs
-
-<input type="color"
-
-<div>
-    <button @onclick="StartEffect">Start</button>
-    <button @onclick="StopEffect">Stop</button>
-</div>
-
-<div class="led-preview" style="display:flex;gap:2px;margin-top:10px;">
-    @foreach (var led in LedService.Leds)
+<div class="effect-info">
+    @if (effectInfo != null)
     {
-        <div style="width:10px;height:20px;background:@ToCssColor(led);"></div>
+        <p><em>@effectInfo.Description</em></p>
     }
 </div>
 
+<div class="parameters">
+    <div>
+        <label>Speed:</label>
+        <input type="number" @bind="SpeedMs" min="10" max="2000" /> ms
+    </div>
+
+    <div>
+        <label>LED Count:</label>
+        <input type="number" @bind="LedCount" min="1" max="300" /> LEDs
+    </div>
+
+    @if (effectInfo != null)
+    {
+        @for (int i = 0; i < effectInfo.TotalColors; i++)
+        {
+            var colorIndex = i; // Capture for lambda
+            var isRequired = i < effectInfo.RequiredColors;
+            var colorLabel = i < effectInfo.ColorLabels.Length ? effectInfo.ColorLabels[i] : $"Color {i + 1}";
+
+            <div>
+                <label>@colorLabel @(isRequired ? "*" : "(optional)"):</label>
+                <input type="color" @bind="@effectColors[colorIndex]" />
+            </div>
+        }
+
+        @* Show fade duration parameter for fade effects *@
+        @if (selectedEffect == RgbEffect.FadeIn || selectedEffect == RgbEffect.FadeOut)
+        {
+            <div>
+                <label>Fade Duration:</label>
+                <input type="number" @bind="FadeDurationSeconds" min="0.1" max="60" step="0.1" /> seconds
+            </div>
+        }
+
+        @* Show breath duration parameter for breathing effects *@
+        @if (selectedEffect == RgbEffect.Breathing)
+        {
+            <div>
+                <label>Breath Duration:</label>
+                <input type="number" @bind="BreathDurationSeconds" min="0.1" max="60" step="0.1" /> seconds
+            </div>
+            <div>
+                <label>Min Brightness:</label>
+                <input type="number" @bind="MinBrightnessProcent" min="0" max="100" step="1" /> %
+            </div>
+            <div>
+                <label>Max Brightness:</label>
+                <input type="number" @bind="MaxBrightnessProcent" min="10" max="100" step="1" /> %
+            </div>
+        }
+    }
+</div>
+
+<div style="margin-top: 10px;">
+    <button @onclick="StartEffect" class="btn btn-success">Start</button>
+    <button @onclick="StopEffect" class="btn btn-danger">Stop</button>
+</div>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="error-message">
+        <strong>Error:</strong> @errorMessage
+    </div>
+}
+
+@* Debug info - can be removed later *@
+@if (effectInfo != null && effectInfo.TotalColors > 0)
+{
+    <div style="margin-top: 10px; padding: 10px; background-color: #f0f0f0; border: 1px solid #ccc; font-size: 0.85em;">
+        <strong>Debug - Current Colors:</strong>
+        @for (int i = 0; i < effectInfo.TotalColors; i++)
+        {
+            <span style="margin-left: 10px;">
+                [@i]: @effectColors[i]
+            </span>
+        }
+    </div>
+}
+
+<div class="led-preview" style="display:flex;gap:2px;margin-top:20px;padding:10px;border:1px solid #ccc;">
+    <h5>LED Preview:</h5>
+    <div style="display:flex;gap:2px;">
+        @foreach (var led in LedService.Leds)
+        {
+            <div style="width:10px;height:20px;background:@ToCssColor(led);border:1px solid #333;"></div>
+        }
+    </div>
+</div>
+
+<style>
+    .parameters {
+        display: grid;
+        gap: 10px;
+        margin: 20px 0;
+        max-width: 400px;
+    }
+
+        .parameters div {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .parameters label {
+            font-weight: bold;
+            margin-right: 10px;
+        }
+
+    .effect-info {
+        font-style: italic;
+        color: #666;
+        margin: 10px 0;
+    }
+
+    .btn {
+        padding: 8px 16px;
+        margin-right: 10px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .btn-success {
+        background-color: #28a745;
+        color: white;
+    }
+
+    .btn-danger {
+        background-color: #dc3545;
+        color: white;
+    }
+
+    .error-message {
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+        padding: 10px;
+        margin-top: 10px;
+        border-radius: 4px;
+    }
+</style>
+
 @code {
     private RgbEffect selectedEffect = RgbEffect.Rainbow;
-    private RgbEffect currentEffect =RgbEffect.Off;
+    private RgbEffect currentEffect = RgbEffect.Off;
+    private RgbEffectInfo? effectInfo;
+    private readonly List<string> effectColors = new(); // Support up to 5 colors
+    private string? errorMessage;
 
     private int speedMs = 100;
-    public int SpeedMs {
-        get => speedMs; 
+    public int SpeedMs
+    {
+        get => speedMs;
         set
         {
             if (speedMs == value) return;
@@ -59,33 +196,113 @@
         }
     }
 
-    private string primaryColor = string.Empty;
-    public string PrimaryColor { 
-        get => primaryColor;
+    private double fadeDurationSeconds = 2.0d;
+    public double FadeDurationSeconds
+    {
+        get => fadeDurationSeconds;
         set
         {
-            if (value == primaryColor) return;
-            primaryColor = value;
-            LedService.SetPrimaryColor(value);
+            if (value <= 0d) return;
+            fadeDurationSeconds = value;
         }
     }
 
-    private string secondaryColor = string.Empty;
-    public string SecondaryColor { 
-        get => secondaryColor;
+    private double breathDurationSeconds = 2.0d;
+    public double BreathDurationSeconds
+    {
+        get => breathDurationSeconds;
         set
         {
-            if (value == secondaryColor) return;
-            secondaryColor = value;
-            LedService.SetSecondaryColor(value);
+            if (value <= 0d) return;
+            breathDurationSeconds = value;
+        }
+    }
+
+    private double minBrightnessProcent = 0.0d;
+    public double MinBrightnessProcent
+    {
+        get => minBrightnessProcent;
+        set
+        {
+            if (value < 0d || value > 100d) return;
+            minBrightnessProcent = value;
+        }
+    }
+
+    private double maxBrightnessProcent = 100.0d;
+    public double MaxBrightnessProcent
+    {
+        get => maxBrightnessProcent;
+        set
+        {
+            if (value < 0d || value > 100d) return;
+            maxBrightnessProcent = value;
         }
     }
 
     protected override void OnInitialized()
     {
-        primaryColor = DRgbService.RgbToHex(LedService.PrimaryColor);
-        secondaryColor = DRgbService.RgbToHex(LedService.SecondaryColor);
+        // Initialize default colors to a valid color (will be overwritten by LoadDefaultColors)
+        for (int i = 0; i < 5; i++)
+        {
+            effectColors.Add("#FF0000"); // Default to red
+        }
+
         LedService.OnUpdate += UpdateLed;
+        OnEffectChanged();
+    }
+
+    private void OnEffectChanged()
+    {
+        if (RgbEffectDefaults.EffectInfo.TryGetValue(selectedEffect, out var info))
+        {
+            effectInfo = info;
+            speedMs = (int)info.DefaultSpeed.TotalMilliseconds;
+
+            // Load default colors based on effect type
+            LoadDefaultColors();
+
+            // Load default fade duration for fade effects
+            if (selectedEffect == RgbEffect.FadeIn || selectedEffect == RgbEffect.FadeOut)
+            {
+                fadeDurationSeconds = 2.0;
+            }
+
+            // Load default breath duration for breathing effects
+            if (selectedEffect == RgbEffect.Breathing)
+            {
+                breathDurationSeconds = 2.0;
+                minBrightnessProcent = 0.0;
+                maxBrightnessProcent = 100.0;
+            }
+        }
+        StateHasChanged();
+    }
+
+    private void LoadDefaultColors()
+    {
+        effectColors.Clear();
+        // Set sensible defaults for each effect type
+        switch (selectedEffect)
+        {
+            case RgbEffect.Strobe:
+            case RgbEffect.Solid:
+            case RgbEffect.Scanner:
+            case RgbEffect.FadeIn:
+            case RgbEffect.FadeOut:
+            case RgbEffect.Breathing:
+            case RgbEffect.Twinkle:
+                effectColors.Add("#FF0000"); // Red for single-color effects
+                break;
+            case RgbEffect.Blink:
+                effectColors.Add("#FF0000"); // Red
+                effectColors.Add("#0000FF"); // Blue
+                break;
+            case RgbEffect.Rainbow:
+            case RgbEffect.Off:
+                // These effects don't use colors
+                break;
+        }
     }
 
     private void UpdateLed()
@@ -96,20 +313,108 @@
 
     private async Task StartEffect()
     {
-        await LedService.StartEffectAsync(selectedEffect, TimeSpan.FromMilliseconds(SpeedMs));
+        try
+        {
+            errorMessage = null;
+
+            // Validate that we have effect info
+            if (effectInfo == null)
+            {
+                errorMessage = "Effect information not available. Please select a different effect.";
+                StateHasChanged();
+                return;
+            }
+
+            // Debug: Log what we're about to send
+            var colorDebugInfo = new System.Text.StringBuilder();
+            for (int i = 0; i < Math.Min(effectInfo.TotalColors, effectColors.Count); i++)
+            {
+                colorDebugInfo.Append($"Color[{i}]={effectColors[i]} ");
+            }
+            System.Diagnostics.Debug.WriteLine($"Starting {selectedEffect} with colors: {colorDebugInfo}");
+
+            int colorsAdded = 0;
+            await LedService.StartEffectAsync(builder =>
+            {
+                builder.WithEffect(selectedEffect)
+                       .WithSpeed(TimeSpan.FromMilliseconds(SpeedMs));
+
+                // Add colors based on effect requirements
+                if (effectInfo.TotalColors > 0)
+                {
+                    for (int i = 0; i < effectInfo.TotalColors; i++)
+                    {
+                        var color = effectColors[i];
+
+                        // Check if color is valid and not black (which becomes Vector3.Zero and fails validation)
+                        if (!string.IsNullOrWhiteSpace(color) && color.ToLowerInvariant() != "#000000")
+                        {
+                            try
+                            {
+                                builder.WithColor(color);
+                                colorsAdded++;
+                                System.Diagnostics.Debug.WriteLine($"Added color[{i}]: {color}");
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"Failed to add color[{i}]: {color}, Error: {ex.Message}");
+                                if (i < effectInfo.RequiredColors)
+                                {
+                                    var colorName = i < effectInfo.ColorLabels.Length ? effectInfo.ColorLabels[i] : $"Color {i + 1}";
+                                    errorMessage = $"Invalid color format for '{colorName}': {color}";
+                                    StateHasChanged();
+                                    return;
+                                }
+                            }
+                        }
+                        else if (i < effectInfo.RequiredColors)
+                        {
+                            // If a required color is missing or black, show error
+                            var colorName = i < effectInfo.ColorLabels.Length ? effectInfo.ColorLabels[i] : $"Color {i + 1}";
+                            errorMessage = $"Required color '{colorName}' must be set to a non-black color. Current value: '{color}'";
+                            StateHasChanged();
+                            return;
+                        }
+                        else
+                        {
+                            // Optional color is black or empty - just skip it
+                            System.Diagnostics.Debug.WriteLine($"Skipped optional color[{i}]: {color}");
+                        }
+                    }
+                }
+
+                System.Diagnostics.Debug.WriteLine($"Total colors added to builder: {colorsAdded}");
+
+                // Add fade duration for fade effects
+                if (selectedEffect == RgbEffect.FadeIn || selectedEffect == RgbEffect.FadeOut)
+                {
+                    builder.WithFadeDuration(fadeDurationSeconds);
+                }
+
+                // Add breath duration and brightness for breathing effects
+                if (selectedEffect == RgbEffect.Breathing)
+                {
+                    builder.WithBreathDuration(breathDurationSeconds)
+                           .WithMinBrightness(minBrightnessProcent / 100d)
+                           .WithMaxBrightness(maxBrightnessProcent / 100d);
+                }
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+            StateHasChanged();
+        }
     }
 
     private void StopEffect()
     {
-
         LedService.StopEffect();
     }
 
     private string ToCssColor(System.Numerics.Vector3 rgb)
     {
-        int r = (int)(Math.Clamp(rgb.X, 0, 1) * 255);
-        int g = (int)(Math.Clamp(rgb.Y, 0, 1) * 255);
-        int b = (int)(Math.Clamp(rgb.Z, 0, 1) * 255);
+        var (r, g, b) = ColorHelper.ToRgbBytes(rgb);
         return $"rgb({r},{g},{b})";
     }
 
