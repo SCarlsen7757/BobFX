@@ -45,12 +45,12 @@ h1 {
     align-items: center;
     gap: 12px;
     min-width: 100px;
-  flex: 0 1 auto;
+    flex: 0 1 auto;
 }
 
     .time-input-group label {
         font-weight: 600;
- color: #a0a0a0;
+        color: #a0a0a0;
         font-size: clamp(1rem, 3vw, 1.1rem);
     }
 
@@ -64,7 +64,7 @@ h1 {
         border: 2px solid #4a4a4a;
         border-radius: 8px;
         transition: border-color 0.2s;
-      -webkit-appearance: none;
+        -webkit-appearance: none;
         -moz-appearance: textfield;
         background-color: #1a1a1a;
         color: #e0e0e0;
@@ -73,7 +73,7 @@ h1 {
         /* Remove spinner arrows on number inputs */
         .time-input-group input::-webkit-outer-spin-button,
         .time-input-group input::-webkit-inner-spin-button {
-          -webkit-appearance: none;
+            -webkit-appearance: none;
             margin: 0;
         }
 
@@ -100,15 +100,15 @@ h1 {
     .pre-countdown-toggle input[type="checkbox"] {
         width: 24px;
         height: 24px;
-cursor: pointer;
+        cursor: pointer;
     }
 
     .pre-countdown-toggle label {
         font-size: clamp(1rem, 3vw, 1.125rem);
         font-weight: 600;
-  color: #b0b0b0;
+        color: #b0b0b0;
         cursor: pointer;
-user-select: none;
+        user-select: none;
     }
 
 .pre-countdown-input {
@@ -135,7 +135,7 @@ user-select: none;
         border: 2px solid #4a4a4a;
         border-radius: 8px;
         transition: border-color 0.2s;
- -webkit-appearance: none;
+        -webkit-appearance: none;
         -moz-appearance: textfield;
         background-color: #1a1a1a;
         color: #e0e0e0;

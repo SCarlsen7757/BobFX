@@ -22,30 +22,30 @@ main {
 }
 
     .top-row ::deep a, .top-row ::deep .btn-link {
-     white-space: nowrap;
+        white-space: nowrap;
         margin-left: 1.5rem;
         text-decoration: none;
         color: #4dabf7;
     }
 
-    .top-row ::deep a:hover, .top-row ::deep .btn-link:hover {
-        text-decoration: underline;
-        color: #74c0fc;
-    }
+        .top-row ::deep a:hover, .top-row ::deep .btn-link:hover {
+            text-decoration: underline;
+            color: #74c0fc;
+        }
 
-    .top-row ::deep a:first-child {
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
+        .top-row ::deep a:first-child {
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
 
 @media (max-width: 640.98px) {
     .top-row {
         justify-content: space-between;
     }
 
-    .top-row ::deep a, .top-row ::deep .btn-link {
-    margin-left: 0;
-    }
+        .top-row ::deep a, .top-row ::deep .btn-link {
+            margin-left: 0;
+        }
 }
 
 @media (min-width: 641px) {
@@ -54,26 +54,26 @@ main {
     }
 
     .sidebar {
-      width: 250px;
+        width: 250px;
         height: 100vh;
         position: sticky;
         top: 0;
     }
 
     .top-row {
-    position: sticky;
+        position: sticky;
         top: 0;
         z-index: 1;
     }
 
-    .top-row.auth ::deep a:first-child {
-        flex: 1;
-        text-align: right;
-        width: 0;
-    }
+        .top-row.auth ::deep a:first-child {
+            flex: 1;
+            text-align: right;
+            width: 0;
+        }
 
     .top-row, article {
-padding-left: 2rem !important;
+        padding-left: 2rem !important;
         padding-right: 1.5rem !important;
     }
 }
@@ -81,7 +81,7 @@ padding-left: 2rem !important;
 #blazor-error-ui {
     color-scheme: dark;
     background: #3a0f0f;
-bottom: 0;
+    bottom: 0;
     box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.5);
     box-sizing: border-box;
     display: none;
@@ -94,8 +94,8 @@ bottom: 0;
 }
 
     #blazor-error-ui .dismiss {
-  cursor: pointer;
-      position: absolute;
+        cursor: pointer;
+        position: absolute;
         right: 0.75rem;
         top: 0.5rem;
         color: #ff6b6b;

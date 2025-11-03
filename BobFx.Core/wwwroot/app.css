@@ -1,6 +1,6 @@
 html, body {
     font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-background-color: #1a1a1a;
+    background-color: #1a1a1a;
     color: #e0e0e0;
     margin: 0;
     padding: 0;
@@ -18,7 +18,7 @@ a, .btn-link {
 }
 
 .btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
-  box-shadow: 0 0 0 0.1rem #2d2d2d, 0 0 0 0.25rem #258cfb;
+    box-shadow: 0 0 0 0.1rem #2d2d2d, 0 0 0 0.25rem #258cfb;
 }
 
 .content {
@@ -52,7 +52,7 @@ h1:focus {
     }
 
 .darker-border-checkbox.form-check-input {
- border-color: #6c6c6c;
+    border-color: #6c6c6c;
 }
 
 .form-floating > .form-control-plaintext::placeholder, .form-floating > .form-control::placeholder {
