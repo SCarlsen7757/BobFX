@@ -8,16 +8,17 @@
 h1 {
     margin-bottom: 32px;
     margin-top: 16px;
-    color: #333;
+    color: #e0e0e0;
     font-size: clamp(1.75rem, 5vw, 2.5rem);
 }
 
 .countdown-section {
-    background: #f8f9fa;
+    background: #2d2d2d;
     border-radius: 16px;
     padding: clamp(24px, 5vw, 40px);
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.5);
     max-width: 100%;
+    border: 1px solid #3a3a3a;
 }
 
 .duration-controls {
@@ -26,7 +27,7 @@ h1 {
 
     .duration-controls h3 {
         margin-bottom: 24px;
-        color: #555;
+        color: #b0b0b0;
         font-size: clamp(1.25rem, 4vw, 1.5rem);
     }
 
@@ -44,12 +45,12 @@ h1 {
     align-items: center;
     gap: 12px;
     min-width: 100px;
-    flex: 0 1 auto;
+  flex: 0 1 auto;
 }
 
     .time-input-group label {
         font-weight: 600;
-        color: #666;
+ color: #a0a0a0;
         font-size: clamp(1rem, 3vw, 1.1rem);
     }
 
@@ -60,29 +61,32 @@ h1 {
         padding: clamp(10px, 2vw, 12px);
         font-size: clamp(1.25rem, 4vw, 1.5rem);
         text-align: center;
-        border: 2px solid #ddd;
+        border: 2px solid #4a4a4a;
         border-radius: 8px;
         transition: border-color 0.2s;
-        -webkit-appearance: none;
+      -webkit-appearance: none;
         -moz-appearance: textfield;
+        background-color: #1a1a1a;
+        color: #e0e0e0;
     }
 
         /* Remove spinner arrows on number inputs */
         .time-input-group input::-webkit-outer-spin-button,
         .time-input-group input::-webkit-inner-spin-button {
-            -webkit-appearance: none;
+          -webkit-appearance: none;
             margin: 0;
         }
 
         .time-input-group input:focus {
             outline: none;
             border-color: #28a745;
+            background-color: #252525;
         }
 
 .pre-countdown-section {
     margin-top: 24px;
     padding-top: 24px;
-    border-top: 2px solid #e0e0e0;
+    border-top: 2px solid #3a3a3a;
 }
 
 .pre-countdown-toggle {
@@ -96,15 +100,15 @@ h1 {
     .pre-countdown-toggle input[type="checkbox"] {
         width: 24px;
         height: 24px;
-        cursor: pointer;
+cursor: pointer;
     }
 
     .pre-countdown-toggle label {
         font-size: clamp(1rem, 3vw, 1.125rem);
         font-weight: 600;
-        color: #555;
+  color: #b0b0b0;
         cursor: pointer;
-        user-select: none;
+user-select: none;
     }
 
 .pre-countdown-input {
@@ -117,7 +121,7 @@ h1 {
 
     .pre-countdown-input label {
         font-weight: 600;
-        color: #666;
+        color: #a0a0a0;
         font-size: clamp(1rem, 3vw, 1.1rem);
     }
 
@@ -128,11 +132,13 @@ h1 {
         padding: clamp(10px, 2vw, 12px);
         font-size: clamp(1.25rem, 4vw, 1.5rem);
         text-align: center;
-        border: 2px solid #ddd;
+        border: 2px solid #4a4a4a;
         border-radius: 8px;
         transition: border-color 0.2s;
-        -webkit-appearance: none;
+ -webkit-appearance: none;
         -moz-appearance: textfield;
+        background-color: #1a1a1a;
+        color: #e0e0e0;
     }
 
         .pre-countdown-input input::-webkit-outer-spin-button,
@@ -144,6 +150,7 @@ h1 {
         .pre-countdown-input input:focus {
             outline: none;
             border-color: #ffc107;
+            background-color: #252525;
         }
 
 .pre-countdown-display {
