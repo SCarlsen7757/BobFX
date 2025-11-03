@@ -79,7 +79,7 @@ namespace BobFx.Core.Services
                 cts = new CancellationTokenSource();
                 effectTask = RunEffectAsync(cts.Token);
                 logger.LogInformation("Started effect {Effect} with speed {Speed}ms",
-          effect.EffectType, effect.Speed.TotalMilliseconds);
+                    effect.EffectType, effect.Speed.TotalMilliseconds);
             }
         }
 
