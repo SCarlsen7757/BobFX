@@ -11,45 +11,45 @@
     <div class="countdown-section">
    @if (!CountdownService.IsRunning && !CountdownService.IsPreCountdownRunning)
 {
-            <div class="duration-controls">
+   <div class="duration-controls">
        <h3>Set Duration</h3>
        <div class="time-inputs">
-                    <div class="time-input-group">
+  <div class="time-input-group">
           <label>Minutes:</label>
  <input type="number" @bind="minutes" min="0" max="60" />
   </div>
-                    <div class="time-input-group">
-            <label>Seconds:</label>
+ <div class="time-input-group">
+     <label>Seconds:</label>
    <input type="number" @bind="seconds" min="0" max="59" />
      </div>
          </div>
 
       <div class="pre-countdown-section">
          <div class="pre-countdown-toggle">
-           <input type="checkbox" id="enablePreCountdown" @bind="enablePreCountdown" class="form-check-input" />
+         <input type="checkbox" id="enablePreCountdown" @bind="enablePreCountdown" class="form-check-input" />
  <label for="enablePreCountdown">Enable Pre-Countdown</label>
-           </div>
+     </div>
          
-         @if (enablePreCountdown)
+    @if (enablePreCountdown)
     {
    <div class="pre-countdown-input">
-               <label>Pre-Countdown (seconds):</label>
+       <label>Pre-Countdown (seconds):</label>
            <input type="number" @bind="preCountdownSeconds" min="1" max="60" />
     </div>
-     }
+   }
  </div>
     </div>
 
             <button class="btn-countdown btn-start" @onclick="StartCountdown">
 <span class="btn-icon">▶</span>
-                <span class="btn-text">Start Countdown</span>
+          <span class="btn-text">Start Countdown</span>
             </button>
         }
         else if (CountdownService.IsPreCountdownRunning)
   {
         <div class="pre-countdown-display">
           <div class="pre-countdown-label">Pre-Countdown Active</div>
-              <div class="pre-countdown-message">Get Ready!</div>
+     <div class="pre-countdown-message">Get Ready!</div>
   </div>
    <button class="btn-countdown btn-stop" @onclick="StopCountdown">
     <span class="btn-icon">■</span>
@@ -59,403 +59,12 @@
     else
         {
        <button class="btn-countdown btn-stop" @onclick="StopCountdown">
-              <span class="btn-icon">■</span>
+       <span class="btn-icon">■</span>
       <span class="btn-text">Stop Countdown</span>
-            </button>
+  </button>
       }
     </div>
 </div>
-
-<style>
-    .home-container {
-   max-width: 800px;
-  margin: 0 auto;
-        padding: 16px;
-        text-align: center;
-    }
-
-    h1 {
-        margin-bottom: 32px;
-        margin-top: 16px;
-        color: #333;
-        font-size: clamp(1.75rem, 5vw, 2.5rem);
-    }
-
-  .countdown-section {
-        background: #f8f9fa;
-border-radius: 16px;
-      padding: clamp(24px, 5vw, 40px);
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        max-width: 100%;
-    }
-
-    .duration-controls {
-        margin-bottom: 32px;
-    }
-
-    .duration-controls h3 {
-        margin-bottom: 24px;
-        color: #555;
-        font-size: clamp(1.25rem, 4vw, 1.5rem);
-    }
-
-    .time-inputs {
-        display: flex;
-        justify-content: center;
-        gap: clamp(16px, 4vw, 30px);
-        margin-bottom: 20px;
-        flex-wrap: wrap;
-    }
-
- .time-input-group {
-        display: flex;
-    flex-direction: column;
-        align-items: center;
-        gap: 12px;
-     min-width: 100px;
-        flex: 0 1 auto;
-    }
-
-    .time-input-group label {
-    font-weight: 600;
-        color: #666;
-     font-size: clamp(1rem, 3vw, 1.1rem);
-    }
-
-    .time-input-group input {
-        width: 100%;
-        max-width: 120px;
-   min-width: 80px;
-        padding: clamp(10px, 2vw, 12px);
-        font-size: clamp(1.25rem, 4vw, 1.5rem);
-        text-align: center;
-        border: 2px solid #ddd;
-     border-radius: 8px;
-      transition: border-color 0.2s;
-      -webkit-appearance: none;
-        -moz-appearance: textfield;
-    }
-
-    /* Remove spinner arrows on number inputs */
-    .time-input-group input::-webkit-outer-spin-button,
-    .time-input-group input::-webkit-inner-spin-button {
-        -webkit-appearance: none;
-        margin: 0;
-    }
-
-    .time-input-group input:focus {
-        outline: none;
-        border-color: #28a745;
-    }
-
-    .pre-countdown-section {
-        margin-top: 24px;
-  padding-top: 24px;
-      border-top: 2px solid #e0e0e0;
-    }
-
-    .pre-countdown-toggle {
-   display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 12px;
-      margin-bottom: 16px;
-    }
-
-    .pre-countdown-toggle input[type="checkbox"] {
-        width: 24px;
-        height: 24px;
-      cursor: pointer;
-    }
-
-    .pre-countdown-toggle label {
-     font-size: clamp(1rem, 3vw, 1.125rem);
-   font-weight: 600;
-        color: #555;
-cursor: pointer;
-        user-select: none;
-    }
-
-    .pre-countdown-input {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-    gap: 12px;
-        margin-top: 16px;
-    }
-
-    .pre-countdown-input label {
-        font-weight: 600;
-      color: #666;
-  font-size: clamp(1rem, 3vw, 1.1rem);
-    }
-
-    .pre-countdown-input input {
-        width: 100%;
-    max-width: 120px;
-        min-width: 80px;
-        padding: clamp(10px, 2vw, 12px);
-        font-size: clamp(1.25rem, 4vw, 1.5rem);
-        text-align: center;
-        border: 2px solid #ddd;
-border-radius: 8px;
-      transition: border-color 0.2s;
-        -webkit-appearance: none;
-      -moz-appearance: textfield;
-    }
-
-    .pre-countdown-input input::-webkit-outer-spin-button,
-    .pre-countdown-input input::-webkit-inner-spin-button {
-        -webkit-appearance: none;
-   margin: 0;
-    }
-
-    .pre-countdown-input input:focus {
-        outline: none;
-        border-color: #ffc107;
-    }
-
-  .pre-countdown-display {
-        margin-bottom: 32px;
-        padding: 32px;
-    background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
-        border-radius: 12px;
-        animation: pulse 1.5s ease-in-out infinite;
-    }
-
-    .pre-countdown-label {
-        font-size: clamp(1rem, 3vw, 1.25rem);
-        font-weight: 600;
-        color: #fff;
-        margin-bottom: 12px;
-      text-transform: uppercase;
-     letter-spacing: 1px;
-    }
-
- .pre-countdown-message {
-        font-size: clamp(2rem, 6vw, 3rem);
-        font-weight: bold;
-   color: #fff;
-        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-    }
-
-    @@keyframes pulse {
-        0%, 100% {
-            transform: scale(1);
-            opacity: 1;
-        }
- 50% {
-            transform: scale(1.05);
-      opacity: 0.9;
-        }
-    }
-
-    .btn-countdown {
-        display: inline-flex;
-        align-items: center;
-   justify-content: center;
-   gap: clamp(10px, 3vw, 15px);
-        padding: clamp(20px, 4vw, 25px) clamp(40px, 8vw, 50px);
-        font-size: clamp(1.25rem, 4vw, 1.5rem);
-        font-weight: bold;
-border: none;
-        border-radius: 12px;
-        cursor: pointer;
-transition: all 0.3s ease;
-box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-        width: 100%;
-        max-width: 400px;
-    min-height: 64px;
-        touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-    }
-
-    .btn-countdown:hover {
-        transform: translateY(-2px);
-   box-shadow: 0 6px 12px rgba(0, 0, 0, 0.3);
-    }
-
-    .btn-countdown:active {
-        transform: translateY(0);
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    }
-
-    .btn-start {
-        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-        color: white;
-    }
-
-    .btn-start:hover {
-        background: linear-gradient(135deg, #218838 0%, #1ba87e 100%);
-    }
-
-    .btn-stop {
-background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
-        color: white;
-    }
-
-    .btn-stop:hover {
-        background: linear-gradient(135deg, #c82333 0%, #bd2130 100%);
-}
-
-    .btn-icon {
-        font-size: clamp(1.5rem, 5vw, 2rem);
-        line-height: 1;
-    }
-
-    .btn-text {
-        font-size: clamp(1.25rem, 4vw, 1.5rem);
-        line-height: 1;
-    }
-
-    /* Tablet breakpoint (portrait) */
-    @@media (max-width: 768px) {
-        .home-container {
-            padding: 12px;
-        }
-
-        h1 {
-    margin-bottom: 24px;
- }
-
-        .countdown-section {
-   padding: 24px 16px;
-        }
-
-     .time-inputs {
-            gap: 20px;
-     }
-
-        .btn-countdown {
-     max-width: 100%;
-        }
-    }
-
-/* Mobile breakpoint */
-    @@media (max-width: 480px) {
-        .home-container {
-  padding: 8px;
-        }
-
-        h1 {
-            margin-top: 8px;
-         margin-bottom: 16px;
-        }
-
-     .countdown-section {
-          border-radius: 12px;
-      padding: 20px 12px;
-}
-
-        .time-inputs {
-       flex-direction: column;
-    gap: 16px;
- align-items: center;
-        }
-
-        .time-input-group {
-            width: 100%;
-            max-width: 200px;
-        }
-
-        .time-input-group input {
-       max-width: 100%;
-  }
-
-        .duration-controls {
-            margin-bottom: 24px;
-        }
-
-        .btn-countdown {
-            padding: 18px 32px;
-       min-height: 60px;
-        }
-
-    .pre-countdown-display {
-         padding: 24px;
-        }
-    }
-
-    /* Landscape mobile breakpoint */
-@@media (max-height: 500px) and (orientation: landscape) {
-        .home-container {
-       padding: 8px;
-     }
-
-        h1 {
-            margin-top: 8px;
-  margin-bottom: 12px;
-            font-size: 1.5rem;
-    }
-
-        .countdown-section {
-       padding: 16px;
- }
-
-        .duration-controls h3 {
-          margin-bottom: 12px;
-          font-size: 1.125rem;
-    }
-
-        .time-inputs {
-         margin-bottom: 12px;
-        flex-direction: row;
-        }
-
-        .btn-countdown {
-     padding: 12px 24px;
-     min-height: 48px;
-   }
-
-        .pre-countdown-display {
-          padding: 16px;
-            margin-bottom: 16px;
-     }
-    }
-
-    /* Touch device improvements */
-    @@media (hover: none) and (pointer: coarse) {
-        .btn-countdown:hover {
-            transform: none;
-        }
-
-        .btn-countdown:active {
-transform: scale(0.98);
-      transition: transform 0.1s;
-     }
-
-        .time-input-group input,
-        .pre-countdown-input input {
-  font-size: 16px; /* Prevents zoom on iOS */
-    }
-    }
-
-    /* High DPI displays */
-    @@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
-    .countdown-section {
-       box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-    }
-
-    /* Accessibility: Reduced motion */
-    @@media (prefers-reduced-motion: reduce) {
-        .btn-countdown {
-    transition: none;
-        }
-
-     .btn-countdown:hover {
-            transform: none;
-        }
-
-     .btn-countdown:active {
-    transform: none;
-        }
-
-        .pre-countdown-display {
-            animation: none;
-        }
-    }
-</style>
 
 @code {
     private int minutes = 15;
@@ -465,7 +74,7 @@ transform: scale(0.98);
 
     protected override void OnInitialized()
     {
-        CountdownService.OnTick += OnTick;
+ CountdownService.OnTick += OnTick;
     }
 
     private void OnTick()
@@ -479,11 +88,11 @@ transform: scale(0.98);
     
      if (enablePreCountdown)
     {
-            var preDuration = TimeSpan.FromSeconds(preCountdownSeconds);
+     var preDuration = TimeSpan.FromSeconds(preCountdownSeconds);
   await CountdownService.StartWithPreCountdownAsync(preDuration, mainDuration);
         }
-        else
-        {
+      else
+    {
    CountdownService.Start(mainDuration);
         }
     }
