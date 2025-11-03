@@ -43,14 +43,14 @@
     private void StartCountdown()
     {
         var duration = new TimeSpan(0, minutes, seconds);
-        CountdownService.Start(duration);
+        CountdownService.Start();
     }
 
     private async Task StartWithPreCountdown()
     {
         var preDuration = TimeSpan.FromSeconds(5);
         var mainDuration = new TimeSpan(0, minutes, seconds);
-        await CountdownService.StartWithPreCountdownAsync(preDuration, mainDuration);
+        await CountdownService.StartWithPreCountdownAsync();
     }
 
     private void StopCountdown()

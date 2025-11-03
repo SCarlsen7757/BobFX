@@ -1,6 +1,7 @@
 ﻿@page "/"
 @using BobFx.Core.Services
 @inject CountdownService CountdownService
+@inject IJSRuntime JSRuntime
 @implements IDisposable
 
 <PageTitle>Home</PageTitle>
@@ -9,101 +10,115 @@
     <h1>BobFx Controller</h1>
 
     <div class="countdown-section">
-   @if (!CountdownService.IsRunning && !CountdownService.IsPreCountdownRunning)
-{
-   <div class="duration-controls">
-       <h3>Set Duration</h3>
-       <div class="time-inputs">
-  <div class="time-input-group">
-          <label>Minutes:</label>
- <input type="number" @bind="minutes" min="0" max="60" />
-  </div>
- <div class="time-input-group">
-     <label>Seconds:</label>
-   <input type="number" @bind="seconds" min="0" max="59" />
-     </div>
-         </div>
-
-      <div class="pre-countdown-section">
-         <div class="pre-countdown-toggle">
-         <input type="checkbox" id="enablePreCountdown" @bind="enablePreCountdown" class="form-check-input" />
- <label for="enablePreCountdown">Enable Pre-Countdown</label>
-     </div>
-         
-    @if (enablePreCountdown)
-    {
-   <div class="pre-countdown-input">
-       <label>Pre-Countdown (seconds):</label>
-           <input type="number" @bind="preCountdownSeconds" min="1" max="60" />
-    </div>
-   }
- </div>
-    </div>
+        @if (!CountdownService.IsRunning && !CountdownService.IsPreCountdownRunning)
+        {
+            @if (showGameOver)
+            {
+                <div class="game-over-display">
+                    <div class="game-over-message">Game Over!</div>
+                </div>
+            }
 
             <button class="btn-countdown btn-start" @onclick="StartCountdown">
-<span class="btn-icon">▶</span>
-          <span class="btn-text">Start Countdown</span>
+                <span class="btn-icon">▶</span>
+                <span class="btn-text">Start Countdown</span>
             </button>
         }
         else if (CountdownService.IsPreCountdownRunning)
-  {
-        <div class="pre-countdown-display">
-          <div class="pre-countdown-label">Pre-Countdown Active</div>
-     <div class="pre-countdown-message">Get Ready!</div>
-  </div>
-   <button class="btn-countdown btn-stop" @onclick="StopCountdown">
-    <span class="btn-icon">■</span>
-           <span class="btn-text">Stop</span>
-         </button>
-        }
-    else
         {
-       <button class="btn-countdown btn-stop" @onclick="StopCountdown">
-       <span class="btn-icon">■</span>
-      <span class="btn-text">Stop Countdown</span>
-  </button>
-      }
+            <div class="pre-countdown-display">
+                <div class="pre-countdown-label">Pre-Countdown Active</div>
+                <div class="pre-countdown-time">@FormatTime(CountdownService.PreCountdownRemaining)</div>
+            </div>
+        }
+        else
+        {
+            @if (showBobMessage)
+            {
+                <div class="bob-message-display">
+                    <div class="bob-message">BOB!</div>
+                </div>
+            }
+            else
+            {
+                <div class="countdown-running-display">
+                    <div class="countdown-running-time">Game on!</div>
+                </div>
+                <button class="btn-countdown btn-stop" @onclick="StopCountdown">
+                    <span class="btn-icon">■</span>
+                    <span class="btn-text">Stop Countdown</span>
+                </button>
+            }
+        }
     </div>
 </div>
 
 @code {
-    private int minutes = 15;
-    private int seconds = 0;
-    private bool enablePreCountdown = false;
-    private int preCountdownSeconds = 3;
+    private bool showBobMessage = false;
+    private bool showGameOver = false;
 
     protected override void OnInitialized()
     {
- CountdownService.OnTick += OnTick;
+        CountdownService.OnTick += OnTick;
+        CountdownService.OnStartOfEvent += OnCountdownStart;
+        CountdownService.OnEndOfEvent += OnCountdownEnd;
     }
 
     private void OnTick()
     {
-      InvokeAsync(StateHasChanged);
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async void OnCountdownStart(TimeSpan duration)
+    {
+        showBobMessage = true;
+        showGameOver = false;
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(2500); // Show "BOB!" for 2.5 seconds
+        showBobMessage = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async void OnCountdownEnd()
+    {
+        showGameOver = true;
+        await InvokeAsync(StateHasChanged);
+
+        // Auto-dismiss game over after 15 seconds
+        await Task.Delay(15000);
+        showGameOver = false;
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task StartCountdown()
     {
- var mainDuration = new TimeSpan(0, minutes, seconds);
-    
-     if (enablePreCountdown)
+        showGameOver = false; // Reset game over message
+        await CountdownService.StartWithPreCountdownAsync();
+    }
+
+    private async Task StopCountdown()
     {
-     var preDuration = TimeSpan.FromSeconds(preCountdownSeconds);
-  await CountdownService.StartWithPreCountdownAsync(preDuration, mainDuration);
-        }
-      else
-    {
-   CountdownService.Start(mainDuration);
+        // Show confirmation dialog
+        var confirmed = await JSRuntime.InvokeAsync<bool>(
+       "confirm", 
+       "Are you sure you want to stop the countdown?");
+        
+        if (confirmed)
+   {
+            CountdownService.Stop();
+            showBobMessage = false;
         }
     }
 
- private void StopCountdown()
+    private string FormatTime(TimeSpan time)
     {
-        CountdownService.Stop();
+        return $"{(int)time.TotalSeconds}";
     }
 
     public void Dispose()
     {
         CountdownService.OnTick -= OnTick;
+        CountdownService.OnStartOfEvent -= OnCountdownStart;
+        CountdownService.OnEndOfEvent -= OnCountdownEnd;
     }
 }

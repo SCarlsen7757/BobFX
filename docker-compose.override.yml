@@ -6,6 +6,11 @@ services:
       - TARGET_ADDRESS=192.168.100.255
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:8080
+
+      # Countdown Configuration
+      - PRE_COUNTDOWN_TIME_SECONDS=5
+      - COUNTDOWN_TIME_SECONDS=60
+      - COUNTDOWN_DEVIATION_SECONDS=20
     
     # Override network mode for Windows/Visual Studio debugging
     # Use default bridge networking instead of host mode
