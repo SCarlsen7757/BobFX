@@ -77,7 +77,7 @@ namespace BobFx.Core.Services
         // Backwards-compatible overload
         public Task SendAsync(byte[] data, CancellationToken cancellationToken = default)
         {
-            if (data is null) throw new ArgumentNullException(nameof(data));
+            ArgumentNullException.ThrowIfNull(data);
             return SendAsync(data.AsMemory(), cancellationToken);
         }
 

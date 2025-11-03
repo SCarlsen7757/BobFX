@@ -65,7 +65,6 @@
                 IsRunning = false;
                 remaining = TimeSpan.Zero;
                 logger.LogInformation("Countdown stopped");
-                OnCountdownEnded();
             }
         }
 
@@ -95,14 +94,6 @@
                 OnEndOfEvent?.Invoke();
                 logger.LogInformation("Countdown ended");
             }
-        }
-
-        private void OnCountdownStarted()
-        {
-        }
-
-        private void OnCountdownEnded()
-        {
         }
     }
 }

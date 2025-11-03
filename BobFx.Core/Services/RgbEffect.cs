@@ -8,5 +8,9 @@
         Scanner,
         Solid,
         FadeIn,
+        FadeOut,
+        Breathing,
+        Twinkle,
+        Blink,
     }
 }

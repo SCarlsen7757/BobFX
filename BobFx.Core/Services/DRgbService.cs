@@ -1,38 +1,33 @@
-﻿using System.Numerics;
+﻿using BobFx.Core.Services.Effects;
+using System.Numerics;
 
 namespace BobFx.Core.Services
 {
     public class DRgbService
     {
         private readonly ILogger<DRgbService> logger;
+        private readonly IRgbEffectFactory effectFactory;
         private readonly Lock @lock = new();
         private CancellationTokenSource? cts;
-        private RgbEffect currentEffect = RgbEffect.Off;
-        private TimeSpan speed = TimeSpan.FromMilliseconds(100);
+        private IRgbEffect? currentEffect;
         private Task? effectTask;
-        int direction = 1; // 1 = forward, -1 = backward
 
         public Vector3[] Leds { get; private set; }
-
         public event Action? OnUpdate;
 
-        public RgbEffect CurrentEffect => currentEffect;
-        public TimeSpan Speed => speed;
-
+        public RgbEffect CurrentEffect => currentEffect?.EffectType ?? RgbEffect.Off;
+        public TimeSpan Speed => currentEffect?.Speed ?? TimeSpan.FromMilliseconds(100);
+        public IRgbEffect? CurrentEffectInstance => currentEffect;
         public int LedCount { get; private set; }
-
-        public Vector3 PrimaryColor { get; private set; } = new Vector3(1, 0, 0); //Red
-        public Vector3 SecondaryColor { get; private set; } = new Vector3(1, 1, 1); //Black
-
         public bool IsUdpActive { get; set; } = false;
 
-        public DRgbService(int ledCount = 30, ILogger<DRgbService>? logger = null)
+        public DRgbService(int ledCount = 30, ILogger<DRgbService>? logger = null, IRgbEffectFactory? effectFactory = null)
         {
             this.logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DRgbService>.Instance;
+            this.effectFactory = effectFactory ?? new RgbEffectFactory();
             LedCount = ledCount;
             Leds = new Vector3[ledCount];
             this.logger.LogInformation("DRgbService initialized with {LedCount} LEDs", ledCount);
-
         }
 
         public void SetLedCount(int newCount)
@@ -52,80 +47,61 @@ namespace BobFx.Core.Services
                 {
                     Leds[i] = Vector3.Zero;
                 }
+
+                // Reinitialize current effect with new LED count
+                currentEffect?.Initialize(newCount);
+
                 logger.LogInformation("LED count set to {LedCount}", newCount);
             }
         }
 
-        public void SetPrimaryColor(string color)
+        /// <summary>
+        /// Start an effect using the effect instance directly.
+        /// </summary>
+        public async Task StartEffectAsync(IRgbEffect effect)
         {
-            PrimaryColor = HexToRgb(color);
-            logger.LogInformation("Primary color set to {Color}", color);
-        }
+            ArgumentNullException.ThrowIfNull(effect);
 
-        public void SetSecondaryColor(string color)
-        {
-            SecondaryColor = HexToRgb(color);
-            logger.LogInformation("Secondary color set to {Color}", color);
-        }
-
-        public async Task StartEffectAsync(RgbEffect effect, TimeSpan? speed = null)
-        {
-            if (currentEffect == effect)
+            // Validate the effect before starting
+            var validation = effect.Validate();
+            if (!validation.IsValid)
             {
-                if (speed is null) return;
-                SetSpeed((TimeSpan)speed);
-                return;
+                throw new InvalidOperationException(
+                   $"Effect validation failed: {string.Join(", ", validation.Errors)}");
             }
 
-            Task? oldTask = null;
-            CancellationTokenSource? oldCts = null;
-
-            lock (@lock)
-            {
-                if (cts != null)
-                {
-                    oldCts = cts;
-                    cts.Cancel();
-                }
-
-                oldTask = effectTask;
-                cts = null;
-            }
-
-            if (oldTask is not null)
-            {
-                try
-                {
-                    await oldTask;
-                }
-                catch (TaskCanceledException)
-                {
-                    // Expected, safe to ignore
-                }
-                catch (OperationCanceledException)
-                {
-                    // Also fine
-                }
-                finally
-                {
-                    oldCts?.Dispose();
-                }
-            }
+            await StopAndWaitForCurrentEffect();
 
             lock (@lock)
             {
                 currentEffect = effect;
-                if (speed is not null)
-                {
-                    this.speed = (TimeSpan)speed;
-                }
-
+                currentEffect.Initialize(LedCount);
                 cts = new CancellationTokenSource();
                 effectTask = RunEffectAsync(cts.Token);
-                logger.LogInformation("Started effect {Effect} with speed {Speed}ms", effect, this.speed.TotalMilliseconds);
+                logger.LogInformation("Started effect {Effect} with speed {Speed}ms",
+          effect.EffectType, effect.Speed.TotalMilliseconds);
             }
         }
 
+        /// <summary>
+        /// Start an effect using a builder.
+        /// </summary>
+        public async Task StartEffectAsync(Action<RgbEffectBuilder> configure)
+        {
+            var builder = new RgbEffectBuilder(effectFactory);
+            configure(builder);
+            var effect = builder.Build();
+            await StartEffectAsync(effect);
+        }
+
+        /// <summary>
+        /// Start an effect by type with default configuration.
+        /// </summary>
+        public async Task StartEffectAsync(RgbEffect effectType)
+        {
+            var effect = effectFactory.Create(effectType);
+            await StartEffectAsync(effect);
+        }
 
         public void StopEffect()
         {
@@ -140,8 +116,57 @@ namespace BobFx.Core.Services
         {
             lock (@lock)
             {
-                this.speed = speed;
-                logger.LogInformation("Effect speed set to {Speed}ms", speed.TotalMilliseconds);
+                if (currentEffect != null)
+                {
+                    currentEffect.Speed = speed;
+                    logger.LogInformation("Effect speed set to {Speed}ms", speed.TotalMilliseconds);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Update the current effect's properties while it's running.
+        /// </summary>
+        public void UpdateEffect(Action<IRgbEffect> update)
+        {
+            lock (@lock)
+            {
+                if (currentEffect != null)
+                {
+                    update(currentEffect);
+                    logger.LogInformation("Effect {Effect} updated", currentEffect.EffectType);
+                }
+            }
+        }
+
+        private async Task StopAndWaitForCurrentEffect()
+        {
+            CancellationTokenSource? oldCts = null;
+            Task? oldTask;
+
+            lock (@lock)
+            {
+                if (cts != null)
+                {
+                    oldCts = cts;
+                    cts.Cancel();
+                }
+                oldTask = effectTask;
+                cts = null;
+            }
+
+            if (oldTask is not null)
+            {
+                try
+                {
+                    await oldTask;
+                }
+                catch (TaskCanceledException) { }
+                catch (OperationCanceledException) { }
+                finally
+                {
+                    oldCts?.Dispose();
+                }
             }
         }
 
@@ -159,118 +184,72 @@ namespace BobFx.Core.Services
 
         private async Task RunEffectAsync(CancellationToken token)
         {
-            int step = 0;
+            bool wasCancelled = false;
             try
             {
-                while (!token.IsCancellationRequested)
+                while (!token.IsCancellationRequested && currentEffect != null)
                 {
-                    switch (currentEffect)
+                    bool completed;
+
+                    lock (@lock)
                     {
-                        case RgbEffect.Rainbow:
-                            ApplyRainbow(step);
-                            step = (step + 4) % 360;
-                            break;
-
-                        case RgbEffect.Strobe:
-                            ApplyStrobe(step);
-                            step = (step + 1) % 2;
-                            break;
-
-                        case RgbEffect.Scanner:
-                            ApplyScanner(step);
-                            step += direction;
-
-                            // Reverse direction at ends
-                            if (step >= LedCount - 1)
-                                direction = -1;
-                            else if (step <= 0)
-                                direction = 1;
-                            break;
-
-                        case RgbEffect.Solid:
-                            ApplySolid();
-                            break;
-
-                        case RgbEffect.FadeIn:
-                            ApplyFadeIn(step);
-                            step++;
-                            break;
-
-                        case RgbEffect.Off:
-                        default:
-                            ClearStrip();
-                            break;
+                        // Apply the effect using the strategy pattern
+                        completed = currentEffect.Apply(Leds.AsSpan(), token);
                     }
 
                     OnUpdate?.Invoke();
-                    await Task.Delay(speed, token);
+
+                    if (completed)
+                    {
+                        logger.LogInformation("Effect {Effect} completed", currentEffect.EffectType);
+                        break;
+                    }
+
+                    await Task.Delay(currentEffect.Speed, token);
                 }
             }
-            catch (TaskCanceledException) { }
+            catch (TaskCanceledException)
+            {
+                wasCancelled = true;
+            }
+            catch (OperationCanceledException)
+            {
+                wasCancelled = true;
+            }
             finally
             {
-                currentEffect = RgbEffect.Off;
-                ClearStrip();
+                // Only clear the strip if the effect was cancelled, not if it completed naturally
+                if (wasCancelled)
+                {
+                    ClearStrip();
+                }
+                else
+                {
+                    // Effect completed naturally, trigger one final update to show the final state
+                    OnUpdate?.Invoke();
+                }
             }
-        }
-
-        // --- Effect implementations ---
-
-        private void ApplyRainbow(int offset)
-        {
-            for (int i = 0; i < LedCount; i++)
-            {
-                int hue = (i * 360 / LedCount + offset) % 360;
-                Leds[i] = HsvToRgb(hue, 1.0f, 1.0f);
-            }
-        }
-
-        private void ApplyStrobe(int step)
-        {
-            Vector3 color = (step % 2 == 0) ? SecondaryColor : PrimaryColor;
-            for (int i = 0; i < LedCount; i++)
-                Leds[i] = color;
-        }
-
-        private void ApplyScanner(int step)
-        {
-            ClearStrip();
-            int pos = step % LedCount;
-            Leds[pos] = PrimaryColor;
-        }
-
-        private void ApplySolid()
-        {
-            for (int i = 0; i < LedCount; i++)
-                Leds[i] = PrimaryColor;
-        }
-
-        private void ApplyFadeIn(int step)
-        {
-            // Calculate brightness from 0% to 100% over 100 steps
-            float brightness = Math.Min(step / 100f, 1.0f);
-            Vector3 fadedColor = PrimaryColor * brightness;
-
-            for (int i = 0; i < LedCount; i++)
-                Leds[i] = fadedColor;
         }
 
         public byte[] ToByteArray()
         {
             byte[] data = new byte[Leds.Length * 3];
 
-            for (int i = 0; i < Leds.Length; i++)
+            lock (@lock)
             {
-                int index = i * 3;
-                data[index] = (byte)(Math.Clamp(Leds[i].X, 0f, 1f) * 255); // R
-                data[index + 1] = (byte)(Math.Clamp(Leds[i].Y, 0f, 1f) * 255); // G
-                data[index + 2] = (byte)(Math.Clamp(Leds[i].Z, 0f, 1f) * 255); // B
+                for (int i = 0; i < Leds.Length; i++)
+                {
+                    int index = i * 3;
+                    var (r, g, b) = ColorHelper.ToRgbBytes(Leds[i]);
+                    data[index] = r;
+                    data[index + 1] = g;
+                    data[index + 2] = b;
+                }
             }
 
             return data;
         }
 
-        // Non-allocating copy into a provided span. Caller must ensure the span length is at least Leds.Length*3.
         public void CopyTo(Span<byte> dest)
         {
             int required = Leds.Length * 3;
@@ -282,55 +261,12 @@ namespace BobFx.Core.Services
                 for (int i = 0; i < Leds.Length; i++)
                 {
                     int index = i * 3;
-                    dest[index] = (byte)(Math.Clamp(Leds[i].X, 0f, 1f) * 255); // R
-                    dest[index + 1] = (byte)(Math.Clamp(Leds[i].Y, 0f, 1f) * 255); // G
-                    dest[index + 2] = (byte)(Math.Clamp(Leds[i].Z, 0f, 1f) * 255); // B
+                    var (r, g, b) = ColorHelper.ToRgbBytes(Leds[i]);
+                    dest[index] = r;
+                    dest[index + 1] = g;
+                    dest[index + 2] = b;
                 }
             }
-        }
-
-        // --- Helper to convert HSV to RGB ---
-        private static Vector3 HsvToRgb(float h, float s, float v)
-        {
-            float c = v * s;
-            float x = c * (1 - MathF.Abs((h / 60) % 2 - 1));
-            float m = v - c;
-            float r1, g1, b1;
-
-            if (h < 60) { r1 = c; g1 = x; b1 = 0; }
-            else if (h < 120) { r1 = x; g1 = c; b1 = 0; }
-            else if (h < 180) { r1 = 0; g1 = c; b1 = x; }
-            else if (h < 240) { r1 = 0; g1 = x; b1 = c; }
-            else if (h < 300) { r1 = x; g1 = 0; b1 = c; }
-            else { r1 = c; g1 = 0; b1 = x; }
-
-            return new Vector3(r1 + m, g1 + m, b1 + m);
-        }
-
-        public static Vector3 HexToRgb(string hex)
-        {
-            if (string.IsNullOrWhiteSpace(hex))
-                throw new ArgumentException("Hex color cannot be null or empty", nameof(hex));
-
-            hex = hex.TrimStart('#');
-
-            if (hex.Length != 6)
-                throw new ArgumentException("Hex color must be 6 characters long", nameof(hex));
-
-            byte r = Convert.ToByte(hex.Substring(0, 2), 16);
-            byte g = Convert.ToByte(hex.Substring(2, 2), 16);
-            byte b = Convert.ToByte(hex.Substring(4, 2), 16);
-
-            // Normalize to 0..1
-            return new Vector3(r / 255f, g / 255f, b / 255f);
-        }
-
-        public static string RgbToHex(Vector3 color)
-        {
-            int r = (int)(Math.Clamp(color.X, 0f, 1f) * 255);
-            int g = (int)(Math.Clamp(color.Y, 0f, 1f) * 255);
-            int b = (int)(Math.Clamp(color.Z, 0f, 1f) * 255);
-            return $"#{r:X2}{g:X2}{b:X2}";
         }
     }
 }
