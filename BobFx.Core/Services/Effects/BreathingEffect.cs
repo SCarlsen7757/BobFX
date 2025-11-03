@@ -19,17 +19,10 @@ public class BreathingEffect : RgbEffectBase
         var cycleProgress = (elapsed.TotalMilliseconds % (BreathDuration.TotalMilliseconds * 2)) / (BreathDuration.TotalMilliseconds * 2);
 
         // Calculate brightness (0 to 1 to 0)
-        float normalizedBrightness;
-        if (cycleProgress < 0.5)
-        {
-            // Fade in (0 to 1)
-            normalizedBrightness = (float)(cycleProgress * 2);
-        }
-        else
-        {
-            // Fade out (1 to 0)
-            normalizedBrightness = (float)((1 - cycleProgress) * 2);
-        }
+        // Fade in (0 to 1) then out (1 to 0)
+        float normalizedBrightness = (float)(cycleProgress < 0.5
+            ? cycleProgress * 2
+            : (1 - cycleProgress) * 2);
 
         // Map from 0-1 to MinBrightness-MaxBrightness
         float brightness = MinBrightness + (normalizedBrightness * (MaxBrightness - MinBrightness));
