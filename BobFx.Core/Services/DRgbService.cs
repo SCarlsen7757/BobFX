@@ -67,7 +67,7 @@ namespace BobFx.Core.Services
             if (!validation.IsValid)
             {
                 throw new InvalidOperationException(
-                   $"Effect validation failed: {string.Join(", ", validation.Errors)}");
+                    $"Effect validation failed: {string.Join(", ", validation.Errors)}");
             }
 
             await StopAndWaitForCurrentEffect();
