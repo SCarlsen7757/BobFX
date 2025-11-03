@@ -23,7 +23,7 @@ namespace BobFx.Core.Controllers
                 await ledService.StartEffectAsync(builder =>
                {
                    builder.WithEffect(ledEffect)
-             .WithSpeed(speedMs);
+                   .WithSpeed(speedMs);
                });
 
                 return Ok(new { message = $"Effect {ledEffect} started at {speedMs}ms" });
