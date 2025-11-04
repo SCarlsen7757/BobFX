@@ -65,8 +65,6 @@ namespace BobFx.Core.Services
         /// </summary>
         public async Task ScanAsync(CancellationToken cancellationToken = default)
         {
-            var updated = new List<WLedDevice>();
-
             try
             {
                 const string serviceType = "_wled._tcp.local.";
