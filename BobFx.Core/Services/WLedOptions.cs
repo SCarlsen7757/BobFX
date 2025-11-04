@@ -20,7 +20,7 @@
 
         public class DiscoveryOptions
         {
-            public TimeSpan UpdateInterval { get; set; } = TimeSpan.FromMilliseconds(60);
+            public TimeSpan UpdateInterval { get; set; } = TimeSpan.FromSeconds(60);
         }
     }
 }
