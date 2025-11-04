@@ -1,4 +1,5 @@
 ﻿using BobFx.Core.Services.Effects;
+using Microsoft.Extensions.Options;
 using System.Numerics;
 
 namespace BobFx.Core.Services
@@ -12,47 +13,26 @@ namespace BobFx.Core.Services
         private IRgbEffect? currentEffect;
         private Task? effectTask;
 
-        public Vector3[] Leds { get; private set; }
+        public Vector3[] Leds { get; init; }
         public event Action? OnUpdate;
 
         public RgbEffect CurrentEffect => currentEffect?.EffectType ?? RgbEffect.Off;
         public TimeSpan Speed => currentEffect?.Speed ?? TimeSpan.FromMilliseconds(100);
         public IRgbEffect? CurrentEffectInstance => currentEffect;
-        public int LedCount { get; private set; }
+        public int LedCount { get; init; }
         public bool IsUdpActive { get; set; } = false;
 
-        public DRgbService(int ledCount = 30, ILogger<DRgbService>? logger = null, IRgbEffectFactory? effectFactory = null)
+        public DRgbService(ILogger<DRgbService> logger,
+                           IOptions<WLedOptions.LedOptions> ledOptions,
+                           IRgbEffectFactory effectFactory)
         {
-            this.logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DRgbService>.Instance;
-            this.effectFactory = effectFactory ?? new RgbEffectFactory();
-            LedCount = ledCount;
-            Leds = new Vector3[ledCount];
-            this.logger.LogInformation("DRgbService initialized with {LedCount} LEDs", ledCount);
-        }
+            this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            this.effectFactory = effectFactory ?? throw new ArgumentNullException(nameof(effectFactory));
+            ArgumentNullException.ThrowIfNull(ledOptions);
 
-        public void SetLedCount(int newCount)
-        {
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(newCount);
-
-            lock (@lock)
-            {
-                var newLeds = new Vector3[newCount];
-                int copyCount = Math.Min(Leds.Length, newCount);
-                Array.Copy(Leds, newLeds, copyCount);
-
-                Leds = newLeds;
-                LedCount = newCount;
-
-                for (int i = copyCount; i < newCount; i++)
-                {
-                    Leds[i] = Vector3.Zero;
-                }
-
-                // Reinitialize current effect with new LED count
-                currentEffect?.Initialize(newCount);
-
-                logger.LogInformation("LED count set to {LedCount}", newCount);
-            }
+            LedCount = ledOptions.Value.LedCount;
+            Leds = new Vector3[LedCount];
+            this.logger.LogInformation("DRgbService initialized with {LedCount} LEDs", LedCount);
         }
 
         /// <summary>

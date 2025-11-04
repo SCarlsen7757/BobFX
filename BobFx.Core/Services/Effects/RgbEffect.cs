@@ -1,4 +1,4 @@
-﻿namespace BobFx.Core.Services
+﻿namespace BobFx.Core.Services.Effects
 {
     public enum RgbEffect
     {

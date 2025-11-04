@@ -1,4 +1,4 @@
-namespace BobFx.Core.Services;
+namespace BobFx.Core.Services.Effects;
 
 /// <summary>
 /// Metadata about what each effect needs.

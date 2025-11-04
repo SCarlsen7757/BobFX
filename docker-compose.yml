@@ -5,24 +5,24 @@ services:
       dockerfile: BobFx.Core/Dockerfile
     container_name: bobfx-app
     ports:
-      - "8080:8080"
+      - "5159:5159"
     environment:   
       # BobFx Configuration (WLED)
-      - LED_COUNT=40
-      - TARGET_ADDRESS=255.255.255.255
-      - TARGET_PORT=21324
-      - UPDATE_INTERVAL_MS=10
+      - WLED_LED_COUNT=40
+      - WLED_TARGET_ADDRESS=255.255.255.255
+      - WLED_TARGET_PORT=21324
+      - WLED_UPDATE_INTERVAL_MS=10
+      - WLED_DISCOVERY_INTERVAL_SECONDS=60 
       
       # Countdown Configuration
       - PRE_COUNTDOWN_TIME_SECONDS=5
       - COUNTDOWN_TIME_SECONDS=600
       - COUNTDOWN_DEVIATION_SECONDS=120
 
-
       # ASP.NET Core Configuration
       - ASPNETCORE_ENVIRONMENT=Production
-      - ASPNETCORE_URLS=http://+:8080
-      - ASPNETCORE_HTTP_PORTS=8080
+      - ASPNETCORE_URLS=http://+:5159
+      - ASPNETCORE_HTTP_PORTS=5159
   
     # Host network mode for Linux production (works for UDP broadcast)
     network_mode: "host"

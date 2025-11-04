@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using Microsoft.Extensions.Options;
+using System.Net;
 using System.Net.Sockets;
 
 namespace BobFx.Core.Services
@@ -10,11 +11,19 @@ namespace BobFx.Core.Services
 
         public IPEndPoint TargetEndpoint { get; }
 
-        public UdpClientService(string targetAddress, int targetPort, ILogger<UdpClientService> logger)
+        public UdpClientService(ILogger<UdpClientService> logger,
+                                IOptions<WLedOptions.UpdOptions> udpOptions)
         {
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            ArgumentNullException.ThrowIfNull(udpOptions);
+
+            var targetAddress = udpOptions.Value.TargetAddress;
+            var targetPort = udpOptions.Value.TargetPort;
+
             if (string.IsNullOrWhiteSpace(targetAddress))
-                throw new ArgumentException("targetAddress cannot be null or empty", nameof(targetAddress));
+                throw new ArgumentException("targetAddress cannot be null or empty", nameof(udpOptions));
+            if (targetPort <= 0 || targetPort > 65535)
+                throw new ArgumentOutOfRangeException(nameof(udpOptions), "targetPort must be between 1 and 65535");
 
             try
             {

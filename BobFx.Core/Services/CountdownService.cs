@@ -1,4 +1,6 @@
-﻿namespace BobFx.Core.Services
+﻿using Microsoft.Extensions.Options;
+
+namespace BobFx.Core.Services
 {
     public class CountdownService
     {
@@ -18,19 +20,17 @@
         public TimeSpan Remaining => remaining;
         public TimeSpan PreCountdownRemaining => preCountdownRemaining;
 
-        public TimeSpan PreCountdownDuration { get; init; } = TimeSpan.FromSeconds(5);
-        public TimeSpan CountdownDuration { get; init; } = TimeSpan.FromSeconds(600);
-        public TimeSpan CountdownDeviation { get; init; } = TimeSpan.FromSeconds(120);
+        private readonly CountdownOptions options;
+
+        public TimeSpan PreCountdownDuration { get => options.PreCountdownDuration; }
+        public TimeSpan CountdownDuration { get => options.CountdownDuration; }
+        public TimeSpan CountdownDeviation { get => options.CountdownDeviation; }
 
         public CountdownService(ILogger<CountdownService> logger,
-                                TimeSpan preCountdownDuration,
-                                TimeSpan countdownDuration,
-                                TimeSpan countdownDeviation)
+                                IOptions<CountdownOptions> options)
         {
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            PreCountdownDuration = preCountdownDuration;
-            CountdownDuration = countdownDuration;
-            CountdownDeviation = countdownDeviation;
+            this.options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             logger.LogInformation("CountdownService initialized");
         }
 
