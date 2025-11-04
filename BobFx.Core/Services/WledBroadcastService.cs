@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using System.Buffers;
 
 namespace BobFx.Core.Services
@@ -7,24 +8,25 @@ namespace BobFx.Core.Services
     /// Reads from DRgbService and sends WLED DRGB protocol packets over broadcast address.
     /// Sends at a configurable rate to prevent WLED timeout and ensure smooth display.
     /// </summary>
-    public class WledBroadcastService : BackgroundService
+    public class WLedBroadcastService : BackgroundService
     {
         private readonly DRgbService rgbService;
         private readonly UdpClientService udpClient;
-        private readonly ILogger<WledBroadcastService> logger;
+        private readonly ILogger<WLedBroadcastService> logger;
         private readonly ArrayPool<byte> bufferPool = ArrayPool<byte>.Shared;
         private readonly TimeSpan broadcastInterval;
 
-        public WledBroadcastService(
-            DRgbService rgbService,
-            UdpClientService udpClient,
-            ILogger<WledBroadcastService> logger,
-            TimeSpan broadcastInterval)
+        public WLedBroadcastService(ILogger<WLedBroadcastService> logger,
+                                    IOptionsMonitor<WLedOptions.UpdOptions> udpOptions,
+                                    DRgbService rgbService,
+                                    UdpClientService udpClient)
         {
             this.rgbService = rgbService ?? throw new ArgumentNullException(nameof(rgbService));
             this.udpClient = udpClient ?? throw new ArgumentNullException(nameof(udpClient));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            this.broadcastInterval = broadcastInterval;
+            ArgumentNullException.ThrowIfNull(udpOptions);
+
+            this.broadcastInterval = udpOptions.CurrentValue.UpdateInterval;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)

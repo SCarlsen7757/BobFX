@@ -1,3 +1,5 @@
+using BobFx.Core.Services.Effects;
+
 namespace BobFx.Core.Services
 {
     /// <summary>
@@ -12,13 +14,13 @@ namespace BobFx.Core.Services
         private CancellationTokenSource? switchEffectCts;
         private CancellationTokenSource? stopUdpCts;
 
-        public RgbControlService(CountdownService countdownService,
-            DRgbService rgbService,
-            ILogger<RgbControlService> logger)
+        public RgbControlService(ILogger<RgbControlService> logger,
+                                 CountdownService countdownService,
+                                 DRgbService rgbService)
         {
+            this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
             this.countdownService = countdownService ?? throw new ArgumentNullException(nameof(countdownService));
             this.rgbService = rgbService ?? throw new ArgumentNullException(nameof(rgbService));
-            this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
             // Subscribe to countdown events
             countdownService.OnPreCountdown += OnPreCountdown;

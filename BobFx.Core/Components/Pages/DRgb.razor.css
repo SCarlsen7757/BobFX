@@ -1,0 +1,81 @@
+.parameters {
+    display: grid;
+    gap: 10px;
+  margin: 20px 0;
+    max-width: 400px;
+}
+
+    .parameters div {
+        display: flex;
+        justify-content: space-between;
+     align-items: center;
+    }
+
+    .parameters label {
+        font-weight: bold;
+        margin-right: 10px;
+}
+
+.effect-info {
+    font-style: italic;
+    color: #666;
+    margin: 10px 0;
+}
+
+.btn {
+    padding: 8px 16px;
+    margin-right: 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.btn-success {
+    background-color: #28a745;
+    color: white;
+}
+
+.btn-danger {
+    background-color: #dc3545;
+    color: white;
+}
+
+.error-message {
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+    padding: 10px;
+  margin-top: 10px;
+    border-radius: 4px;
+}
+
+.led-preview {
+    display: flex;
+    gap: 2px;
+    margin-top: 20px;
+    padding: 10px;
+    border: 1px solid #ccc;
+}
+
+    .led-preview h5 {
+        margin-right: 10px;
+  }
+
+.led-strip {
+    display: flex;
+    gap: 2px;
+}
+
+.led-pixel {
+    width: 10px;
+    height: 20px;
+    border: 1px solid #333;
+}
+
+.debug-info {
+    margin-top: 10px;
+    padding: 10px;
+    background-color: #f0f0f0;
+    border: 1px solid #ccc;
+    font-size: 0.85em;
+}

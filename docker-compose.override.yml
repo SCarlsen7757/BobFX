@@ -2,20 +2,19 @@ services:
   bobfx:
     environment:
       # Development overrides
-      - LED_COUNT=24
-      - TARGET_ADDRESS=192.168.100.255
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_URLS=http://+:8080
+      - WLED_LED_COUNT=24
+      - WLED_TARGET_ADDRESS=192.168.100.255
+      - WLED_DISCOVERY_INTERVAL_SECONDS=10
 
       # Countdown Configuration
       - PRE_COUNTDOWN_TIME_SECONDS=5
       - COUNTDOWN_TIME_SECONDS=60
       - COUNTDOWN_DEVIATION_SECONDS=20
-    
+      
+      # ASP.NET Core Configuration
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5159
+
     # Override network mode for Windows/Visual Studio debugging
     # Use default bridge networking instead of host mode
     network_mode: "bridge"
- 
-    # Ensure ports are mapped (required for bridge mode)
-    ports:
-      - "8080:8080"

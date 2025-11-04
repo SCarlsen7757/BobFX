@@ -1,0 +1,156 @@
+@page "/wled"
+@using BobFx.Core.Services
+@using System.Net
+@inject WLedDiscoveryService Discovery
+
+<h3>WLED Discovery</h3>
+
+<div>
+    <button @onclick="Refresh" class="btn btn-primary">Scan</button>
+    <button @onclick="Clear" class="btn btn-secondary">Clear</button>
+</div>
+
+<div style="margin-top:10px;">
+    @if (Devices == null || Devices.Count == 0)
+    {
+        <p>No devices found</p>
+    }
+    else
+    {
+        <table class="table table-dark">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>IP</th>
+                    <th>Host Name</th>
+                    <th>MAC</th>
+                    <th>Version</th>
+                    <th>Port</th>
+                    <th>Last Seen</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var d in Devices)
+                {
+                    <tr>
+                        <td>@d.Name</td>
+                        <td>@d.Address</td>
+                        <td>@d.HostName</td>
+                        <td>@FormatMac(d.Mac)</td>
+                        <td>@d.Version</td>
+                        <td>@d.Port</td>
+                        <td>@d.LastSeen.ToLocalTime()</td>
+                        <td>@(d.IsOnline ? "Online" : "Offline")</td>
+                        <td>
+                            @if (d.IsOnline)
+                            {
+                                <a href="http://@d.Address" target="_blank" class="btn btn-sm btn-outline-light">Web page</a>
+                                <button @onclick="() => ShowDetails(d)" class="btn btn-sm btn-outline-info ms-1">Details</button>
+                            }
+                            else
+                            {
+                                <button @onclick="() => RemoveDevice(d.Address)" class="btn btn-sm btn-outline-danger">Delete</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@if (ShowModal)
+{
+    <div class="modal fade show" style="display:block;" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content bg-dark text-light">
+                <div class="modal-header">
+                    <h5 class="modal-title">Device Details: @SelectedDevice?.Name</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (SelectedDevice?.Info != null)
+                    {
+                        <p><strong>WiFi Strength:</strong> @SelectedDevice.Info.Wifi?.Rssi dBm</p>
+                        <p><strong>LED Count:</strong> @SelectedDevice.Info.Leds?.Count</p>
+                        <p><strong>Brand:</strong> @SelectedDevice.Info.Brand</p>
+                        <p><strong>Product:</strong> @SelectedDevice.Info.Product</p>
+                        <p><strong>Architecture:</strong> @SelectedDevice.Info.Arch</p>
+                        <p><strong>Core Version:</strong> @SelectedDevice.Info.Core</p>
+                        <p><strong>Free Heap:</strong> @SelectedDevice.Info.Freeheap bytes</p>
+                        @if (!string.IsNullOrWhiteSpace(SelectedDevice.Info.Lm))
+                        {
+                            <p><strong>Data source type:</strong> @SelectedDevice.Info.Lm</p>
+                            <p><strong>Data source IP address:</strong> @SelectedDevice.Info.Lip</p>
+                        }
+                        <p><strong>Uptime:</strong> @TimeSpan.FromSeconds(@SelectedDevice.Info.Uptime).ToString()</p>
+                    }
+                    else
+                    {
+                        <p>No additional info available.</p>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show" @onclick="CloseModal"></div>
+}
+
+@code {
+    private IReadOnlyList<WLedDevice> Devices => Discovery.Devices;
+    private string FormatMac(string mac)
+    {
+        if (string.IsNullOrEmpty(mac) || mac.Length != 12) return mac;
+        return $"{mac[0..2]}:{mac[2..4]}:{mac[4..6]}:{mac[6..8]}:{mac[8..10]}:{mac[10..12]}";
+    }
+
+    private WLedDevice? SelectedDevice { get; set; }
+    private bool ShowModal { get; set; }
+
+    protected override void OnInitialized()
+    {
+        Discovery.DevicesUpdated += Discovery_DevicesUpdated;
+    }
+
+    private void Discovery_DevicesUpdated(IReadOnlyList<WLedDevice> devices)
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task Refresh()
+    {
+        await Discovery.ScanAsync();
+    }
+
+    private void Clear()
+    {
+        Discovery.Clear();
+    }
+
+    private void RemoveDevice(IPAddress address)
+    {
+        Discovery.Remove(address);
+    }
+
+    private void ShowDetails(WLedDevice device)
+    {
+        SelectedDevice = device;
+        ShowModal = true;
+    }
+
+    private void CloseModal()
+    {
+        ShowModal = false;
+        SelectedDevice = null;
+    }
+
+    public void Dispose()
+    {
+        Discovery.DevicesUpdated -= Discovery_DevicesUpdated;
+    }
+}

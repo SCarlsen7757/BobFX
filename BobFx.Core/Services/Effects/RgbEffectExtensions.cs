@@ -1,6 +1,4 @@
-using BobFx.Core.Services.Effects;
-
-namespace BobFx.Core.Services;
+namespace BobFx.Core.Services.Effects;
 
 /// <summary>
 /// Extension methods for creating common RGB effect configurations.
