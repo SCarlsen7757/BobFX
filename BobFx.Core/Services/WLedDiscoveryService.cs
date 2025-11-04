@@ -154,17 +154,13 @@ namespace BobFx.Core.Services
                         device = new WLedDevice(ipAddr, port, name, hostName, mac, ver, now, true, info);
                         devices[key] = device;
                     }
-                    updated.Add(device);
                     logger.LogInformation("Found WLED device {Name} at {Ip}:{Port}", name, ip, port);
                 }
 
                 var cutoff = DateTime.UtcNow - (interval * 4);
-                foreach (var kvp in devices.ToArray())
+                foreach (var kvp in devices.Where(kvp => kvp.Value.LastSeen < cutoff).ToArray())
                 {
-                    if (kvp.Value.LastSeen < cutoff)
-                    {
-                        devices[kvp.Key] = kvp.Value with { IsOnline = false };
-                    }
+                    devices[kvp.Key] = kvp.Value with { IsOnline = false };
                 }
 
                 DevicesUpdated?.Invoke(Devices);
