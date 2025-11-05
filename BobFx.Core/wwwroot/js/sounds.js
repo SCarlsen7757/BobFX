@@ -27,7 +27,7 @@ window.bobfx.playSound = function (keyOrPath) {
  var player = window.bobfx._audio[path];
  // If already playing, rewind
  try { player.pause(); } catch (e) { }
- player.currentTime =0;
+ player.currentTime = 0;
  player.play().catch(function (e) {
  // Autoplay may be blocked; ignore errors
  });
