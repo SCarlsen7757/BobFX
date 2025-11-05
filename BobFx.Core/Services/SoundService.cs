@@ -52,10 +52,16 @@ public class SoundService
 
             await jsRuntime.InvokeVoidAsync("bobfx.playSound", relativeUrl);
         }
-        catch (Exception ex)
+        catch (JSException ex)
         {
             // Swallow JS exceptions to keep server resilient but log for diagnostics
             logger.LogDebug(ex, "Failed to invoke JS to play sound {SoundKey}", soundKey);
+        }
+        catch (Exception ex)
+        {
+            // Log unexpected exceptions at a higher severity
+            logger.LogError(ex, "Unexpected error while trying to play sound {SoundKey}", soundKey);
+            throw;
         }
     }
 
