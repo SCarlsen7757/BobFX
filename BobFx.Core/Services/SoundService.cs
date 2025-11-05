@@ -127,7 +127,7 @@ public class SoundService
             logger.LogDebug(ex, "Failed to resolve random sound for key {SoundKey}", soundKey);
             return null;
         }
-        catch (DirectoryNotFoundException ex)
+        catch (Exception ex)
         {
             logger.LogDebug(ex, "Failed to resolve random sound for key {SoundKey}", soundKey);
             return null;
