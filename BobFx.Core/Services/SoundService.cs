@@ -11,7 +11,6 @@ public class SoundService
 {
     private readonly IWebHostEnvironment env;
     private readonly ILogger<SoundService> logger;
-    private readonly Random rng = new();
     private IJSRuntime? jsRuntime;
 
     public SoundService(IWebHostEnvironment env, ILogger<SoundService> logger)
@@ -36,7 +35,7 @@ public class SoundService
     /// from the appropriate subfolder under wwwroot/sounds.
     /// Supported keys: "start" (game_on), "end" (game_over).
     /// </summary>
-    public async void Play(string soundKey)
+    public async Task Play(string soundKey)
     {
         try
         {
@@ -100,7 +99,7 @@ public class SoundService
                 return null;
             }
 
-            var chosen = files[rng.Next(files.Length)];
+            var chosen = files[Random.Shared.Next(files.Length)];
             // Convert to web-relative path, using forward slashes
             var webRoot = env.WebRootPath ?? string.Empty;
             var relativePath = chosen.StartsWith(webRoot) ? chosen[webRoot.Length..] : chosen;
