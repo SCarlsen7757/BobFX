@@ -51,10 +51,16 @@ public class SoundService
 
             await jsRuntime.InvokeVoidAsync("bobfx.playSound", relativeUrl);
         }
-        catch (Exception ex)
+        catch (JSException ex)
         {
             // Swallow JS exceptions to keep server resilient but log for diagnostics
             logger.LogDebug(ex, "Failed to invoke JS to play sound {SoundKey}", soundKey);
+        }
+        catch (Exception ex)
+        {
+            // Log unexpected exceptions at a higher severity
+            logger.LogError(ex, "Unexpected error while trying to play sound {SoundKey}", soundKey);
+            throw;
         }
     }
 
@@ -111,7 +117,17 @@ public class SoundService
 
             return relativePath;
         }
-        catch (Exception ex)
+        catch (IOException ex)
+        {
+            logger.LogDebug(ex, "Failed to resolve random sound for key {SoundKey}", soundKey);
+            return null;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            logger.LogDebug(ex, "Failed to resolve random sound for key {SoundKey}", soundKey);
+            return null;
+        }
+        catch (DirectoryNotFoundException ex)
         {
             logger.LogDebug(ex, "Failed to resolve random sound for key {SoundKey}", soundKey);
             return null;
