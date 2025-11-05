@@ -118,7 +118,17 @@ public class SoundService
 
             return relativePath;
         }
-        catch (Exception ex)
+        catch (IOException ex)
+        {
+            logger.LogDebug(ex, "Failed to resolve random sound for key {SoundKey}", soundKey);
+            return null;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            logger.LogDebug(ex, "Failed to resolve random sound for key {SoundKey}", soundKey);
+            return null;
+        }
+        catch (DirectoryNotFoundException ex)
         {
             logger.LogDebug(ex, "Failed to resolve random sound for key {SoundKey}", soundKey);
             return null;
