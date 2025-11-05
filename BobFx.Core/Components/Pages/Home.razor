@@ -2,9 +2,12 @@
 @using BobFx.Core.Services
 @inject CountdownService CountdownService
 @inject IJSRuntime JSRuntime
+@inject SoundService SoundService
 @implements IDisposable
 
 <PageTitle>Home</PageTitle>
+
+<script src="/js/sounds.js"></script>
 
 <div class="home-container">
     <h1>BobFx Controller</h1>
@@ -64,6 +67,15 @@
         CountdownService.OnTick += OnTick;
         CountdownService.OnStartOfEvent += OnCountdownStart;
         CountdownService.OnEndOfEvent += OnCountdownEnd;
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Register JS runtime with SoundService so server code can call into browser
+            SoundService.RegisterJsRuntime(JSRuntime);
+        }
     }
 
     private void OnTick()
@@ -162,5 +174,8 @@
         bobMessageCts?.Dispose();
         gameOverCts?.Cancel();
         gameOverCts?.Dispose();
+
+        // Unregister JS runtime
+        SoundService.UnregisterJsRuntime(JSRuntime);
     }
 }

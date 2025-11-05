@@ -81,7 +81,11 @@ builder.Services.AddSingleton<CountdownService>();
 builder.Services.AddSingleton<DRgbService>();
 builder.Services.AddSingleton<UdpClientService>();
 
-builder.Services.AddSingleton<RgbControlService>();
+// Sound service for JS interop
+builder.Services.AddSingleton<SoundService>();
+
+// Register combined service that controls RGB and triggers sounds server-side
+builder.Services.AddSingleton<RgbAndSoundControlService>();
 
 builder.Services.AddSingleton<WLedBroadcastService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<WLedBroadcastService>());
@@ -97,7 +101,7 @@ builder.Services.AddHttpClient();
 
 var app = builder.Build();
 
-_ = app.Services.GetRequiredService<RgbControlService>();
+_ = app.Services.GetRequiredService<RgbAndSoundControlService>();
 _ = app.Services.GetRequiredService<WLedDiscoveryService>();
 
 // Configure the HTTP request pipeline.

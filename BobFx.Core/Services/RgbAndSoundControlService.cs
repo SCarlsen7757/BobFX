@@ -3,31 +3,34 @@ using BobFx.Core.Services.Effects;
 namespace BobFx.Core.Services
 {
     /// <summary>
-    /// Logic service that coordinates RGB effects with countdown events.
-    /// This is the main orchestration layer for all RGB behavior.
+    /// Logic service that coordinates RGB effects with countdown events and notifies browser clients to play sounds.
+    /// This is the main orchestration layer for all RGB and sound behavior.
     /// </summary>
-    public class RgbControlService
+    public class RgbAndSoundControlService
     {
         private readonly CountdownService countdownService;
         private readonly DRgbService rgbService;
-        private readonly ILogger<RgbControlService> logger;
+        private readonly ILogger<RgbAndSoundControlService> logger;
+        private readonly SoundService soundService;
         private CancellationTokenSource? switchEffectCts;
         private CancellationTokenSource? stopUdpCts;
 
-        public RgbControlService(ILogger<RgbControlService> logger,
-                                 CountdownService countdownService,
-                                 DRgbService rgbService)
+        public RgbAndSoundControlService(ILogger<RgbAndSoundControlService> logger,
+                                         CountdownService countdownService,
+                                         DRgbService rgbService,
+                                         SoundService soundService)
         {
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
             this.countdownService = countdownService ?? throw new ArgumentNullException(nameof(countdownService));
             this.rgbService = rgbService ?? throw new ArgumentNullException(nameof(rgbService));
+            this.soundService = soundService ?? throw new ArgumentNullException(nameof(soundService));
 
             // Subscribe to countdown events
             countdownService.OnPreCountdown += OnPreCountdown;
             countdownService.OnStartOfEvent += OnCountdownStarted;
             countdownService.OnEndOfEvent += OnCountdownEnded;
 
-            logger.LogInformation("RgbControlService initialized and subscribed to countdown events");
+            logger.LogInformation("RgbAndSoundControlService initialized and subscribed to countdown events");
         }
 
         // --- Countdown Event Handlers ---
@@ -47,6 +50,8 @@ namespace BobFx.Core.Services
                     .WithSpeed(10)
                     .WithFadeDuration(duration);
             });
+
+            // No pre-countdown sound — only Game On and Game Over sounds are used
         }
 
         private void OnCountdownStarted(TimeSpan duration)
@@ -65,7 +70,9 @@ namespace BobFx.Core.Services
                     .WithSpeed(200);
             });
 
-            // Switch to solid green after 5 seconds
+            // Start sound removed. Only Game Over will play sounds.
+
+            // Switch to solid green after5 seconds
             _ = SwitchToRunningEffectAsync();
         }
 
@@ -107,7 +114,10 @@ namespace BobFx.Core.Services
                     .WithSpeed(250);
             });
 
-            // Stop UDP after showing red strobe for 5 seconds
+            // Notify clients to play end/stop sound (Game Over)
+            soundService.Play("end");
+
+            // Stop UDP after showing red strobe for5 seconds
             _ = StopUdpAfterDelayAsync();
         }
 
