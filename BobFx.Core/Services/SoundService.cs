@@ -78,10 +78,18 @@ public class SoundService
             if (candidates.Length == 0)
                 return null;
 
+            // WebRootPath is required; cannot proceed without it
+            var webRoot = env.WebRootPath;
+            if (string.IsNullOrEmpty(webRoot))
+            {
+                logger.LogWarning("WebRootPath is not configured; cannot resolve sound files");
+                return null;
+            }
+
             string? soundsFolder = null;
             foreach (var candidate in candidates)
             {
-                var folder = Path.Combine(env.WebRootPath ?? string.Empty, "sounds", candidate);
+                var folder = Path.Combine(webRoot, "sounds", candidate);
                 if (Directory.Exists(folder))
                 {
                     soundsFolder = folder;
@@ -107,7 +115,6 @@ public class SoundService
 
             var chosen = files[Random.Shared.Next(files.Length)];
             // Convert to web-relative path, using forward slashes
-            var webRoot = env.WebRootPath ?? string.Empty;
             var relativePath = chosen.StartsWith(webRoot) ? chosen[webRoot.Length..] : chosen;
             relativePath = relativePath.Replace("\\", "/");
 
