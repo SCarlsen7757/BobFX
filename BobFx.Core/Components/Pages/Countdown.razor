@@ -1,83 +1,52 @@
-﻿@page "/countdown"
+@page "/countdown"
 @using BobFx.Core.Services
 @inject CountdownService CountdownService
-@implements IDisposable
+@inject RgbAndSoundControlService Control
+@implements IAsyncDisposable
 
-<PageTitle>Countdown</PageTitle>
-
-<h1>Countdown Timer</h1>
-
-<div class="countdown-display">
-    <h1>@timeRemaining</h1>
+<PageTitle>Countdown settings</PageTitle>
+<h1>Countdown settings</h1>
+<p role="status">Remaining: @CountdownService.Remaining.ToString(@"hh\:mm\:ss")</p>
+<div class="parameters">
+    <label for="minutes">Minutes (0–180)</label><input id="minutes" type="number" @bind="minutes" min="0" max="180" />
+    <label for="seconds">Seconds (0–59)</label><input id="seconds" type="number" @bind="seconds" min="0" max="59" />
+    <label for="pre">Pre-countdown seconds (1–60)</label><input id="pre" type="number" @bind="pre" min="1" max="60" />
+    <label for="deviation">Random deviation seconds (0–300)</label><input id="deviation" type="number" @bind="deviation" min="0" max="300" />
 </div>
-
-<div style="margin-top:10px;">
-    <label>Minutes: </label>
-    <input type="number" @bind="minutes" min="0" style="width:60px;" />
-    <label>Seconds: </label>
-    <input type="number" @bind="seconds" min="0" max="59" style="width:60px;" />
+<div class="button-group">
+    <button @onclick="() => StartAsync(false)" disabled="@(Control.Phase is GamePhase.PreCountdown or GamePhase.Running)">Start</button>
+    <button @onclick="() => StartAsync(true)" disabled="@(Control.Phase != GamePhase.Idle)">Start with pre-countdown</button>
+    <button @onclick="StopAsync" disabled="@(Control.Phase == GamePhase.Idle)">Stop</button>
 </div>
-
-<div style="margin-top:10px;">
-    <label>Pre-Countdown (seconds): </label>
-    <input type="number" @bind="preCountdownSeconds" min="1" max="60" style="width:60px;" />
-</div>
-
-<div style="margin-top:10px;">
-    <label>Deviation (seconds): </label>
-    <input type="number" @bind="deviationSeconds" min="0" max="300" style="width:60px;" />
-    <span style="margin-left:10px; color: #a0a0a0; font-size: 0.9em;">
-      (±@deviationSeconds seconds random variation)
-</span>
-</div>
-
-<div style="margin-top:10px;">
-    <button @onclick="StartCountdown" disabled="@(CountdownService.IsRunning || CountdownService.IsPreCountdownRunning)">Start</button>
-    <button @onclick="StartWithPreCountdown" disabled="@(CountdownService.IsRunning || CountdownService.IsPreCountdownRunning)">Start with Pre</button>
-    <button @onclick="StopCountdown" disabled="@(!CountdownService.IsRunning)">Stop</button>
-</div>
-
+@if (error is not null) { <p role="alert" class="error-message">@error</p> }
 @code {
-    private int minutes = 15;
-    private int seconds = 0;
-    private int preCountdownSeconds = 5;
-    private int deviationSeconds = 120;
-    private string timeRemaining = string.Empty;
-
-    protected override void OnInitialized()
+    private int minutes = 15, seconds, pre = 5, deviation = 120;
+    private string? error;
+    private readonly CancellationTokenSource lifetime = new();
+    private Task? refresh;
+    protected override void OnInitialized() => refresh = RefreshAsync();
+    private async Task RefreshAsync()
     {
-        CountdownService.OnTick += OnTick;
-        timeRemaining = CountdownService.Remaining.ToString(@"hh\:mm\:ss");
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
+        try { while (await timer.WaitForNextTickAsync(lifetime.Token)) await InvokeAsync(StateHasChanged); }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { /* Navigating away cancels the settings refresh timer. */ }
     }
-
-    private void OnTick()
+    private async Task StartAsync(bool withPre)
     {
-        timeRemaining = CountdownService.Remaining.ToString(@"hh\:mm\:ss");
-        InvokeAsync(StateHasChanged);
+        error = null;
+        if (minutes is < 0 or > 180 || seconds is < 0 or > 59 || pre is < 1 or > 60 || deviation is < 0 or > 300 || minutes * 60 + seconds <= deviation)
+        { error = "Enter valid limits. Total duration must exceed random deviation."; return; }
+        try { await Control.StartGameAsync(withPre, TimeSpan.FromSeconds(pre), TimeSpan.FromSeconds(minutes * 60 + seconds), TimeSpan.FromSeconds(deviation)); }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { error = ex.Message; }
     }
-
-    private void StartCountdown()
+    private async Task StopAsync() { try { await Control.StopGameAsync(); } catch (InvalidOperationException ex) { error = ex.Message; } }
+    public async ValueTask DisposeAsync()
     {
-        var duration = new TimeSpan(0, minutes, seconds);
-        var deviation = TimeSpan.FromSeconds(deviationSeconds);
-        CountdownService.Start(duration, deviation);
-    }
-
-    private async Task StartWithPreCountdown()
-    {
-        var preCountdownDuration = TimeSpan.FromSeconds(preCountdownSeconds);
-        var countdownDuration = new TimeSpan(0, minutes, seconds);
-        var countdownDeviation = TimeSpan.FromSeconds(deviationSeconds);
-        await CountdownService.StartWithPreCountdownAsync(preCountdownDuration, countdownDuration, countdownDeviation);
-    }
-
-    private void StopCountdown()
-    {
-        CountdownService.Stop();
-    }
-
-    public void Dispose()
-    {
-        CountdownService.OnTick -= OnTick;
+        await lifetime.CancelAsync();
+        if (refresh is not null)
+        {
+            await refresh;
+        }
+        lifetime.Dispose();
     }
 }

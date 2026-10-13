@@ -1,0 +1,39 @@
+# Linux host on the same LAN as WLED devices. Do not merge with development.
+services:
+  bobfx:
+    image: ${BOBFX_IMAGE_REPOSITORY:-ghcr.io/scarlsen7757/bobfx}@${BOBFX_IMAGE_DIGEST:?Set the published sha256 image digest}
+    network_mode: host
+    user: "1654:1654"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+      - /home/app/.aspnet:rw,noexec,nosuid,size=16m,uid=1654,gid=1654,mode=0700
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://${BOBFX_BIND_ADDRESS:?Set the host LAN IPv4 address}:5159
+      BOBFX_HEALTH_URL: http://${BOBFX_BIND_ADDRESS:?Set the host LAN IPv4 address}:5159/health/ready
+      AllowedHosts: ${BOBFX_ALLOWED_HOSTS:?Set explicit hostnames or LAN IPs separated by semicolons}
+      Security__AllowedClientNetworks__0: ${BOBFX_ALLOWED_CLIENT_CIDR:?Set the trusted operator IPv4/IPv6 CIDR}
+      WLed__Led__LedCount: ${WLED_LED_COUNT:-40}
+      WLed__Udp__TargetAddress: ${WLED_TARGET_ADDRESS:?Set the LAN subnet broadcast IPv4 address}
+      WLed__Udp__TargetPort: ${WLED_TARGET_PORT:-21324}
+      WLed__Udp__UpdateIntervalMs: ${WLED_UPDATE_INTERVAL_MS:-16}
+      WLed__Discovery__UpdateIntervalSeconds: ${WLED_DISCOVERY_INTERVAL_SECONDS:-60}
+      Countdown__PreDurationSeconds: ${PRE_COUNTDOWN_DURATION_SECONDS:-5}
+      Countdown__DurationSeconds: ${COUNTDOWN_DURATION_SECONDS:-600}
+      Countdown__DeviationSeconds: ${COUNTDOWN_DEVIATION_SECONDS:-120}
+      Logging__LogLevel__Default: Information
+      Logging__LogLevel__BobFx.Core.Services: Information
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

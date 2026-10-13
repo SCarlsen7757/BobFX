@@ -1,0 +1,101 @@
+@inject SoundService Sounds
+@inject IJSRuntime JS
+@inject ILogger<BrowserAudio> Logger
+@implements IAsyncDisposable
+@using BobFx.Core.Services
+
+<div class="audio-controls">
+    <button @ref="button" disabled="@(!ready)">@(enabled ? "Mute audio" : "Enable audio")</button>
+    <span role="status">@status</span>
+</div>
+
+@code {
+    private ElementReference button;
+    private IJSObjectReference? module;
+    private DotNetObjectReference<BrowserAudio>? callback;
+    private int sessionId;
+    private Task? initialization;
+    private bool enabled, ready, disposed;
+    private bool IsDisposed => Volatile.Read(ref disposed);
+    private string status = "Audio is muted in this browser.";
+    protected override void OnInitialized() => Sounds.SoundRequested += OnSound;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        initialization = InitializeAsync();
+        await initialization;
+    }
+    private async Task InitializeAsync()
+    {
+        try
+        {
+            module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/sounds.js");
+            if (IsDisposed) return;
+            callback = DotNetObjectReference.Create(this);
+            sessionId = await module.InvokeAsync<int>("initialize", button, callback);
+            if (IsDisposed) return;
+            ready = true;
+            StateHasChanged();
+        }
+        catch (JSDisconnectedException ex) { Logger.LogDebug(ex, "Audio circuit closed during initialization"); }
+        catch (Exception ex) when (ex is JSException or OperationCanceledException)
+        {
+            status = "Audio controls could not load. Reload to retry.";
+            Logger.LogWarning(ex, "Browser audio initialization failed");
+            if (!IsDisposed) StateHasChanged();
+        }
+    }
+    [JSInvokable]
+    public Task AudioStatusChanged(bool active, string message) => IsDisposed ? Task.CompletedTask : InvokeAsync(() =>
+    {
+        if (IsDisposed) return;
+        enabled = active;
+        status = message;
+        StateHasChanged();
+    });
+    private void OnSound(string path)
+    {
+        if (!IsDisposed) _ = DeliverAsync(path);
+    }
+    private async Task DeliverAsync(string path)
+    {
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (IsDisposed || !enabled || module is null) return;
+                try { await module.InvokeVoidAsync("play", sessionId, path); }
+                catch (JSException ex) { Logger.LogWarning(ex, "Sound playback failed"); if (!IsDisposed) { status = "Sound playback failed. Enable audio again."; enabled = false; StateHasChanged(); } }
+            });
+        }
+        catch (Exception ex) when (ex is JSDisconnectedException or JSException or OperationCanceledException or ObjectDisposedException)
+        { Logger.LogDebug(ex, "Audio delivery ended with circuit closure or playback failure"); }
+        catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
+        {
+            // This event callback is detached; let Blazor handle unexpected failures on its circuit.
+            await DispatchExceptionAsync(ex);
+        }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        Volatile.Write(ref disposed, true);
+        Sounds.SoundRequested -= OnSound;
+        try
+        {
+            // Initialization may have created a session after disposal began.
+            // Wait for its real identifier before removing the browser listener.
+            if (initialization is not null) await initialization;
+            if (module is not null) await module.InvokeVoidAsync("dispose", sessionId);
+        }
+        catch (Exception ex) when (ex is JSDisconnectedException or JSException or OperationCanceledException) { Logger.LogDebug(ex, "Audio circuit closed"); }
+        finally
+        {
+            using var callbackLifetime = callback;
+            try
+            {
+                if (module is not null) await module.DisposeAsync();
+            }
+            catch (Exception ex) when (ex is JSDisconnectedException or JSException or OperationCanceledException) { Logger.LogDebug(ex, "Audio module disposal ended with circuit closure"); }
+        }
+    }
+}

@@ -1,120 +1,73 @@
 using BobFx.Core.Components;
 using BobFx.Core.Services;
 using BobFx.Core.Services.Effects;
-using Microsoft.AspNetCore.Hosting.StaticWebAssets;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
-
 builder.Logging.ClearProviders();
-builder.Logging.AddConsole();
-
-builder.Logging.AddSimpleConsole(options =>
-{
-    options.SingleLine = true;
-    options.ColorBehavior = Microsoft.Extensions.Logging.Console.LoggerColorBehavior.Enabled;
-});
-
-StaticWebAssetsLoader.UseStaticWebAssets(builder.Environment, builder.Configuration);
-
-builder.Services.Configure<WLedOptions>(options =>
-{
-    options.Led.LedCount = builder.Configuration.GetValue<int?>("WLED_LED_COUNT")
-                           ?? builder.Configuration.GetValue<int?>("WLed:Led:LedCount")
-                           ?? 30;
-    options.Udp.TargetAddress = builder.Configuration.GetValue<string?>("WLED_TARGET_ADDRESS")
-                                ?? builder.Configuration.GetValue<string?>("WLed:Udp:TargetAddress")
-                                ?? "255.255.255.255";
-    options.Udp.TargetPort = builder.Configuration.GetValue<int?>("WLED_TARGET_PORT")
-                             ?? builder.Configuration.GetValue<int?>("WLed:Udp:TargetPort")
-                             ?? 21324;
-    options.Udp.UpdateInterval = TimeSpan.FromMilliseconds(builder.Configuration.GetValue<int?>("WLED_UPDATE_INTERVAL_MS")
-                                                           ?? builder.Configuration.GetValue<int?>("WLed:Udp:UpdateIntervalMs")
-                                                           ?? 16);
-    options.Discovery.UpdateInterval = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("WLED_DISCOVERY_INTERVAL_SECONDS")
-                                                            ?? builder.Configuration.GetValue<int?>("WLed:Discovery:UpdateIntervalSeconds")
-                                                            ?? 60);
-});
-
-builder.Services.Configure<WLedOptions.LedOptions>(options =>
-{
-    options.LedCount = builder.Configuration.GetValue<int?>("WLED_LED_COUNT")
-                       ?? builder.Configuration.GetValue<int?>("WLed:Led:LedCount")
-                       ?? 30;
-});
-
-builder.Services.Configure<WLedOptions.UpdOptions>(options =>
-{
-    options.TargetAddress = builder.Configuration.GetValue<string?>("WLED_TARGET_ADDRESS")
-                            ?? builder.Configuration.GetValue<string?>("WLed:Udp:TargetAddress")
-                            ?? "255.255.255.255";
-    options.TargetPort = builder.Configuration.GetValue<int?>("WLED_TARGET_PORT")
-                         ?? builder.Configuration.GetValue<int?>("WLed:Udp:TargetPort")
-                         ?? 21324;
-    options.UpdateInterval = TimeSpan.FromMilliseconds(builder.Configuration.GetValue<int?>("WLED_UPDATE_INTERVAL_MS")
-                                                       ?? builder.Configuration.GetValue<int?>("WLed:Udp:UpdateIntervalMs")
-                                                       ?? 16);
-});
-
-builder.Services.Configure<WLedOptions.DiscoveryOptions>(options =>
-{
-    options.UpdateInterval = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("WLED_DISCOVERY_INTERVAL_SECONDS")
-                                                  ?? builder.Configuration.GetValue<int?>("WLed:Discovery:UpdateIntervalSeconds")
-                                                  ?? 60);
-});
-
-builder.Services.Configure<CountdownOptions>(options =>
-{
-    options.PreCountdownDuration = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("PRE_COUNTDOWN_DURATION_SECONDS")
-                                                        ?? builder.Configuration.GetValue<int?>("Countdown:PreDurationSeconds")
-                                                        ?? 3);
-    options.CountdownDuration = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("COUNTDOWN_DURATION_SECONDS")
-                                                     ?? builder.Configuration.GetValue<int?>("Countdown:DurationSeconds")
-                                                     ?? 60);
-    options.CountdownDeviation = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("COUNTDOWN_DEVIATION_SECONDS")
-                                                      ?? builder.Configuration.GetValue<int?>("Countdown:DeviationSeconds")
-                                                      ?? 5);
-});
-
+builder.Logging.AddSimpleConsole(options => options.SingleLine = true);
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddOptions<WLedOptions>().BindConfiguration("WLed")
+    .Validate(options => options.IsValid(), "WLED requires 1–490 LEDs, IPv4 target, valid port, 10–500ms UDP interval and 5–3600s discovery interval.").ValidateOnStart();
+builder.Services.AddOptions<CountdownOptions>().BindConfiguration("Countdown")
+    .Validate(options => options.IsValid(), "Countdown requires 0–60s pre-duration, 1–86400s duration, and deviation smaller than duration.").ValidateOnStart();
+builder.Services.AddOptions<SecurityOptions>().BindConfiguration("Security")
+    .Validate(options => builder.Environment.IsDevelopment() || options.IsValid(), "Production requires explicit Security:AllowedClientNetworks CIDRs.").ValidateOnStart();
 builder.Services.AddSingleton<IRgbEffectFactory, RgbEffectFactory>();
-
 builder.Services.AddSingleton<CountdownService>();
 builder.Services.AddSingleton<DRgbService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DRgbService>());
 builder.Services.AddSingleton<UdpClientService>();
-
-// Sound service for JS interop
 builder.Services.AddSingleton<SoundService>();
-
-// Register combined service that controls RGB and triggers sounds server-side
 builder.Services.AddSingleton<RgbAndSoundControlService>();
-
+builder.Services.AddHostedService(sp => sp.GetRequiredService<RgbAndSoundControlService>());
 builder.Services.AddSingleton<WLedBroadcastService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<WLedBroadcastService>());
-
 builder.Services.AddSingleton<WLedDiscoveryService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<WLedDiscoveryService>());
-
-builder.Services.AddRazorComponents()
-    .AddInteractiveServerComponents();
-
+builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddControllers();
-builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("wled", client => client.Timeout = TimeSpan.FromSeconds(2))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false });
 
 var app = builder.Build();
-
-_ = app.Services.GetRequiredService<RgbAndSoundControlService>();
-_ = app.Services.GetRequiredService<WLedDiscoveryService>();
-
-// Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
 {
-    app.UseExceptionHandler("/Error", createScopeForErrors: true);
+    var hosts = app.Configuration["AllowedHosts"]?.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    if (hosts is null || hosts.Length == 0 || hosts.Any(host => host.Contains('*')))
+        throw new InvalidOperationException("Production requires explicit AllowedHosts; wildcard hosts are forbidden.");
 }
 
+if (!app.Environment.IsDevelopment()) app.UseExceptionHandler("/Error", createScopeForErrors: true);
+app.Use(async (context, next) =>
+{
+    if (!app.Environment.IsDevelopment() &&
+        !context.RequestServices.GetRequiredService<IOptions<SecurityOptions>>().Value.Allows(context.Connection.RemoteIpAddress))
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden; return;
+    }
+    if (!SecurityOptions.IsSameOrigin(context.Request))
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden; return;
+    }
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["Referrer-Policy"] = "same-origin";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    await next();
+});
 app.UseAntiforgery();
-
+app.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
+app.MapGet("/health/ready", (RgbAndSoundControlService control, DRgbService rgb, WLedBroadcastService broadcast) =>
+    control.IsReady && rgb.IsReady && rgb.LastError is null && (!rgb.IsUdpActive || broadcast.LastError is null) ? Results.Ok(new { status = "ready" }) : Results.StatusCode(StatusCodes.Status503ServiceUnavailable));
+app.MapGet("/health/status", (RgbAndSoundControlService control, DRgbService rgb, WLedBroadcastService broadcast, WLedDiscoveryService discovery) => Results.Ok(new
+{
+    phase = control.Phase.ToString(),
+    renderer = new { ready = rgb.IsReady, error = rgb.LastError },
+    udp = new { active = rgb.IsUdpActive, lastSendUtc = broadcast.LastSendUtc, error = broadcast.LastError },
+    discovery = new { lastScanUtc = discovery.LastScanUtc, error = discovery.LastError, devices = discovery.Devices.Count }
+}));
 app.MapStaticAssets();
 app.MapControllers();
-app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
-
+app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 app.Run();
+public partial class Program;

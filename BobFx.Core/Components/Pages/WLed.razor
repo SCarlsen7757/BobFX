@@ -2,11 +2,16 @@
 @using BobFx.Core.Services
 @using System.Net
 @inject WLedDiscoveryService Discovery
+@inject IJSRuntime JS
+@inject ILogger<WLed> Logger
+@implements IAsyncDisposable
 
-<h3>WLED Discovery</h3>
+<PageTitle>WLED devices</PageTitle>
+<h1>WLED devices</h1>
 
 <div>
-    <button @onclick="Refresh" class="btn btn-primary">Scan</button>
+    <button @ref="scanButton" @onclick="Refresh" disabled="@scanning" class="btn btn-primary">@(scanning ? "Scanning…" : "Scan")</button>
+    <span role="status">@scanStatus</span>
     <button @onclick="Clear" class="btn btn-secondary">Clear</button>
 </div>
 
@@ -46,7 +51,7 @@
                         <td>
                             @if (d.IsOnline)
                             {
-                                <a href="http://@d.Address" target="_blank" class="btn btn-sm btn-outline-light">Web page</a>
+                                <a href="@DeviceUrl(d)" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-light">Web page</a>
                                 <button @onclick="() => ShowDetails(d)" class="btn btn-sm btn-outline-info ms-1">Details</button>
                             }
                             else
@@ -63,12 +68,12 @@
 
 @if (ShowModal)
 {
-    <div class="modal fade show" style="display:block;" tabindex="-1">
+    <dialog @ref="dialog" class="device-dialog" aria-labelledby="device-title">
         <div class="modal-dialog">
             <div class="modal-content bg-dark text-light">
                 <div class="modal-header">
-                    <h5 class="modal-title">Device Details: @SelectedDevice?.Name</h5>
-                    <button type="button" class="btn-close btn-close-white" @onclick="CloseModal"></button>
+                    <h5 id="device-title" class="modal-title">Device Details: @SelectedDevice?.Name</h5>
+                    <button aria-label="Close device details" type="button" class="btn-close btn-close-white" @onclick="CloseModal">Close</button>
                 </div>
                 <div class="modal-body">
                     @if (SelectedDevice?.Info != null)
@@ -97,12 +102,16 @@
                 </div>
             </div>
         </div>
-    </div>
-    <div class="modal-backdrop fade show" @onclick="CloseModal"></div>
+    </dialog>
 }
 
 @code {
     private IReadOnlyList<WLedDevice> Devices => Discovery.Devices;
+    private bool scanning, disposed, openPending;
+    private string? scanStatus;
+    private ElementReference dialog, scanButton;
+    private IJSObjectReference? module;
+    private static string DeviceUrl(WLedDevice device) => new UriBuilder("http", device.Address.ToString(), device.Port).Uri.AbsoluteUri;
     private string FormatMac(string mac)
     {
         if (string.IsNullOrEmpty(mac) || mac.Length != 12) return mac;
@@ -119,12 +128,19 @@
 
     private void Discovery_DevicesUpdated(IReadOnlyList<WLedDevice> devices)
     {
-        InvokeAsync(StateHasChanged);
+        _ = RefreshViewAsync();
     }
 
     private async Task Refresh()
     {
-        await Discovery.ScanAsync();
+        scanning = true; scanStatus = null;
+        try { await Discovery.ScanAsync(); scanStatus = "Scan complete."; }
+        catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
+        {
+            Logger.LogWarning(ex, "Manual WLED scan failed");
+            scanStatus = "Scan failed. Check network connectivity and try again.";
+        }
+        finally { scanning = false; }
     }
 
     private void Clear()
@@ -141,16 +157,38 @@
     {
         SelectedDevice = device;
         ShowModal = true;
+        openPending = true;
     }
 
-    private void CloseModal()
+    private async Task CloseModal()
     {
+        if (module is not null) await module.InvokeVoidAsync("close", dialog, scanButton);
         ShowModal = false;
         SelectedDevice = null;
     }
 
-    public void Dispose()
+    private async Task RefreshViewAsync()
     {
+        try { await InvokeAsync(() => { if (!disposed) StateHasChanged(); }); }
+        catch (ObjectDisposedException ex) when (disposed) { Logger.LogDebug(ex, "WLED view closed during refresh"); }
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (openPending)
+        {
+            openPending = false;
+            module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/dialog.js");
+            await module.InvokeVoidAsync("open", dialog);
+        }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
         Discovery.DevicesUpdated -= Discovery_DevicesUpdated;
+        if (module is not null)
+        {
+            try { await module.DisposeAsync(); }
+            catch (JSDisconnectedException ex) { Logger.LogDebug(ex, "WLED dialog circuit closed during disposal"); }
+        }
     }
 }

@@ -1,23 +1,26 @@
-#See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
-
-FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
-WORKDIR /app
-EXPOSE 8080
-
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+# syntax=docker/dockerfile:1
+FROM mcr.microsoft.com/dotnet/sdk:10.0.401-noble@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317 AS build
 ARG BUILD_CONFIGURATION=Release
+ARG VERSION=0.0.0-local
 WORKDIR /src
-COPY ["BobFx.Core/BobFx.Core.csproj", "BobFx.Core/"]
-RUN dotnet restore "BobFx.Core/BobFx.Core.csproj"
-COPY . .
-WORKDIR "/src/BobFx.Core"
-RUN dotnet build "BobFx.Core.csproj" -c $BUILD_CONFIGURATION -o /app/build
+COPY global.json ./
+COPY BobFx.Core/BobFx.Core.csproj BobFx.Core/
+COPY BobFx.Core/packages.lock.json BobFx.Core/
+RUN dotnet restore BobFx.Core/BobFx.Core.csproj --locked-mode
+COPY BobFx.Core/ BobFx.Core/
+RUN dotnet publish BobFx.Core/BobFx.Core.csproj --no-restore -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false /p:Version=$VERSION
 
-FROM build AS publish
-ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "BobFx.Core.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble@sha256:222759b391a1aaf241166672c8f99b2d4ada452e7b5319f3c6e8f265a37b5ad4 AS base
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+ENV ASPNETCORE_HTTP_PORTS=8080 BOBFX_HEALTH_URL=http://127.0.0.1:8080/health/ready
+EXPOSE 8080
+USER $APP_UID
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD curl --fail --silent --show-error --max-time 3 -H "Host: ${AllowedHosts%%;*}" "$BOBFX_HEALTH_URL" || exit 1
 
 FROM base AS final
-WORKDIR /app
-COPY --from=publish /app/publish .
+ARG VERSION=0.0.0-local
+LABEL org.opencontainers.image.title="BobFX" org.opencontainers.image.version=$VERSION org.opencontainers.image.source="https://github.com/SCarlsen7757/BobFX"
+COPY --from=build --chown=$APP_UID:$APP_UID /app/publish .
 ENTRYPOINT ["dotnet", "BobFx.Core.dll"]

@@ -54,7 +54,11 @@ public class RgbEffectFactory : IRgbEffectFactory
     public IRgbEffect Create(RgbEffect effectType)
     {
         if (_factories.TryGetValue(effectType, out var factory))
-            return factory();
+        {
+            var effect = factory();
+            effect.Speed = effect.GetInfo().DefaultSpeed;
+            return effect;
+        }
 
         throw new InvalidOperationException($"No factory registered for effect type: {effectType}");
     }

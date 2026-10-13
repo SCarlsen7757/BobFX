@@ -14,9 +14,9 @@ public class TwinkleEffect : RgbEffectBase
     private readonly Random random = new();
     private float[]? ledBrightness;
 
-    public override void Initialize(int ledCount)
+    public override void Initialize(int ledCount, TimeProvider? clock = null)
     {
-        base.Initialize(ledCount);
+        base.Initialize(ledCount, clock);
         ledBrightness = new float[ledCount];
 
         // Initialize with random brightness values
@@ -30,7 +30,7 @@ public class TwinkleEffect : RgbEffectBase
     {
         if (ledBrightness == null)
         {
-            Initialize(leds.Length);
+            Initialize(leds.Length, Clock);
         }
 
         for (int i = 0; i < leds.Length; i++)

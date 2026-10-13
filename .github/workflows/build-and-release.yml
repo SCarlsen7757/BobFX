@@ -1,108 +1,211 @@
-﻿name: Build and Release
+name: Build and Release
 
 on:
+  pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
-  build-and-release:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Restore locked dependencies
+        run: dotnet restore BobFx.slnx --locked-mode
+      - name: Build with analyzers
+        run: dotnet build BobFx.slnx --configuration Release --no-restore --warnaserror
+      - name: Test
+        run: dotnet test BobFx.slnx --configuration Release --no-build --logger trx
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Install browser test dependencies
+        working-directory: e2e
+        run: npm ci
+      - name: Typecheck browser tests
+        working-directory: e2e
+        run: npm run typecheck
+      - name: Install Chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+      - name: Test published Blazor app in Chromium
+        working-directory: e2e
+        run: npm test
+      - name: Upload browser test report and failure traces
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-tests
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          retention-days: 14
+      - name: Test browser audio activation and cleanup
+        run: node --test BobFx.Core.Tests/BrowserAudio.test.mjs
+      - name: Reject known vulnerable direct and transitive packages
+        shell: bash
+        run: |
+          dotnet list BobFx.slnx package --vulnerable --include-transitive --format json > vulnerabilities.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("vulnerabilities.json", encoding="utf-8-sig"))
+          vulnerabilities = [
+              package
+              for project in report.get("projects", [])
+              for framework in project.get("frameworks", [])
+              for key in ("topLevelPackages", "transitivePackages")
+              for package in framework.get(key, [])
+              if package.get("vulnerabilities")
+          ]
+          if vulnerabilities:
+              print(json.dumps(vulnerabilities, indent=2))
+              raise SystemExit("Known vulnerable NuGet dependencies found")
+          PY
+      - name: Validate development and production Compose
+        run: |
+          docker compose -f docker-compose.yml config --quiet
+          docker compose --env-file .env.example -f compose.prod.yaml config --quiet
+      - name: Scan repository configuration and secrets
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.75.0
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+  container:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build test image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: BobFx.Core/Dockerfile
+          platforms: linux/${{ matrix.architecture }}
+          load: true
+          tags: bobfx:ci
+          cache-from: type=gha,scope=${{ matrix.architecture }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.architecture }}
+      - name: Scan image dependencies and OS packages
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.75.0
+          image-ref: bobfx:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Smoke test hardened runtime
+        shell: bash
+        run: |
+          docker run -d --name bobfx-smoke --platform linux/${{ matrix.architecture }} \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --tmpfs /home/app/.aspnet:rw,noexec,nosuid,size=16m,uid=1654,gid=1654 \
+            -e ASPNETCORE_ENVIRONMENT=Production -e AllowedHosts=localhost \
+            -e Security__AllowedClientNetworks__0=127.0.0.0/8 \
+            -e WLed__Udp__TargetAddress=127.0.0.1 bobfx:ci
+          for attempt in $(seq 1 30); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' bobfx-smoke)
+            if [ "$status" = healthy ]; then
+              test "$(docker exec bobfx-smoke id -u)" = 1654
+              exit 0
+            fi
+            sleep 3
+          done
+          docker logs bobfx-smoke
+          docker inspect bobfx-smoke
+          exit 1
+      - name: Cleanup
+        if: always()
+        run: docker rm -f bobfx-smoke || true
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [quality, container]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
       id-token: write
       attestations: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
-
-      - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@v4.1.0
-        with:
-          versionSpec: "6.x"
-
-      - name: Determine Version
-        id: gitversion
-        uses: gittools/actions/gitversion/execute@v4.1.0
-
-      - name: Display GitVersion outputs
+      - name: Validate version and registry name
+        id: version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          echo "SemVer: ${{ steps.gitversion.outputs.semVer }}"
-          echo "FullSemVer: ${{ steps.gitversion.outputs.fullSemVer }}"
-          echo "MajorMinorPatch: ${{ steps.gitversion.outputs.majorMinorPatch }}"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.11.1
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3.6.0
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must be vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          git merge-base --is-ancestor HEAD origin/main
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5.8.0
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=${{ steps.gitversion.outputs.fullSemVer }}
-            type=raw,value=${{ steps.gitversion.outputs.majorMinorPatch }}
-            type=raw,value=latest
-
-      - name: Build and push Docker image
+      - name: Publish multi-architecture image
         id: build
-        uses: docker/build-push-action@v6.18.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          file: ./BobFx.Core/Dockerfile
+          file: BobFx.Core/Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.version.outputs.image }}:${{ steps.version.outputs.version }}
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          provenance: mode=max
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
-          build-args: |
-            VERSION=${{ steps.gitversion.outputs.fullSemVer }}
-
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v3
+      - name: Attest image provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-name: ${{ steps.version.outputs.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2.4.1
+      - name: Create release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: v${{ steps.gitversion.outputs.majorMinorPatch }}
-          name: Release v${{ steps.gitversion.outputs.majorMinorPatch }}
+          generate_release_notes: true
           body: |
-            ## 🚀 Docker Images Published
-
-            **Available Tags:**
-            - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.gitversion.outputs.fullSemVer }}`
-            - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.gitversion.outputs.majorMinorPatch }}`
-            - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest`
-
-            ### 📋 Version Information
-            - **Full Version**: ${{ steps.gitversion.outputs.fullSemVer }}
-            - **Semantic Version**: ${{ steps.gitversion.outputs.semVer }}
-            - **Major.Minor.Patch**: ${{ steps.gitversion.outputs.majorMinorPatch }}
-
-            ### 📦 Pull the image
-            ```bash
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            ```
-          draft: false
-          prerelease: false
+            Production image: `${{ steps.version.outputs.image }}@${{ steps.build.outputs.digest }}`
+            Set `BOBFX_IMAGE_DIGEST=${{ steps.build.outputs.digest }}` in your production .env.
+            Supports linux/amd64 and linux/arm64. See README.md for deployment and migration.

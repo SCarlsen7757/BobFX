@@ -1,161 +1,141 @@
 using BobFx.Core.Services.Effects;
+namespace BobFx.Core.Services;
+public enum GamePhase { Idle, PreCountdown, Running, Ending }
 
-namespace BobFx.Core.Services
+/// <summary>Serializes game and manual commands and owns streaming transitions.</summary>
+public sealed class RgbAndSoundControlService(
+    CountdownService countdown, DRgbService rgb, SoundService sounds, TimeProvider clock,
+    ILogger<RgbAndSoundControlService> logger) : BackgroundService
 {
-    /// <summary>
-    /// Logic service that coordinates RGB effects with countdown events and notifies browser clients to play sounds.
-    /// This is the main orchestration layer for all RGB and sound behavior.
-    /// </summary>
-    public class RgbAndSoundControlService
+    private readonly SemaphoreSlim commands = new(1, 1);
+    private int phase;
+    private int ready;
+    public bool IsReady => Volatile.Read(ref ready) != 0;
+    private int shuttingDown;
+    private long phaseStarted;
+    private bool switchedToRunning;
+    public GamePhase Phase => (GamePhase)Volatile.Read(ref phase);
+    private void SetPhase(GamePhase value) { Volatile.Write(ref phase, (int)value); phaseStarted = clock.GetTimestamp(); }
+    public async Task StartGameAsync(bool withPreCountdown = true, TimeSpan? preDuration = null, TimeSpan? duration = null, TimeSpan? deviation = null)
     {
-        private readonly CountdownService countdownService;
-        private readonly DRgbService rgbService;
-        private readonly ILogger<RgbAndSoundControlService> logger;
-        private readonly SoundService soundService;
-        private CancellationTokenSource? switchEffectCts;
-        private CancellationTokenSource? stopUdpCts;
-
-        public RgbAndSoundControlService(ILogger<RgbAndSoundControlService> logger,
-                                         CountdownService countdownService,
-                                         DRgbService rgbService,
-                                         SoundService soundService)
+        await commands.WaitAsync();
+        try
         {
-            this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            this.countdownService = countdownService ?? throw new ArgumentNullException(nameof(countdownService));
-            this.rgbService = rgbService ?? throw new ArgumentNullException(nameof(rgbService));
-            this.soundService = soundService ?? throw new ArgumentNullException(nameof(soundService));
-
-            // Subscribe to countdown events
-            countdownService.OnPreCountdown += OnPreCountdown;
-            countdownService.OnStartOfEvent += OnCountdownStarted;
-            countdownService.OnEndOfEvent += OnCountdownEnded;
-
-            logger.LogInformation("RgbAndSoundControlService initialized and subscribed to countdown events");
-        }
-
-        // --- Countdown Event Handlers ---
-
-        private void OnPreCountdown(TimeSpan duration)
-        {
-            // Cancel any pending switch effect or stop UDP operations
-            CancelSwitchEffect();
-            CancelStopUdp();
-
-            rgbService.IsUdpActive = true;
-
-            _ = rgbService.StartEffectAsync(builder =>
+            EnsureAvailable();
+            if (Phase is GamePhase.PreCountdown or GamePhase.Running) throw new InvalidOperationException("A game is already active.");
+            countdown.Start(withPreCountdown, preDuration, duration, deviation);
+            switchedToRunning = false;
+            rgb.IsUdpActive = true;
+            if (countdown.IsPreCountdownRunning)
             {
-                builder.WithEffect(RgbEffect.FadeIn)
-                    .WithColor("#0000ff") // Blue
-                    .WithSpeed(10)
-                    .WithFadeDuration(duration);
-            });
-
-            // No pre-countdown sound — only Game On and Game Over sounds are used
+                SetPhase(GamePhase.PreCountdown);
+                await rgb.StartEffectAsync(b => b.WithEffect(RgbEffect.FadeIn).WithColor("#0000ff").WithSpeed(10).WithFadeDuration(countdown.PreCountdownRemaining));
+            }
+            else await EnterRunningAsync();
         }
-
-        private void OnCountdownStarted(TimeSpan duration)
+        finally { commands.Release(); }
+    }
+    public async Task StopGameAsync()
+    {
+        await commands.WaitAsync();
+        try
         {
-            // Cancel any pending switch effect or stop UDP operations
-            CancelSwitchEffect();
-            CancelStopUdp();
-
-            rgbService.IsUdpActive = true;
-
-            _ = rgbService.StartEffectAsync(builder =>
-            {
-                builder.WithEffect(RgbEffect.Blink)
-                    .WithColor("#00ff00")
-                    .WithColor("#a2ff00")
-                    .WithSpeed(200);
-            });
-
-            // Start sound removed. Only Game Over will play sounds.
-
-            // Switch to solid green after5 seconds
-            _ = SwitchToRunningEffectAsync();
+            EnsureAvailable();
+            var previous = Phase;
+            countdown.Stop();
+            if (previous == GamePhase.Running) await EnterEndingAsync();
+            else if (previous == GamePhase.PreCountdown) EnterIdle();
         }
-
-        private async Task SwitchToRunningEffectAsync()
+        finally { commands.Release(); }
+    }
+    public async Task StartManualEffectAsync(Action<RgbEffectBuilder> configure)
+    {
+        await commands.WaitAsync();
+        try { EnsureManual(); await rgb.StartEffectAsync(configure); rgb.IsUdpActive = true; }
+        finally { commands.Release(); }
+    }
+    public async Task StopManualEffectAsync()
+    {
+        await commands.WaitAsync();
+        try { EnsureManual(); EnterIdle(); }
+        finally { commands.Release(); }
+    }
+    public async Task SetManualSpeedAsync(TimeSpan speed)
+    {
+        if (speed < TimeSpan.FromMilliseconds(10) || speed > TimeSpan.FromSeconds(60)) throw new ArgumentException("Speed must be 10â€“60000 milliseconds.");
+        await commands.WaitAsync();
+        try { EnsureManual(); rgb.SetSpeed(speed); }
+        finally { commands.Release(); }
+    }
+    public async Task UpdateManualEffectAsync(Action<IRgbEffect> update)
+    {
+        await commands.WaitAsync();
+        try { EnsureManual(); rgb.UpdateEffect(update); }
+        finally { commands.Release(); }
+    }
+    private void EnsureAvailable()
+    {
+        if (Volatile.Read(ref shuttingDown) != 0) throw new InvalidOperationException("The application is shutting down.");
+    }
+    private void EnsureManual()
+    {
+        EnsureAvailable();
+        if (Phase != GamePhase.Idle) throw new InvalidOperationException("The game owns the lights until its ending sequence completes.");
+    }
+    private async Task EnterRunningAsync()
+    {
+        SetPhase(GamePhase.Running);
+        switchedToRunning = false;
+        await rgb.StartEffectAsync(b => b.WithEffect(RgbEffect.Blink).WithColor("#00ff00").WithColor("#a2ff00").WithSpeed(200));
+    }
+    private async Task EnterEndingAsync()
+    {
+        SetPhase(GamePhase.Ending);
+        await rgb.StartEffectAsync(b => b.WithEffect(RgbEffect.Blink).WithColor("#ff0000").WithColor("#ffff00").WithSpeed(250));
+        await sounds.Play("end");
+    }
+    private void EnterIdle()
+    {
+        rgb.IsUdpActive = false; rgb.StopEffect(); SetPhase(GamePhase.Idle);
+    }
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(50), clock);
+        Volatile.Write(ref ready, 1);
+        try
         {
-            // Create a new cancellation token for this switch operation
-            switchEffectCts?.Dispose();
-            switchEffectCts = new CancellationTokenSource();
-
-            try
+            while (await timer.WaitForNextTickAsync(stoppingToken))
             {
-                await Task.Delay(5000, switchEffectCts.Token);
-
-                if (countdownService.IsRunning)
+                await commands.WaitAsync(stoppingToken);
+                try
                 {
-                    await rgbService.StartEffectAsync(builder =>
+                    countdown.Advance();
+                    if (Phase == GamePhase.PreCountdown && countdown.IsRunning) await EnterRunningAsync();
+                    else if (Phase == GamePhase.Running && !countdown.IsRunning) await EnterEndingAsync();
+                    else if (Phase == GamePhase.Running && !switchedToRunning && clock.GetElapsedTime(phaseStarted) >= TimeSpan.FromSeconds(5))
                     {
-                        builder.WithEffect(RgbEffect.Twinkle)
-                            .WithColor("#a2ff00");
-                    });
+                        await rgb.StartEffectAsync(b => b.WithEffect(RgbEffect.Twinkle).WithColor("#a2ff00"));
+                        switchedToRunning = true;
+                    }
+                    else if (Phase == GamePhase.Ending && clock.GetElapsedTime(phaseStarted) >= TimeSpan.FromSeconds(5)) EnterIdle();
                 }
-            }
-            catch (TaskCanceledException)
-            {
-                logger.LogInformation("Switch to running effect was cancelled");
+                finally { commands.Release(); }
             }
         }
-
-        private void OnCountdownEnded()
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { /* Host shutdown cancels the coordinator timer. */ }
+        finally
         {
-            // Cancel any pending switch effect
-            CancelSwitchEffect();
-
-            _ = rgbService.StartEffectAsync(builder =>
-            {
-                builder.WithEffect(RgbEffect.Blink)
-                    .WithColor("#ff0000")
-                    .WithColor("#ffff00")
-                    .WithSpeed(250);
-            });
-
-            // Notify clients to play end/stop sound (Game Over)
-            soundService.Play("end");
-
-            // Stop UDP after showing red strobe for5 seconds
-            _ = StopUdpAfterDelayAsync();
-        }
-
-        private async Task StopUdpAfterDelayAsync()
-        {
-            // Create a new cancellation token for this stop operation
-            stopUdpCts?.Dispose();
-            stopUdpCts = new CancellationTokenSource();
-
-            try
-            {
-                await Task.Delay(5000, stopUdpCts.Token);
-                logger.LogInformation("Stopping RGB after countdown end delay");
-                rgbService.IsUdpActive = false;
-                rgbService.StopEffect();
-            }
-            catch (TaskCanceledException)
-            {
-                logger.LogInformation("Stop UDP after delay was cancelled");
-            }
-        }
-
-        private void CancelSwitchEffect()
-        {
-            if (switchEffectCts != null && !switchEffectCts.IsCancellationRequested)
-            {
-                logger.LogDebug("Cancelling pending switch effect");
-                switchEffectCts.Cancel();
-            }
-        }
-
-        private void CancelStopUdp()
-        {
-            if (stopUdpCts != null && !stopUdpCts.IsCancellationRequested)
-            {
-                logger.LogDebug("Cancelling pending stop UDP");
-                stopUdpCts.Cancel();
-            }
+            Volatile.Write(ref ready, 0);
+            await commands.WaitAsync();
+            try { countdown.Stop(); EnterIdle(); }
+            finally { commands.Release(); }
+            logger.LogInformation("Game coordinator stopped");
         }
     }
+    public override Task StopAsync(CancellationToken cancellationToken)
+    {
+        Volatile.Write(ref shuttingDown, 1);
+        return base.StopAsync(cancellationToken);
+    }
+    public override void Dispose() { Volatile.Write(ref shuttingDown, 1); base.Dispose(); }
 }

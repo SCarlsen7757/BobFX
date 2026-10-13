@@ -1,30 +1,9 @@
-﻿@inherits LayoutComponentBase
-@inject IWebHostEnvironment Environment
-
+@inherits LayoutComponentBase
 <div class="page">
-    @if (Environment.IsDevelopment())
-    {
-        <div class="sidebar">
-            <NavMenu />
-        </div>
-    }
-
-    <main>
-    @if (Environment.IsDevelopment())
-    {
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
-        </div>
-    }
-
-        <article class="content px-4">
-            @Body
-        </article>
-    </main>
+    <div class="sidebar"><NavMenu /></div>
+    <main><article class="content"><BrowserAudio />@Body</article></main>
 </div>
-
 <div id="blazor-error-ui" data-nosnippet>
-    An unhandled error has occurred.
-    <a href="." class="reload">Reload</a>
-    <span class="dismiss">🗙</span>
+    Connection interrupted. <a href=".">Reload</a>
+    <button class="dismiss" aria-label="Dismiss connection error">Close</button>
 </div>

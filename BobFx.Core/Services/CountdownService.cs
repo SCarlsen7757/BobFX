@@ -1,173 +1,97 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
+namespace BobFx.Core.Services;
 
-namespace BobFx.Core.Services
+public sealed record CountdownSnapshot(bool IsRunning, bool IsPreCountdownRunning, TimeSpan Remaining, TimeSpan PreCountdownRemaining, long RunId);
+
+/// <summary>State advanced by the single coordinator, without detached timer tasks.</summary>
+public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<CountdownOptions> options, TimeProvider clock)
 {
-    public class CountdownService
+    private CountdownSnapshot snapshot = new(false, false, TimeSpan.Zero, TimeSpan.Zero, 0);
+    private long startedAt;
+    private TimeSpan phaseDuration;
+    private TimeSpan gameDuration;
+    private long lastNotifiedSecond = -1;
+    public event Action? OnTick;
+    public event Action<TimeSpan>? OnStartOfEvent;
+    public event Action? OnEndOfEvent;
+    public event Action<TimeSpan>? OnPreCountdown;
+    public CountdownSnapshot Snapshot => Volatile.Read(ref snapshot);
+    public bool IsRunning => Snapshot.IsRunning;
+    public bool IsPreCountdownRunning => Snapshot.IsPreCountdownRunning;
+    public TimeSpan Remaining => Snapshot.Remaining;
+    public TimeSpan PreCountdownRemaining => Snapshot.PreCountdownRemaining;
+    public TimeSpan PreCountdownDuration => TimeSpan.FromSeconds(options.Value.PreDurationSeconds);
+    public TimeSpan CountdownDuration => TimeSpan.FromSeconds(options.Value.DurationSeconds);
+    public TimeSpan CountdownDeviation => TimeSpan.FromSeconds(options.Value.DeviationSeconds);
+
+    internal void Start(bool withPre, TimeSpan? pre = null, TimeSpan? duration = null, TimeSpan? deviation = null)
     {
-        private readonly Lock @lock = new();
-        private readonly ILogger<CountdownService> logger;
-        private CancellationTokenSource? cts;
-        private TimeSpan remaining = TimeSpan.Zero;
-        private TimeSpan preCountdownRemaining = TimeSpan.Zero;
+        var preDuration = pre ?? PreCountdownDuration;
+        var baseDuration = duration ?? CountdownDuration;
+        var variation = deviation ?? CountdownDeviation;
+        if (preDuration < TimeSpan.Zero || preDuration > TimeSpan.FromMinutes(1) ||
+            baseDuration < TimeSpan.FromSeconds(1) || baseDuration > TimeSpan.FromHours(24) ||
+            variation < TimeSpan.Zero || variation >= baseDuration || variation.Ticks % TimeSpan.TicksPerSecond != 0)
+            throw new ArgumentException("Use a pre-countdown of 0–60 seconds, duration of 1 second–24 hours, and whole-second deviation smaller than duration.");
+        var seconds = (int)variation.TotalSeconds;
+        gameDuration = baseDuration + TimeSpan.FromSeconds(Random.Shared.Next(-seconds, seconds + 1));
+        startedAt = clock.GetTimestamp();
+        var preActive = withPre && preDuration > TimeSpan.Zero;
+        phaseDuration = preActive ? preDuration : gameDuration;
+        Volatile.Write(ref snapshot, new(!preActive, preActive, preActive ? TimeSpan.Zero : gameDuration,
+            preActive ? preDuration : TimeSpan.Zero, Snapshot.RunId + 1));
+        lastNotifiedSecond = -1;
+        if (preActive) Notify(OnPreCountdown, preDuration); else Notify(OnStartOfEvent, gameDuration);
+        Notify(OnTick);
+    }
 
-        public event Action? OnTick;
-        public event Action<TimeSpan>? OnStartOfEvent;
-        public event Action? OnEndOfEvent;
-        public event Action<TimeSpan>? OnPreCountdown;
-
-        public bool IsRunning { get; private set; } = false;
-        public bool IsPreCountdownRunning { get; private set; } = false;
-        public TimeSpan Remaining => remaining;
-        public TimeSpan PreCountdownRemaining => preCountdownRemaining;
-
-        private readonly CountdownOptions options;
-
-        public TimeSpan PreCountdownDuration { get => options.PreCountdownDuration; }
-        public TimeSpan CountdownDuration { get => options.CountdownDuration; }
-        public TimeSpan CountdownDeviation { get => options.CountdownDeviation; }
-
-        public CountdownService(ILogger<CountdownService> logger,
-                                IOptions<CountdownOptions> options)
+    internal void Advance()
+    {
+        var state = Snapshot;
+        if (!state.IsRunning && !state.IsPreCountdownRunning) return;
+        var elapsed = clock.GetElapsedTime(startedAt);
+        var remaining = phaseDuration - elapsed;
+        if (remaining <= TimeSpan.Zero)
         {
-            this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            this.options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-            logger.LogInformation("CountdownService initialized");
+            if (state.IsPreCountdownRunning)
+            {
+                // Preserve scheduler overshoot instead of extending the game.
+                startedAt = clock.GetTimestamp();
+                phaseDuration = gameDuration - (elapsed - phaseDuration);
+                Volatile.Write(ref snapshot, state with { IsPreCountdownRunning = false, IsRunning = true,
+                    PreCountdownRemaining = TimeSpan.Zero, Remaining = TimeSpan.FromTicks(Math.Max(0, phaseDuration.Ticks)) });
+                lastNotifiedSecond = -1;
+                Notify(OnStartOfEvent, gameDuration);
+            }
+            else
+            {
+                Volatile.Write(ref snapshot, state with { IsRunning = false, Remaining = TimeSpan.Zero });
+                Notify(OnEndOfEvent);
+            }
+            Notify(OnTick);
+            return;
         }
-
-        public TimeSpan Start()
-        {
-            return Start(CountdownDuration, CountdownDeviation);
-        }
-
-        public TimeSpan Start(TimeSpan duration, TimeSpan deviation)
-        {
-            lock (@lock)
-            {
-                if (IsRunning)
-                {
-                    logger.LogDebug("Countdown Start called but already running");
-                    return remaining;
-                }
-
-                var deviationSeconds = (int)deviation.TotalSeconds;
-                var randomOffset = Random.Shared.Next(-deviationSeconds, deviationSeconds + 1);
-                var actualDuration = duration.Add(TimeSpan.FromSeconds(randomOffset));
-
-                remaining = actualDuration;
-                cts = new CancellationTokenSource();
-                IsRunning = true;
-                logger.LogInformation("Countdown started for {Seconds} seconds (base: {Base}, offset: {Offset})",
-                    actualDuration.TotalSeconds, duration.TotalSeconds, randomOffset);
-                OnStartOfEvent?.Invoke(actualDuration);
-                OnTick?.Invoke();
-                _ = RunCountdownAsync(cts.Token);
-
-                return actualDuration;
-            }
-        }
-
-        public async Task StartWithPreCountdownAsync()
-        {
-            await StartWithPreCountdownAsync(PreCountdownDuration, CountdownDuration, CountdownDeviation);
-        }
-
-        public async Task StartWithPreCountdownAsync(TimeSpan preCountdownDuration, TimeSpan countdownDuration, TimeSpan countdownDeviation)
-        {
-            lock (@lock)
-            {
-                if (IsPreCountdownRunning || IsRunning)
-                {
-                    logger.LogDebug("StartWithPreCountdown called but already running");
-                    return;
-                }
-
-                cts = new CancellationTokenSource();
-                IsPreCountdownRunning = true;
-                preCountdownRemaining = preCountdownDuration;
-            }
-
-            OnPreCountdown?.Invoke(preCountdownDuration);
-            OnTick?.Invoke();
-            logger.LogInformation("Pre-countdown started for {Seconds} seconds", preCountdownDuration.TotalSeconds);
-
-            try
-            {
-                while (preCountdownRemaining > TimeSpan.Zero && !cts.Token.IsCancellationRequested)
-                {
-                    await Task.Delay(1000, cts.Token);
-                    preCountdownRemaining = preCountdownRemaining.Subtract(TimeSpan.FromSeconds(1));
-                    logger.LogDebug("Pre-countdown tick: {Remaining}s", preCountdownRemaining.TotalSeconds);
-                    OnTick?.Invoke();
-                }
-
-                if (!cts.Token.IsCancellationRequested)
-                {
-                    lock (@lock)
-                    {
-                        IsPreCountdownRunning = false;
-                        preCountdownRemaining = TimeSpan.Zero;
-                    }
-                    logger.LogInformation("Pre-countdown completed");
-                    Start(countdownDuration, countdownDeviation);
-                }
-            }
-            catch (TaskCanceledException)
-            {
-                logger.LogInformation("Pre-countdown cancelled");
-                lock (@lock)
-                {
-                    IsPreCountdownRunning = false;
-                    preCountdownRemaining = TimeSpan.Zero;
-                }
-                OnTick?.Invoke();
-            }
-        }
-
-        public void Stop()
-        {
-            lock (@lock)
-            {
-                if (!IsRunning && !IsPreCountdownRunning)
-                {
-                    logger.LogDebug("Countdown Stop called but not running");
-                    return;
-                }
-
-                cts?.Cancel();
-                IsRunning = false;
-                IsPreCountdownRunning = false;
-                remaining = TimeSpan.Zero;
-                preCountdownRemaining = TimeSpan.Zero;
-                logger.LogInformation("Countdown stopped");
-            }
-        }
-
-        private async Task RunCountdownAsync(CancellationToken token)
-        {
-            try
-            {
-                while (remaining > TimeSpan.Zero && !token.IsCancellationRequested)
-                {
-                    await Task.Delay(1000, token);
-                    remaining = remaining.Subtract(TimeSpan.FromSeconds(1));
-                    logger.LogDebug("Countdown tick: {Remaining}s", remaining.TotalSeconds);
-                    OnTick?.Invoke();
-                }
-            }
-            catch (TaskCanceledException)
-            {
-                logger.LogInformation("Countdown task cancelled");
-            }
-            finally
-            {
-                lock (@lock)
-                {
-                    IsRunning = false;
-                }
-                OnTick?.Invoke();
-                OnEndOfEvent?.Invoke();
-                logger.LogInformation("Countdown ended");
-            }
-        }
+        Volatile.Write(ref snapshot, state.IsPreCountdownRunning ? state with { PreCountdownRemaining = remaining } : state with { Remaining = remaining });
+        var second = (long)Math.Ceiling(remaining.TotalSeconds);
+        if (second != lastNotifiedSecond) { lastNotifiedSecond = second; Notify(OnTick); }
+    }
+    internal void Stop()
+    {
+        var old = Snapshot;
+        Volatile.Write(ref snapshot, old with { IsRunning = false, IsPreCountdownRunning = false, Remaining = TimeSpan.Zero, PreCountdownRemaining = TimeSpan.Zero });
+        if (old.IsRunning) Notify(OnEndOfEvent);
+        Notify(OnTick);
+    }
+    private void Notify(Action? handlers)
+    {
+        if (handlers is null) return;
+        foreach (Action handler in handlers.GetInvocationList())
+            try { handler(); } catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { logger.LogWarning(ex, "Countdown subscriber failed"); }
+    }
+    private void Notify(Action<TimeSpan>? handlers, TimeSpan value)
+    {
+        if (handlers is null) return;
+        foreach (Action<TimeSpan> handler in handlers.GetInvocationList())
+            try { handler(value); } catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { logger.LogWarning(ex, "Countdown subscriber failed"); }
     }
 }

@@ -13,7 +13,7 @@ public class BreathingEffect : RgbEffectBase
 
     public override bool Apply(Span<Vector3> leds, CancellationToken token)
     {
-        var elapsed = DateTime.UtcNow - StartTime;
+        var elapsed = Clock.GetElapsedTime(StartTimestamp);
         var cycleProgress = (elapsed.TotalMilliseconds % (BreathDuration.TotalMilliseconds * 2)) / (BreathDuration.TotalMilliseconds * 2);
 
         // Calculate brightness (0 to 1 to 0)
@@ -43,9 +43,9 @@ public class BreathingEffect : RgbEffectBase
         ColorLabels = ["Color"],
         CustomParameters = new()
         {
-            ["BreathDuration"] = typeof(TimeSpan),
-            ["MinBrightness"] = typeof(float),
-            ["MaxBrightness"] = typeof(float)
+            ["BreathDuration"] = "duration",
+            ["MinBrightness"] = "number",
+            ["MaxBrightness"] = "number"
         }
     };
 

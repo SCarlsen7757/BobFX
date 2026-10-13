@@ -12,13 +12,13 @@ namespace BobFx.Core.Services
         public IPEndPoint TargetEndpoint { get; }
 
         public UdpClientService(ILogger<UdpClientService> logger,
-                                IOptions<WLedOptions.UpdOptions> udpOptions)
+                                IOptions<WLedOptions> udpOptions)
         {
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
             ArgumentNullException.ThrowIfNull(udpOptions);
 
-            var targetAddress = udpOptions.Value.TargetAddress;
-            var targetPort = udpOptions.Value.TargetPort;
+            var targetAddress = udpOptions.Value.Udp.TargetAddress;
+            var targetPort = udpOptions.Value.Udp.TargetPort;
 
             if (string.IsNullOrWhiteSpace(targetAddress))
                 throw new ArgumentException("targetAddress cannot be null or empty", nameof(udpOptions));
@@ -55,32 +55,11 @@ namespace BobFx.Core.Services
         }
 
         // True asynchronous send using Socket.SendToAsync
-        public async Task SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+        public virtual async Task SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
         {
             if (data.IsEmpty) return;
-
-            try
-            {
-                await udpClient.Client.SendToAsync(data, SocketFlags.None, TargetEndpoint, cancellationToken).ConfigureAwait(false);
-                logger.LogTrace("Sent {Count} bytes to {Endpoint}", data.Length, TargetEndpoint);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                // expected on shutdown
-                logger.LogDebug("Send cancelled");
-                throw;
-            }
-            catch (SocketException ex)
-            {
-                logger.LogError(ex, "Socket error sending UDP frame to {Endpoint}. Error code: {ErrorCode}",
-                    TargetEndpoint, ex.SocketErrorCode);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error sending UDP frame to {Endpoint}", TargetEndpoint);
-                throw;
-            }
+            await udpClient.Client.SendToAsync(data, SocketFlags.None, TargetEndpoint, cancellationToken).ConfigureAwait(false);
+            logger.LogTrace("Sent {Count} bytes to {Endpoint}", data.Length, TargetEndpoint);
         }
 
         // Backwards-compatible overload

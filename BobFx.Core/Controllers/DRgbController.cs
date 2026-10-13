@@ -1,77 +1,39 @@
-﻿using BobFx.Core.Services;
+using BobFx.Core.Services;
 using BobFx.Core.Services.Effects;
 using Microsoft.AspNetCore.Mvc;
-
-namespace BobFx.Core.Controllers
+using System.ComponentModel.DataAnnotations;
+namespace BobFx.Core.Controllers;
+public sealed record StartEffectRequest(string Effect = "Rainbow", [Range(10, 60000)] int SpeedMs = 100);
+public sealed record ChangeSpeedRequest([Range(10, 60000)] int SpeedMs);
+[ApiController]
+[Route("api/[controller]")]
+public sealed class DRgbController(DRgbService ledService, IRgbEffectFactory factory, RgbAndSoundControlService control) : ControllerBase
 {
-    [ApiController]
-    [Route("api/[controller]")]
-    public class DRgbController(DRgbService ledService, IRgbEffectFactory effectFactory) : ControllerBase
+    [HttpPost("start")]
+    public Task<IActionResult> Start([FromBody] StartEffectRequest request)
     {
-        private readonly DRgbService ledService = ledService;
-        private readonly IRgbEffectFactory effectFactory = effectFactory;
-
-        [HttpPost("start")]
-        public async Task<IActionResult> Start([FromQuery] string effect = "Rainbow", [FromQuery] int speedMs = 100)
-        {
-            if (!Enum.TryParse(effect, true, out RgbEffect ledEffect))
-                return BadRequest("Invalid effect");
-            if (speedMs < 10) return BadRequest("Speed lower than 10ms");
-
-            try
-            {
-                await ledService.StartEffectAsync(builder =>
-               {
-                   builder.WithEffect(ledEffect)
-                   .WithSpeed(speedMs);
-               });
-
-                return Ok(new { message = $"Effect {ledEffect} started at {speedMs}ms" });
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new { error = ex.Message });
-            }
-        }
-
-        [HttpPost("stop")]
-        public IActionResult Stop()
-        {
-            ledService.StopEffect();
-            return Ok(new { message = "LED stopped" });
-        }
-
-        [HttpPost("speed")]
-        public IActionResult ChangeSpeed([FromQuery] int speedMs = 100)
-        {
-            if (speedMs < 10) return BadRequest("Speed lower than 10ms");
-            var speed = TimeSpan.FromMilliseconds(speedMs);
-            ledService.SetSpeed(speed);
-            return Ok(new { message = $"LED speed changed to {speedMs}ms" });
-        }
-
-        [HttpGet("status")]
-        public IActionResult Status()
-        {
-            return Ok(new
-            {
-                currentEffect = ledService.CurrentEffect.ToString(),
-                speed = ledService.Speed.TotalMilliseconds,
-                ledCount = ledService.LedCount
-            });
-        }
-
-        [HttpGet("effects")]
-        public IActionResult GetAvailableEffects()
-        {
-            var effects = effectFactory.GetRegisteredEffects()
-                .Select(e => new
-                {
-                    type = e.ToString(),
-                    info = RgbEffectDefaults.EffectInfo.TryGetValue(e, out var info) ? info : null
-                });
-
-            return Ok(effects);
-        }
+        if (!Enum.TryParse(request.Effect, true, out RgbEffect selected) || !Enum.IsDefined(selected))
+            return Task.FromResult<IActionResult>(Problem(statusCode: 400, title: "Invalid effect"));
+        return Command(() => control.StartManualEffectAsync(b => b.WithEffect(selected).WithSpeed(request.SpeedMs)));
+    }
+    [HttpPost("stop")]
+    public Task<IActionResult> Stop() => Command(control.StopManualEffectAsync);
+    [HttpPost("speed")]
+    public Task<IActionResult> ChangeSpeed([FromBody] ChangeSpeedRequest request) =>
+        Command(() => control.SetManualSpeedAsync(TimeSpan.FromMilliseconds(request.SpeedMs)));
+    [HttpGet("status")]
+    public IActionResult Status()
+    {
+        var state = ledService.GetStatus();
+        return Ok(new { currentEffect = state.Effect.ToString(), speed = state.Speed.TotalMilliseconds, ledCount = state.LedCount,
+            streaming = state.Streaming, phase = control.Phase.ToString(), error = state.LastError });
+    }
+    [HttpGet("effects")]
+    public IActionResult GetAvailableEffects() => Ok(factory.GetRegisteredEffects().Select(type => new { type = type.ToString(), info = factory.Create(type).GetInfo() }).ToArray());
+    private async Task<IActionResult> Command(Func<Task> command)
+    {
+        try { await command(); return Ok(); }
+        catch (ArgumentException ex) { return Problem(statusCode: 400, title: "Invalid effect command", detail: ex.Message); }
+        catch (InvalidOperationException ex) { return Problem(statusCode: 409, title: "Game owns the lights", detail: ex.Message); }
     }
 }

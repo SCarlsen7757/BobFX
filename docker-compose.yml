@@ -1,30 +1,21 @@
+# Development only. Production uses compose.prod.yaml explicitly.
 services:
   bobfx:
     build:
       context: .
       dockerfile: BobFx.Core/Dockerfile
-    container_name: bobfx-app
     ports:
-      - "5159:5159"
-    environment:   
-      # BobFx Configuration (WLED)
-      - WLED_LED_COUNT=40
-      - WLED_TARGET_ADDRESS=255.255.255.255
-      - WLED_TARGET_PORT=21324
-      - WLED_UPDATE_INTERVAL_MS=10
-      - WLED_DISCOVERY_INTERVAL_SECONDS=60 
-      
-      # Countdown Configuration
-      - PRE_COUNTDOWN_TIME_SECONDS=5
-      - COUNTDOWN_TIME_SECONDS=600
-      - COUNTDOWN_DEVIATION_SECONDS=120
-
-      # ASP.NET Core Configuration
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ASPNETCORE_URLS=http://+:5159
-      - ASPNETCORE_HTTP_PORTS=5159
-  
-    # Host network mode for Linux production (works for UDP broadcast)
-    network_mode: "host"
-    
-    restart: unless-stopped
+      - "127.0.0.1:5159:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      AllowedHosts: "localhost;127.0.0.1"
+      WLed__Led__LedCount: "24"
+      WLed__Udp__TargetAddress: "192.168.100.255"
+      WLed__Udp__TargetPort: "21324"
+      WLed__Udp__UpdateIntervalMs: "16"
+      WLed__Discovery__UpdateIntervalSeconds: "10"
+      Countdown__PreDurationSeconds: "5"
+      Countdown__DurationSeconds: "60"
+      Countdown__DeviationSeconds: "20"
+    restart: "no"
