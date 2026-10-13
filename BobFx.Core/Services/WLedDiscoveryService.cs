@@ -79,7 +79,8 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                         }
                     }
                     catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-                    catch (Exception ex) { logger.LogDebug(ex, "WLED enrichment failed for {Address}", address); }
+                    catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or OperationCanceledException)
+                    { logger.LogDebug(ex, "WLED enrichment failed for {Address}", address); }
                 });
             AgeDevices(scanGeneration);
             Volatile.Write(ref lastError, null);
@@ -106,8 +107,14 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
     {
         if (address.AddressFamily != AddressFamily.InterNetwork) return false;
         var bytes = address.GetAddressBytes();
-        return bytes[0] == 10 || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31) ||
-            (bytes[0] == 192 && bytes[1] == 168) || (bytes[0] == 169 && bytes[1] == 254);
+        return bytes[0] switch
+        {
+            10 => true,
+            172 => bytes[1] is >= 16 and <= 31,
+            192 => bytes[1] == 168,
+            169 => bytes[1] == 254,
+            _ => false
+        };
     }
     private static bool ValidMac(string? mac)
     {
@@ -119,13 +126,14 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
         var snapshot = Devices;
         if (DevicesUpdated is null) return;
         foreach (Action<IReadOnlyList<WLedDevice>> subscriber in DevicesUpdated.GetInvocationList())
-            try { subscriber(snapshot); } catch (Exception ex) { logger.LogDebug(ex, "Discovery subscriber failed"); }
+            try { subscriber(snapshot); } catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { logger.LogDebug(ex, "Discovery subscriber failed"); }
     }
     private async Task TryScanAsync(CancellationToken token)
     {
         try { await ScanAsync(token); }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-        catch (Exception) { /* ScanAsync records diagnostics; retry on the next interval. */ }
+        catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
+        { logger.LogDebug(ex, "Discovery scan will retry on the next interval"); }
     }
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -135,7 +143,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
             using var timer = new PeriodicTimer(interval);
             while (await timer.WaitForNextTickAsync(stoppingToken)) await TryScanAsync(stoppingToken);
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { /* Host shutdown cancels discovery and its interval timer. */ }
     }
 }
 

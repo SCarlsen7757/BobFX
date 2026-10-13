@@ -83,6 +83,18 @@ public sealed class DiscoveryTests
     }
 
     [Fact]
+    public async Task MalformedDeviceJsonIsIsolatedButUnexpectedHttpFailuresAreVisible()
+    {
+        var source = new Source { Advertisements = [new("192.168.1.5", 80, "lamp")] };
+        using var malformed = Create(source, _ => new(HttpStatusCode.OK) { Content = new StringContent("{invalid") });
+        await malformed.ScanAsync();
+        Assert.Empty(malformed.Devices);
+        using var unexpected = Create(source, _ => throw new InvalidOperationException("Unexpected handler failure"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => unexpected.ScanAsync());
+        Assert.NotNull(unexpected.LastError);
+    }
+
+    [Fact]
     public async Task ResolverFailureIsVisibleAndNextSuccessfulScanClearsDiagnostic()
     {
         var source = new Source { BeforeResolve = _ => throw new InvalidOperationException("test scan failure") };

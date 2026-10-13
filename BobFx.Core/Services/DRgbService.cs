@@ -83,10 +83,10 @@ public sealed class DRgbService : BackgroundService
                 {
                     if (currentEffect is null || completed || clock.GetElapsedTime(lastFrame) < currentEffect.Speed) continue;
                     try { completed = currentEffect.Apply(leds, stoppingToken); lastFrame = clock.GetTimestamp(); }
-                    catch (Exception ex) { Volatile.Write(ref lastError, "LED renderer failed"); logger.LogError(ex, "LED renderer failed"); currentEffect = null; leds.AsSpan().Clear(); IsUdpActive = false; }
+                    catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { Volatile.Write(ref lastError, "LED renderer failed"); logger.LogError(ex, "LED renderer failed"); currentEffect = null; leds.AsSpan().Clear(); IsUdpActive = false; }
                 }
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { /* Host shutdown cancels the renderer timer. */ }
         finally { Volatile.Write(ref ready, 0); StopEffect(); IsUdpActive = false; }
     }
 }

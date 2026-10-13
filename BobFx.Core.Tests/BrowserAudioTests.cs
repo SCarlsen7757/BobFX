@@ -33,6 +33,41 @@ public sealed class BrowserAudioTests
     }
 
     [Fact]
+    public async Task DisposalDuringImportWaitsAndReleasesLateModule()
+    {
+        var component = Create();
+        var import = new TaskCompletionSource<IJSObjectReference>(TaskCreationOptions.RunContinuationsAsynchronously);
+        SetProperty(component, "JS", new Runtime(import.Task));
+        var initialize = (Task)typeof(BrowserAudio).GetMethod("InitializeAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(component, null)!;
+        SetField(component, "initialization", initialize);
+        var dispose = component.DisposeAsync().AsTask();
+        Assert.False(dispose.IsCompleted);
+        var module = new Module(false, false);
+        import.SetResult(module);
+        await dispose;
+        Assert.Equal(1, module.Disposals);
+        Assert.Null(typeof(BrowserAudio).GetField("callback", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(component));
+    }
+
+    [Fact]
+    public async Task DisposalDuringSessionCreationCleansUpRealSessionAndCallback()
+    {
+        var component = Create();
+        var module = new PendingSession();
+        SetProperty(component, "JS", new Runtime(Task.FromResult<IJSObjectReference>(module)));
+        var initialize = (Task)typeof(BrowserAudio).GetMethod("InitializeAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(component, null)!;
+        SetField(component, "initialization", initialize);
+        var callback = (DotNetObjectReference<BrowserAudio>)typeof(BrowserAudio).GetField("callback", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(component)!;
+        var dispose = component.DisposeAsync().AsTask();
+        Assert.False(dispose.IsCompleted);
+        module.Session.SetResult(42);
+        await dispose;
+        Assert.Equal(42, module.DisposedSession);
+        Assert.True(module.Disposed);
+        Assert.Throws<ObjectDisposedException>(() => callback.Value);
+    }
+
+    [Fact]
     public async Task UnexpectedDisposalFailureIsNotHidden()
     {
         var component = Create();
@@ -55,6 +90,16 @@ public sealed class BrowserAudioTests
     private static void SetProperty(BrowserAudio component, string name, object value) =>
         typeof(BrowserAudio).GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(component, value);
 
+    private sealed class Runtime(Task<IJSObjectReference> import) : IJSRuntime
+    {
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) => InvokeAsync<TValue>(identifier, CancellationToken.None, args);
+        public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args)
+        {
+            Assert.Equal("import", identifier);
+            return (TValue)await import;
+        }
+    }
+
     private sealed class Module(bool sessionDisconnected, bool moduleDisconnected, bool unexpectedFailure = false) : IJSObjectReference
     {
         public int SessionCleanups { get; private set; }
@@ -73,5 +118,21 @@ public sealed class BrowserAudioTests
             Disposals++;
             return moduleDisconnected ? ValueTask.FromException(new JSDisconnectedException("Test disconnected module disposal")) : ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class PendingSession : IJSObjectReference
+    {
+        public TaskCompletionSource<int> Session { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int DisposedSession { get; private set; }
+        public bool Disposed { get; private set; }
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) => InvokeAsync<TValue>(identifier, CancellationToken.None, args);
+        public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args)
+        {
+            if (identifier == "initialize") return (TValue)(object)await Session.Task;
+            Assert.Equal("dispose", identifier);
+            DisposedSession = (int)args![0]!;
+            return default!;
+        }
+        public ValueTask DisposeAsync() { Disposed = true; return ValueTask.CompletedTask; }
     }
 }

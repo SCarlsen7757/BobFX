@@ -2,7 +2,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const output = fileURLToPath(new URL('./.app/', import.meta.url));
+// Each run owns its publish directory, even when another local app is running.
+const output = fileURLToPath(new URL(`./.app/${process.pid}/`, import.meta.url));
 // Test the published app, including generated Blazor scripts and scoped styles.
 const publish = spawnSync('dotnet', [
     'publish', 'BobFx.Core/BobFx.Core.csproj', '--configuration', 'Release',

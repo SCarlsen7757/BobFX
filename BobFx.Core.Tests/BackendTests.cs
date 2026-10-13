@@ -20,6 +20,16 @@ public sealed class BackendTests
         Options.Create(new WLedOptions { Led = new() { LedCount = count } }), new RgbEffectFactory(), clock);
 
     [Fact]
+    public void FractionalDeviationIsRejectedBeforeCountdownStarts()
+    {
+        var timer = Countdown(new FakeTimeProvider());
+        Assert.Throws<ArgumentException>(() => timer.Start(false, deviation: TimeSpan.FromTicks(1)));
+        Assert.False(timer.IsRunning);
+        timer.Start(false, deviation: TimeSpan.FromSeconds(1));
+        Assert.True(timer.IsRunning);
+    }
+
+    [Fact]
     public void RestartCannotBeEndedByOldCountdown()
     {
         var clock = new FakeTimeProvider();

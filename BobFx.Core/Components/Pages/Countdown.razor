@@ -29,7 +29,7 @@
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
         try { while (await timer.WaitForNextTickAsync(lifetime.Token)) await InvokeAsync(StateHasChanged); }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { /* Navigating away cancels the settings refresh timer. */ }
     }
     private async Task StartAsync(bool withPre)
     {
@@ -40,5 +40,13 @@
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { error = ex.Message; }
     }
     private async Task StopAsync() { try { await Control.StopGameAsync(); } catch (InvalidOperationException ex) { error = ex.Message; } }
-    public async ValueTask DisposeAsync() { await lifetime.CancelAsync(); if (refresh is not null) await refresh; lifetime.Dispose(); }
+    public async ValueTask DisposeAsync()
+    {
+        await lifetime.CancelAsync();
+        if (refresh is not null)
+        {
+            await refresh;
+        }
+        lifetime.Dispose();
+    }
 }

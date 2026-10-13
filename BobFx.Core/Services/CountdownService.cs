@@ -31,7 +31,7 @@ public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<
         var variation = deviation ?? CountdownDeviation;
         if (preDuration < TimeSpan.Zero || preDuration > TimeSpan.FromMinutes(1) ||
             baseDuration < TimeSpan.FromSeconds(1) || baseDuration > TimeSpan.FromHours(24) ||
-            variation < TimeSpan.Zero || variation >= baseDuration || variation.TotalSeconds % 1 != 0)
+            variation < TimeSpan.Zero || variation >= baseDuration || variation.Ticks % TimeSpan.TicksPerSecond != 0)
             throw new ArgumentException("Use a pre-countdown of 0–60 seconds, duration of 1 second–24 hours, and whole-second deviation smaller than duration.");
         var seconds = (int)variation.TotalSeconds;
         gameDuration = baseDuration + TimeSpan.FromSeconds(Random.Shared.Next(-seconds, seconds + 1));
@@ -86,12 +86,12 @@ public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<
     {
         if (handlers is null) return;
         foreach (Action handler in handlers.GetInvocationList())
-            try { handler(); } catch (Exception ex) { logger.LogWarning(ex, "Countdown subscriber failed"); }
+            try { handler(); } catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { logger.LogWarning(ex, "Countdown subscriber failed"); }
     }
     private void Notify(Action<TimeSpan>? handlers, TimeSpan value)
     {
         if (handlers is null) return;
         foreach (Action<TimeSpan> handler in handlers.GetInvocationList())
-            try { handler(value); } catch (Exception ex) { logger.LogWarning(ex, "Countdown subscriber failed"); }
+            try { handler(value); } catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { logger.LogWarning(ex, "Countdown subscriber failed"); }
     }
 }

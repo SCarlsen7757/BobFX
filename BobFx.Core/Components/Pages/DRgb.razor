@@ -245,7 +245,7 @@
             while (await timer.WaitForNextTickAsync(lifetime.Token))
                 await InvokeAsync(() => { if (disposed) return; preview = LedService.GetSnapshot(); currentEffect = LedService.CurrentEffect; StateHasChanged(); });
         }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { /* Navigating away cancels preview polling. */ }
     }
     private async Task StartEffect()
     {

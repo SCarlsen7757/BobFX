@@ -89,7 +89,7 @@
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
         try { while (await timer.WaitForNextTickAsync(lifetime.Token)) await InvokeAsync(() => { if (!disposed) RenderState(); }); }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { /* Navigating away cancels the display timer. */ }
     }
     private async Task StartCountdown()
     {

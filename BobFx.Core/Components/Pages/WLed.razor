@@ -3,6 +3,7 @@
 @using System.Net
 @inject WLedDiscoveryService Discovery
 @inject IJSRuntime JS
+@inject ILogger<WLed> Logger
 @implements IAsyncDisposable
 
 <PageTitle>WLED devices</PageTitle>
@@ -134,7 +135,11 @@
     {
         scanning = true; scanStatus = null;
         try { await Discovery.ScanAsync(); scanStatus = "Scan complete."; }
-        catch (Exception) { scanStatus = "Scan failed. Check network connectivity and try again."; }
+        catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
+        {
+            Logger.LogWarning(ex, "Manual WLED scan failed");
+            scanStatus = "Scan failed. Check network connectivity and try again.";
+        }
         finally { scanning = false; }
     }
 
@@ -165,7 +170,7 @@
     private async Task RefreshViewAsync()
     {
         try { await InvokeAsync(() => { if (!disposed) StateHasChanged(); }); }
-        catch (Exception) when (disposed) { }
+        catch (ObjectDisposedException ex) when (disposed) { Logger.LogDebug(ex, "WLED view closed during refresh"); }
     }
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -180,6 +185,10 @@
     {
         disposed = true;
         Discovery.DevicesUpdated -= Discovery_DevicesUpdated;
-        if (module is not null) { try { await module.DisposeAsync(); } catch (JSDisconnectedException) { } }
+        if (module is not null)
+        {
+            try { await module.DisposeAsync(); }
+            catch (JSDisconnectedException ex) { Logger.LogDebug(ex, "WLED dialog circuit closed during disposal"); }
+        }
     }
 }

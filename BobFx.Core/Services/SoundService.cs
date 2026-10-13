@@ -15,7 +15,7 @@ public sealed class SoundService(ILogger<SoundService> logger)
         foreach (var subscriber in SoundRequested?.GetInvocationList() ?? [])
         {
             try { ((Action<string>)subscriber)(path); }
-            catch (Exception ex) { logger.LogWarning(ex, "Sound subscriber failed"); }
+            catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { logger.LogWarning(ex, "Sound subscriber failed"); }
         }
         return Task.CompletedTask;
     }

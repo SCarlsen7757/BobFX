@@ -47,6 +47,14 @@ public sealed class SoundServiceTests
     }
 
     [Fact]
+    public async Task FatalSubscriberFailureIsNotHidden()
+    {
+        var service = Create();
+        service.SoundRequested += _ => throw new OutOfMemoryException("Simulated fatal failure");
+        await Assert.ThrowsAsync<OutOfMemoryException>(() => service.Play("end"));
+    }
+
+    [Fact]
     public async Task UnknownSoundCannotPublishArbitraryUrl()
     {
         var service = Create();

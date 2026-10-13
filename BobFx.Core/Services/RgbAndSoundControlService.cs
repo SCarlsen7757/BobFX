@@ -122,7 +122,7 @@ public sealed class RgbAndSoundControlService(
                 finally { commands.Release(); }
             }
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { /* Host shutdown cancels the coordinator timer. */ }
         finally
         {
             Volatile.Write(ref ready, 0);
