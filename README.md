@@ -132,6 +132,16 @@ Pull requests and main pushes run locked restore, Release build with analyzers, 
 
 Publishing is explicit: a trusted maintainer pushes a stable `vMAJOR.MINOR.PATCH` tag. The release waits for quality and image checks, publishes a versioned multi-architecture GHCR image with SBOM/provenance, and records the immutable production digest in release notes. Main pushes no longer automatically publish `latest` or create releases.
 
+Versions come directly from the stable tag: `v0.7.0` produces `ghcr.io/scarlsen7757/bobfx:0.7.0`, assembly version `0.7.0.0`, and OCI version `0.7.0`. The next planned release is `v0.7.0`; push it only after the application and release follow-ups merge and checks pass.
+
+The release builds a unique candidate once, resolves its exact amd64/arm64 digests, scans each complete image, and smoke-tests the hardened runtime and extracted assembly version. It verifies OCI version/source revision and both platforms' SBOM/provenance before promoting the complete tested index to the stable tag. Promotion does not rebuild. The final stable digest must equal the verified candidate digest; release assets include reports, policy summaries, attestations, assembly versions, and health logs.
+
+Rerunning a release with an existing stable image re-verifies that digest instead of rebuilding it. Its version and source revision must match the tagged commit. A different existing stable digest cannot be overwritten. Failed candidate tags may remain for diagnosis, but do not receive a stable tag or GitHub release. Production deployments continue to use the release's digest, with rollback performed by restoring the previous digest.
+
+Image scans block all HIGH/CRITICAL vulnerabilities, including those without a fix. `.github/vulnerability-exceptions.json` starts empty. An exception requires maintainer review and the fields `id`, `package`, `target` (exact Trivy report target), `rationale`, `owner`, `issue` (a BobFX issue URL), and `expires` (YYYY-MM-DD). Exceptions expire at the start of that UTC date; expired or incomplete entries fail CI. Matching is specific to vulnerability, package, and target, and full reports retain suppressed findings. Prefer fixing/updating dependencies; do not add broad exclusions or enable unfixed filtering.
+
+GitHub automatically generates release notes from **merged PR labels**, using `.github/release.yml`. Categories follow this precedence: Breaking changes, Security, Features, Bug fixes, Performance, Dependencies, Documentation, Maintenance, and Other changes. Each PR appears once; area labels remain useful for classification, and unlabeled PRs remain visible. Dependabot updates are included. Apply work-type labels to PRs themselves: labels on linked issues alone do not categorize release notes. Generated changes, contributors, and the changelog accompany the verified image digest and deployment instructions.
+
 Issues and PRs use plain labels from [.github/labels.json](.github/labels.json): areas such as `api`, `web`, `infra`, `wled`, `audio`; work types such as `bug`, `security`, `performance`, `refactor`, `chore`, `documentation`; and `breaking change` for migrations. There are no priority labels. Link implementation PRs using `Fixes #<issue>` or `Refs #<issue>`.
 
 The modernization findings are tracked in [issue #6](https://github.com/SCarlsen7757/BobFX/issues/6).

@@ -58,6 +58,10 @@ jobs:
           retention-days: 14
       - name: Test browser audio activation and cleanup
         run: node --test BobFx.Core.Tests/BrowserAudio.test.mjs
+      - name: Test release policy and label categories
+        run: |
+          python3 -m pip install PyYAML==6.0.3
+          python3 -m unittest discover -s scripts/ci -p 'test_*.py'
       - name: Reject known vulnerable direct and transitive packages
         shell: bash
         run: |
@@ -113,38 +117,26 @@ jobs:
           tags: bobfx:ci
           cache-from: type=gha,scope=${{ matrix.architecture }}
           cache-to: type=gha,mode=max,scope=${{ matrix.architecture }}
-      - name: Scan image dependencies and OS packages
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Install image scanner
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
         with:
           version: v0.75.0
-          image-ref: bobfx:ci
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-      - name: Smoke test hardened runtime
-        shell: bash
+      - name: Scan image and enforce reviewed vulnerability policy
         run: |
-          docker run -d --name bobfx-smoke --platform linux/${{ matrix.architecture }} \
-            --read-only --cap-drop ALL --security-opt no-new-privileges \
-            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-            --tmpfs /home/app/.aspnet:rw,noexec,nosuid,size=16m,uid=1654,gid=1654 \
-            -e ASPNETCORE_ENVIRONMENT=Production -e AllowedHosts=localhost \
-            -e Security__AllowedClientNetworks__0=127.0.0.0/8 \
-            -e WLed__Udp__TargetAddress=127.0.0.1 bobfx:ci
-          for attempt in $(seq 1 30); do
-            status=$(docker inspect --format '{{.State.Health.Status}}' bobfx-smoke)
-            if [ "$status" = healthy ]; then
-              test "$(docker exec bobfx-smoke id -u)" = 1654
-              exit 0
-            fi
-            sleep 3
-          done
-          docker logs bobfx-smoke
-          docker inspect bobfx-smoke
-          exit 1
-      - name: Cleanup
-        if: always()
-        run: docker rm -f bobfx-smoke || true
+          mkdir -p release-evidence
+          trivy image --image-src docker --scanners vuln --format json --ignorefile scripts/ci/empty-ignore --output release-evidence/scan.json bobfx:ci
+          python3 scripts/ci/scan_policy.py release-evidence/scan.json --summary release-evidence/policy.json
+      - name: Smoke test hardened runtime
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: python3 scripts/ci/release.py smoke --image bobfx:ci --architecture "$ARCHITECTURE"
+      - name: Retain image scan and smoke evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: container-evidence-${{ matrix.architecture }}
+          path: release-evidence/
+          retention-days: 14
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -167,13 +159,18 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo "Release tag must be vMAJOR.MINOR.PATCH"
             exit 1
           fi
           git merge-base --is-ancestor HEAD origin/main
           echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "VERSION=${RELEASE_TAG#v}" >> "$GITHUB_ENV"
+          echo "IMAGE=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -181,7 +178,11 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish multi-architecture image
+      - name: Select candidate or existing stable digest for rerun
+        id: candidate
+        run: python3 scripts/ci/release.py select --image "$IMAGE" --version "$VERSION"
+      - name: Build multi-architecture candidate once
+        if: steps.candidate.outputs.existing == ''
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -189,23 +190,53 @@ jobs:
           file: BobFx.Core/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.version.outputs.image }}:${{ steps.version.outputs.version }}
-          build-args: VERSION=${{ steps.version.outputs.version }}
+          tags: ${{ steps.candidate.outputs.candidate }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            REVISION=${{ github.sha }}
           provenance: mode=max
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Select exact verification digest
+        id: verified
+        env:
+          EXISTING_DIGEST: ${{ steps.candidate.outputs.existing }}
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "digest=${EXISTING_DIGEST:-$BUILD_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "CANDIDATE_DIGEST=${EXISTING_DIGEST:-$BUILD_DIGEST}" >> "$GITHUB_ENV"
+      - name: Install image scanner
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        with:
+          version: v0.75.0
+      - name: Verify both exact architecture digests and release metadata
+        run: python3 scripts/ci/release.py verify --image "$IMAGE" --version "$VERSION" --digest "$CANDIDATE_DIGEST" --revision "$GITHUB_SHA"
       - name: Attest image provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ steps.version.outputs.image }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.verified.outputs.digest }}
           push-to-registry: true
+      - name: Promote tested index without rebuilding
+        run: python3 scripts/ci/release.py promote --image "$IMAGE" --version "$VERSION" --digest "$CANDIDATE_DIGEST"
+      - name: Retain release verification evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-evidence
+          path: release-evidence/
+          retention-days: 90
       - name: Create release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release-evidence/*.json
+            release-evidence/*.txt
+            release-evidence/*.log
           body: |
-            Production image: `${{ steps.version.outputs.image }}@${{ steps.build.outputs.digest }}`
-            Set `BOBFX_IMAGE_DIGEST=${{ steps.build.outputs.digest }}` in your production .env.
+            Production image: `${{ steps.version.outputs.image }}@${{ steps.verified.outputs.digest }}`
+            Set `BOBFX_IMAGE_DIGEST=${{ steps.verified.outputs.digest }}` in your production .env.
             Supports linux/amd64 and linux/arm64. See README.md for deployment and migration.
