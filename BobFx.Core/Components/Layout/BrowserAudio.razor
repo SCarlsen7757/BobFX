@@ -36,6 +36,7 @@
             ready = true;
             StateHasChanged();
         }
+        catch (JSDisconnectedException ex) { Logger.LogDebug(ex, "Audio circuit closed during initialization"); }
         catch (Exception ex) when (ex is JSException or OperationCanceledException)
         {
             status = "Audio controls could not load. Reload to retry.";
@@ -79,14 +80,14 @@
             if (initialization is not null) await initialization;
             if (module is not null) await module.InvokeVoidAsync("dispose", sessionId);
         }
-        catch (Exception ex) when (ex is JSException or OperationCanceledException) { Logger.LogDebug(ex, "Audio circuit closed"); }
+        catch (Exception ex) when (ex is JSDisconnectedException or JSException or OperationCanceledException) { Logger.LogDebug(ex, "Audio circuit closed"); }
         finally
         {
             try
             {
                 if (module is not null) await module.DisposeAsync();
             }
-            catch (Exception ex) when (ex is JSException or OperationCanceledException) { Logger.LogDebug(ex, "Audio module disposal ended with circuit closure"); }
+            catch (Exception ex) when (ex is JSDisconnectedException or JSException or OperationCanceledException) { Logger.LogDebug(ex, "Audio module disposal ended with circuit closure"); }
             finally { callback?.Dispose(); }
         }
     }

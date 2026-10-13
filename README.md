@@ -18,7 +18,25 @@ dotnet run --project BobFx.Core --launch-profile http
 
 Open http://localhost:5159. Game state exists in memory; restarting resets it. No database or frontend npm build is required. Navigation and WLED discovery are available in production. Manual effect controls are rejected while a game is active or ending; stop the game first.
 
-For development in Docker:
+## Browser regression tests
+
+Playwright tests in [e2e](e2e) drive the real Blazor Server UI using TypeScript and Chromium. They exercise every registered LED effect, Strobe's two color controls, invalid input, game ownership, keyboard pre-countdown Stop, navigation, and full reload. Tests fail on browser console errors, JavaScript exceptions, or a visible **Connection interrupted** banner. Focused .NET tests also simulate disconnected JavaScript interop during audio cleanup.
+
+From the repository root, restore .NET packages, then install and run the browser tests:
+
+```sh
+dotnet restore BobFx.slnx --locked-mode
+cd e2e
+npm ci
+npx playwright install chromium
+npm test
+```
+
+`npm test` publishes and starts a dedicated Production app on `http://127.0.0.1:5187`, waits for readiness, runs the tests sequentially against the shared game state, then stops the app. Keep that port free. UDP output targets loopback, so these tests do not send lighting commands to LAN devices. Discovery still runs, but no test requires a physical device. These tests use actual Blazor/SignalR event handling rather than mocked HTTP responses.
+
+Use `npm run test:ui` for the interactive test runner, `npm run test:headed` to watch Chromium, and `npm run report` to inspect the HTML report. Failed tests retain screenshots, video, browser console output, and Playwright traces under `e2e/test-results`. CI installs Chromium with its Linux dependencies and uploads reports/traces; browser failures block the release quality gate. Physical WLED output and network discovery still need hardware testing.
+
+## Development in Docker
 
 ```sh
 docker compose -f docker-compose.yml up --build
@@ -101,6 +119,7 @@ Replace `bobfx.local` with a configured allowed hostname or the host LAN IP.
 - **403 / rejected control:** check the client's actual source address against the trusted CIDRs, hostnames against `AllowedHosts`, and use the application's own origin.
 - **No WLED devices:** check UDP 5353 multicast, same-LAN connectivity, Wi-Fi client isolation, and device HTTP reachability.
 - **Discovery works but LEDs do not:** verify realtime UDP is enabled, port 21324, broadcast address, LED count, and active game/effect status. Discovery and realtime output are independent.
+- **One output goes black in realtime mode:** configure BobFX's LED count for the device's entire address space, including all physical outputs. For example, two 30-LED outputs starting at indices 0 and 30 require `WLed__Led__LedCount=60`. A 24/30-pixel frame only reaches the first output; WLED clears the remaining pixels when realtime starts. For diagnosis, use the device's IP as the UDP target and start a Solid effect with a non-black color. Check WLED's Peek preview to see which pixel indices receive colors before investigating wiring.
 - **Unhealthy:** inspect logs and `docker inspect` health output. Confirm the bind IP exists on the host, is permitted by the CIDR, and has an allowed Host header.
 - **No sound:** select **Enable audio** in that browser and check mute/autoplay restrictions. Reenable after a visible playback error to retry.
 - **Restore changes unexpectedly:** use `--locked-mode`; deliberate dependency updates must regenerate and commit locks.
@@ -109,7 +128,7 @@ Replace `bobfx.local` with a configured allowed hostname or the host LAN IP.
 
 See the [modernization review](docs/modernization-review.md) for findings, validation evidence, and remaining rollout checks.
 
-Pull requests and main pushes run locked restore, Release build with analyzers, tests, NuGet advisory checks, repository secret/configuration scans, and hardened image smoke tests for amd64 and arm64. CodeQL runs on pull requests/main and weekly. Dependabot checks NuGet, Docker images, and pinned GitHub Actions weekly.
+Pull requests and main pushes run locked restore, Release build with analyzers, .NET and JavaScript tests, Playwright browser tests, NuGet advisory checks, repository secret/configuration scans, and hardened image smoke tests for amd64 and arm64. CodeQL runs on pull requests/main and weekly. Dependabot checks NuGet, browser test npm dependencies, Docker images, and pinned GitHub Actions weekly.
 
 Publishing is explicit: a trusted maintainer pushes a stable `vMAJOR.MINOR.PATCH` tag. The release waits for quality and image checks, publishes a versioned multi-architecture GHCR image with SBOM/provenance, and records the immutable production digest in release notes. Main pushes no longer automatically publish `latest` or create releases.
 

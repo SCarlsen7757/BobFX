@@ -37,7 +37,14 @@ Local validation on 2026-10-12:
 - Git whitespace checks, JavaScript syntax checks, and Python script compilation succeeded.
 - The official NuGet advisory index contained no matching package IDs for the resolved dependency graph at review time. Local restore used `NuGetAudit=false` due restricted shell network access; CI performs the normal advisory check.
 
-Container builds, container vulnerability scans, browser interaction/visual checks, and physical WLED tests have **not** run locally. The Docker daemon was inaccessible and no browser surface was available. CI configuration is not evidence that CI has passed.
+At that validation, container builds, container vulnerability scans, browser interaction/visual checks, and physical WLED tests had **not** run locally. The Docker daemon was inaccessible and no browser surface was available. CI configuration is not evidence that CI has passed.
+
+Browser regression validation on 2026-10-13:
+
+- A Chromium Playwright test reproduced the LED page's Strobe color-index failure, circuit termination, and the subsequent `BrowserAudio.DisposeAsync` `JSDisconnectedException`. Strobe now populates both descriptor color inputs, and audio initialization/disposal handles a disconnected circuit.
+- Five TypeScript E2E tests passed against the published Production app: Strobe controls, all registered effects, invalid input preserving output, manual/game ownership with keyboard pre-countdown cancellation, and navigation/full reload. Tests check real server state, browser errors, and the connection-error banner. Output targets loopback; these are not physical WLED acceptance tests.
+- Six .NET audio component regression cases cover normal disposal, disconnection during initialization/session/module cleanup, managed callback release, and propagation of unexpected errors. The four disconnection cases failed before the fix.
+- Release analyzer build completed with zero warnings/errors; all 53 .NET tests, TypeScript checking, and four JavaScript audio tests passed. CI now runs browser tests in the release quality gate and preserves failure artifacts. Hosted CI and container/hardware results remain separate acceptance evidence.
 
 Before production rollout, run CI and test on the actual Linux LAN host with multiple WLED devices: broadcast output, discovery, packet/LED limits, rapid Stop/Start, manual effect ownership, device idle playlist recovery, and browser audio across two clients. UDP send success does not prove device receipt. This deployment has no per-user authentication; anyone in the allowed networks can operate it.
 

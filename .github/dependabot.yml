@@ -1,5 +1,11 @@
 version: 2
 updates:
+  - package-ecosystem: npm
+    directory: /e2e
+    labels: [chore, dependencies, web]
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
   - package-ecosystem: nuget
     directory: /
     labels: [chore, dependencies, api]

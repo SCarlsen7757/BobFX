@@ -105,7 +105,7 @@
     private RgbEffect selectedEffect = RgbEffect.Rainbow;
     private RgbEffect currentEffect = RgbEffect.Off;
     private RgbEffectInfo? effectInfo;
-    private readonly List<string> effectColors = new(); // Support up to 5 colors
+    private readonly List<string> effectColors = new();
     private string? errorMessage;
 
     private int speedMs = 100;
@@ -168,12 +168,6 @@
 
     protected override void OnInitialized()
     {
-        // Initialize default colors to a valid color (will be overwritten by LoadDefaultColors)
-        for (int i = 0; i < 5; i++)
-        {
-            effectColors.Add("#FF0000"); // Default to red
-        }
-
         refreshTask = RefreshAsync();
         OnEffectChanged();
     }
@@ -213,6 +207,9 @@
         switch (selectedEffect)
         {
             case RgbEffect.Strobe:
+                effectColors.Add("#FF0000"); // Match the effect's primary/secondary defaults
+                effectColors.Add("#00FF00");
+                break;
             case RgbEffect.Solid:
             case RgbEffect.Scanner:
             case RgbEffect.FadeIn:
@@ -230,6 +227,10 @@
                 // These effects don't use colors
                 break;
         }
+
+        // Every descriptor color needs a value, including optional input controls.
+        while (effectColors.Count < (effectInfo?.TotalColors ?? 0))
+            effectColors.Add("#000000");
     }
 
     private readonly CancellationTokenSource lifetime = new();
