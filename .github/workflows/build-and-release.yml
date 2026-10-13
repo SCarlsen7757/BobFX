@@ -118,7 +118,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.architecture }}
           cache-to: type=gha,mode=max,scope=${{ matrix.architecture }}
       - name: Install image scanner
-        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
           version: v0.75.0
       - name: Scan image and enforce reviewed vulnerability policy
@@ -207,7 +207,7 @@ jobs:
           echo "digest=${EXISTING_DIGEST:-$BUILD_DIGEST}" >> "$GITHUB_OUTPUT"
           echo "CANDIDATE_DIGEST=${EXISTING_DIGEST:-$BUILD_DIGEST}" >> "$GITHUB_ENV"
       - name: Install image scanner
-        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
           version: v0.75.0
       - name: Verify both exact architecture digests and release metadata
