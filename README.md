@@ -6,7 +6,7 @@ When realtime output stops, WLED's realtime lease expires and the devices resume
 
 ## Run locally
 
-Install the .NET SDK selected by [global.json](global.json), then run. Browser audio unit tests additionally use Node.js 22 or later, without npm dependencies:
+Install the exact .NET SDK selected by [global.json](global.json), then run. SDK roll-forward is disabled to keep implicit Blazor dependencies consistent with the package locks and the Docker build. Update the SDK, Docker SDK image, and affected package locks together. Browser audio unit tests additionally use Node.js 22 or later, without npm dependencies:
 
 ```sh
 dotnet restore BobFx.slnx --locked-mode
