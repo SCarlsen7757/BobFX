@@ -50,6 +50,12 @@ Before production rollout, run CI and test on the actual Linux LAN host with mul
 
 ## GitHub publication
 
+## Remaining application follow-ups (2026-10-13)
+
+The effect start API now preserves descriptor speeds for omitted/null `speedMs` (#14). WLED page disposal cancels and awaits its manual scan, refresh loop, and dialog operations, including late JavaScript imports. Home reads one run-associated countdown snapshot rather than queueing detached event updates (#15). `BobFx.slnx` is the sole cross-platform solution; the standalone Visual Studio Docker project is retained.
+
+Validation: locked restore and analyzer build passed with zero warnings/errors; 68 .NET tests, four Node audio tests, seven Chromium tests, TypeScript checks, and both Compose validations passed. The new tests cover scan cancellation/unsubscription, late module cleanup, snapshot timestamps, rapid game transitions, and HTTP default/explicit speed behavior. Container release promotion and physical LAN acceptance remain separate evidence.
+
 The maintainer ran the label and issue publication scripts. Public GitHub API reads on 2026-10-13 verified all 20 catalog labels, [tracker #6](https://github.com/SCarlsen7757/BobFX/issues/6), and findings #7–#21. The tracker links every finding.
 
 Push the local branch and open an implementation PR linked to the tracker and relevant findings. The temporary publication scripts and issue drafts have been removed after publication.

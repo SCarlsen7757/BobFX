@@ -126,6 +126,10 @@ Replace `bobfx.local` with a configured allowed hostname or the host LAN IP.
 
 ## Quality, releases, and issue tracking
 
+`BobFx.slnx` is the sole application/test solution. Docker Compose can be used independently; the Visual Studio Docker project is kept outside the cross-platform solution.
+
+The effect start API preserves the selected effect's descriptor default when `speedMs` is omitted or null. Explicit values must be 10–60000 milliseconds.
+
 See the [modernization review](docs/modernization-review.md) for findings, validation evidence, and remaining rollout checks.
 
 Pull requests and main pushes run locked restore, Release build with analyzers, .NET and JavaScript tests, Playwright browser tests, NuGet advisory checks, repository secret/configuration scans, and hardened image smoke tests for amd64 and arm64. CodeQL runs on pull requests/main and weekly. Dependabot checks NuGet, browser test npm dependencies, Docker images, and pinned GitHub Actions weekly.

@@ -1,7 +1,8 @@
 using Microsoft.Extensions.Options;
 namespace BobFx.Core.Services;
 
-public sealed record CountdownSnapshot(bool IsRunning, bool IsPreCountdownRunning, TimeSpan Remaining, TimeSpan PreCountdownRemaining, long RunId);
+public sealed record CountdownSnapshot(bool IsRunning, bool IsPreCountdownRunning, TimeSpan Remaining, TimeSpan PreCountdownRemaining, long RunId,
+    DateTimeOffset? StartedUtc = null, DateTimeOffset? EndedUtc = null);
 
 /// <summary>State advanced by the single coordinator, without detached timer tasks.</summary>
 public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<CountdownOptions> options, TimeProvider clock)
@@ -39,7 +40,7 @@ public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<
         var preActive = withPre && preDuration > TimeSpan.Zero;
         phaseDuration = preActive ? preDuration : gameDuration;
         Volatile.Write(ref snapshot, new(!preActive, preActive, preActive ? TimeSpan.Zero : gameDuration,
-            preActive ? preDuration : TimeSpan.Zero, Snapshot.RunId + 1));
+            preActive ? preDuration : TimeSpan.Zero, Snapshot.RunId + 1, preActive ? null : clock.GetUtcNow()));
         lastNotifiedSecond = -1;
         if (preActive) Notify(OnPreCountdown, preDuration); else Notify(OnStartOfEvent, gameDuration);
         Notify(OnTick);
@@ -56,16 +57,18 @@ public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<
             if (state.IsPreCountdownRunning)
             {
                 // Preserve scheduler overshoot instead of extending the game.
+                var overshoot = elapsed - phaseDuration;
                 startedAt = clock.GetTimestamp();
-                phaseDuration = gameDuration - (elapsed - phaseDuration);
+                phaseDuration = gameDuration - overshoot;
                 Volatile.Write(ref snapshot, state with { IsPreCountdownRunning = false, IsRunning = true,
-                    PreCountdownRemaining = TimeSpan.Zero, Remaining = TimeSpan.FromTicks(Math.Max(0, phaseDuration.Ticks)) });
+                    PreCountdownRemaining = TimeSpan.Zero, Remaining = TimeSpan.FromTicks(Math.Max(0, phaseDuration.Ticks)),
+                    StartedUtc = clock.GetUtcNow() - overshoot });
                 lastNotifiedSecond = -1;
                 Notify(OnStartOfEvent, gameDuration);
             }
             else
             {
-                Volatile.Write(ref snapshot, state with { IsRunning = false, Remaining = TimeSpan.Zero });
+                Volatile.Write(ref snapshot, state with { IsRunning = false, Remaining = TimeSpan.Zero, EndedUtc = clock.GetUtcNow() + remaining });
                 Notify(OnEndOfEvent);
             }
             Notify(OnTick);
@@ -78,7 +81,8 @@ public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<
     internal void Stop()
     {
         var old = Snapshot;
-        Volatile.Write(ref snapshot, old with { IsRunning = false, IsPreCountdownRunning = false, Remaining = TimeSpan.Zero, PreCountdownRemaining = TimeSpan.Zero });
+        Volatile.Write(ref snapshot, old with { IsRunning = false, IsPreCountdownRunning = false, Remaining = TimeSpan.Zero,
+            PreCountdownRemaining = TimeSpan.Zero, EndedUtc = old.IsRunning ? clock.GetUtcNow() : old.EndedUtc });
         if (old.IsRunning) Notify(OnEndOfEvent);
         Notify(OnTick);
     }
