@@ -16,6 +16,44 @@ namespace BobFx.Core.Tests;
 
 public sealed class HttpTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OmittedAndNullSpeedsUseEveryEffectDefault(bool explicitNull)
+    {
+        await using var app = new TestApp();
+        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        var effects = await client.GetFromJsonAsync<JsonElement>("/api/drgb/effects");
+        foreach (var descriptor in effects.EnumerateArray())
+        {
+            var name = descriptor.GetProperty("type").GetString();
+            var body = new Dictionary<string, object?> { ["effect"] = name };
+            if (explicitNull) body["speedMs"] = null;
+            Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", body)).StatusCode);
+            var status = await client.GetFromJsonAsync<JsonElement>("/api/drgb/status");
+            Assert.Equal(name, status.GetProperty("currentEffect").GetString());
+            Assert.Equal(TimeSpan.Parse(descriptor.GetProperty("info").GetProperty("defaultSpeed").GetString()!,
+                System.Globalization.CultureInfo.InvariantCulture).TotalMilliseconds, status.GetProperty("speed").GetDouble());
+        }
+    }
+
+    [Theory]
+    [InlineData(10)]
+    [InlineData(60000)]
+    public async Task ExplicitSpeedOverridesDefaultAndInvalidSpeedPreservesOutput(int speed)
+    {
+        await using var app = new TestApp();
+        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Strobe", speedMs = speed })).StatusCode);
+        foreach (var invalid in new[] { -1, 0, 9, 60001 })
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Rainbow", speedMs = invalid })).StatusCode);
+            var status = await client.GetFromJsonAsync<JsonElement>("/api/drgb/status");
+            Assert.Equal("Strobe", status.GetProperty("currentEffect").GetString());
+            Assert.Equal(speed, status.GetProperty("speed").GetDouble());
+        }
+    }
+
     [Fact]
     public async Task ProductionRejectsForeignClientsHostsAndOrigins()
     {

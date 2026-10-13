@@ -25,7 +25,45 @@ test.beforeEach(async ({ request }) => {
 
 test.afterEach(async ({ request }) => {
   await request.post('/api/countdown/stop');
+  await expect.poll(async () => (await (await request.get('/api/countdown/status')).json()).phase,
+    { timeout: 8000 }).toBe('Idle');
   await request.post('/api/drgb/stop');
+});
+
+test('navigation during a WLED scan keeps the circuit usable', async ({ page }) => {
+  await page.goto('/wled');
+  await expect(page.getByRole('button', { name: 'Enable audio', exact: true })).toBeEnabled();
+  for (let visit = 0; visit < 3; visit++) {
+    // The startup discovery worker may hold the shared scan gate; retry until this page owns a scan.
+    await expect.poll(async () => {
+      const scan = page.getByRole('button', { name: 'Scan', exact: true });
+      if (await scan.count()) await scan.click();
+      return page.getByRole('button', { name: 'Scanning…', exact: true }).count();
+    }, { timeout: 10000 }).toBe(1);
+    await page.getByRole('link', { name: 'Game', exact: true }).click();
+    await expect(page.getByRole('button', { name: /Start Countdown/ })).toBeEnabled();
+    await page.getByRole('link', { name: 'WLED devices', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Scan', exact: true })).toBeEnabled();
+  }
+});
+
+test('rapid game transitions never show a previous run ending', async ({ page, request }) => {
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Enable audio', exact: true })).toBeEnabled();
+  for (let run = 0; run < 3; run++) {
+    expect((await request.post('/api/countdown/start', { data: { durationSeconds: 60, deviationSeconds: 0 } })).ok()).toBeTruthy();
+    await expect(page.getByText('BOB!', { exact: true })).toBeVisible();
+    expect((await request.post('/api/countdown/stop')).ok()).toBeTruthy();
+    expect((await request.post('/api/countdown/start-with-pre', {
+      data: { preDurationSeconds: 30, durationSeconds: 60, deviationSeconds: 0 },
+    })).ok()).toBeTruthy();
+    await expect(page.getByRole('button', { name: 'Stop pre-countdown' })).toBeVisible();
+    await expect(page.getByText('Game Over!', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('BOB!', { exact: true })).toHaveCount(0);
+    expect((await request.post('/api/countdown/stop')).ok()).toBeTruthy();
+    await expect(page.getByRole('button', { name: /Start Countdown/ })).toBeVisible();
+    await expect(page.getByText('Game Over!', { exact: true })).toHaveCount(0);
+  }
 });
 
 test('Strobe renders both colors and can start and stop without losing its circuit', async ({ page, request }) => {

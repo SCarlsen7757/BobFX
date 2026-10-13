@@ -111,6 +111,9 @@
     private string? scanStatus;
     private ElementReference dialog, scanButton;
     private IJSObjectReference? module;
+    private readonly CancellationTokenSource lifetime = new();
+    private Task? scanTask, refreshTask, dialogTask;
+    private int refreshRequested;
     private static string DeviceUrl(WLedDevice device) => new UriBuilder("http", device.Address.ToString(), device.Port).Uri.AbsoluteUri;
     private string FormatMac(string mac)
     {
@@ -124,23 +127,36 @@
     protected override void OnInitialized()
     {
         Discovery.DevicesUpdated += Discovery_DevicesUpdated;
+        refreshTask = RefreshLoopAsync();
     }
 
     private void Discovery_DevicesUpdated(IReadOnlyList<WLedDevice> devices)
     {
-        _ = RefreshViewAsync();
+        Interlocked.Exchange(ref refreshRequested, 1);
     }
 
-    private async Task Refresh()
+    private Task Refresh()
+    {
+        if (disposed || scanning) return Task.CompletedTask;
+        scanTask = ScanAsync();
+        return scanTask;
+    }
+
+    private async Task ScanAsync()
     {
         scanning = true; scanStatus = null;
-        try { await Discovery.ScanAsync(); scanStatus = "Scan complete."; }
+        try
+        {
+            await Discovery.ScanAsync(lifetime.Token);
+            if (!disposed) scanStatus = "Scan complete.";
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
         {
             Logger.LogWarning(ex, "Manual WLED scan failed");
-            scanStatus = "Scan failed. Check network connectivity and try again.";
+            if (!disposed) scanStatus = "Scan failed. Check network connectivity and try again.";
         }
-        finally { scanning = false; }
+        finally { if (!disposed) scanning = false; }
     }
 
     private void Clear()
@@ -160,35 +176,73 @@
         openPending = true;
     }
 
-    private async Task CloseModal()
+    private Task CloseModal()
     {
-        if (module is not null) await module.InvokeVoidAsync("close", dialog, scanButton);
-        ShowModal = false;
-        SelectedDevice = null;
+        if (disposed) return Task.CompletedTask;
+        return QueueDialogAsync(false);
     }
 
-    private async Task RefreshViewAsync()
+    private async Task RefreshLoopAsync()
     {
-        try { await InvokeAsync(() => { if (!disposed) StateHasChanged(); }); }
-        catch (ObjectDisposedException ex) when (disposed) { Logger.LogDebug(ex, "WLED view closed during refresh"); }
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(lifetime.Token))
+                if (Interlocked.Exchange(ref refreshRequested, 0) != 0)
+                    await InvokeAsync(() => { if (!disposed) StateHasChanged(); });
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
     }
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    protected override Task OnAfterRenderAsync(bool firstRender)
     {
-        if (openPending)
+        if (openPending && !disposed)
         {
             openPending = false;
-            module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/dialog.js");
-            await module.InvokeVoidAsync("open", dialog);
+            return QueueDialogAsync(true);
         }
+        return Task.CompletedTask;
+    }
+    private Task QueueDialogAsync(bool open)
+    {
+        dialogTask = RunDialogAsync(dialogTask, open);
+        return dialogTask;
+    }
+    private async Task RunDialogAsync(Task? previous, bool open)
+    {
+        if (previous is not null) await previous;
+        if (disposed) return;
+        try
+        {
+            // Await import even after navigation so disposal can release a late module.
+            if (open) module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/dialog.js");
+            if (disposed) return;
+            if (module is not null)
+            {
+                if (open) await module.InvokeVoidAsync("open", lifetime.Token, dialog);
+                else await module.InvokeVoidAsync("close", lifetime.Token, dialog, scanButton);
+            }
+            if (!open && !disposed) { ShowModal = false; SelectedDevice = null; }
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (JSDisconnectedException ex) { Logger.LogDebug(ex, "WLED dialog circuit closed"); }
     }
     public async ValueTask DisposeAsync()
     {
         disposed = true;
         Discovery.DevicesUpdated -= Discovery_DevicesUpdated;
-        if (module is not null)
+        await lifetime.CancelAsync();
+        try
         {
-            try { await module.DisposeAsync(); }
+            await Task.WhenAll(new[] { scanTask, refreshTask, dialogTask }.OfType<Task>());
+        }
+        finally
+        {
+            try
+            {
+                if (module is not null) await module.DisposeAsync();
+            }
             catch (JSDisconnectedException ex) { Logger.LogDebug(ex, "WLED dialog circuit closed during disposal"); }
+            finally { lifetime.Dispose(); }
         }
     }
 }

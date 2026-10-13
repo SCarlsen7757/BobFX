@@ -4,6 +4,7 @@
 @inject CountdownService CountdownService
 @inject IJSRuntime JSRuntime
 @inject ILogger<Home> Logger
+@inject TimeProvider Clock
 @implements IAsyncDisposable
 
 <PageTitle>Home</PageTitle>
@@ -14,7 +15,7 @@
     <h1>BobFx Controller</h1>
 
     <div class="countdown-section">
-        @if (!CountdownService.IsRunning && !CountdownService.IsPreCountdownRunning)
+        @if (!state.IsRunning && !state.IsPreCountdownRunning)
         {
             @if (showGameOver)
             {
@@ -28,11 +29,11 @@
                 <span class="btn-text">Start Countdown</span>
             </button>
         }
-        else if (CountdownService.IsPreCountdownRunning)
+        else if (state.IsPreCountdownRunning)
         {
             <div class="pre-countdown-display">
                 <div class="pre-countdown-label">Pre-Countdown Active</div>
-                <div class="pre-countdown-time">@FormatTime(CountdownService.PreCountdownRemaining)</div>
+                <div class="pre-countdown-time">@FormatTime(state.PreCountdownRemaining)</div>
                 <button class="btn-countdown btn-stop" @onclick="StopCountdown">Stop pre-countdown</button>
             </div>
         }
@@ -63,37 +64,38 @@
 @code {
     private string? commandError;
     private bool showBobMessage, showGameOver, disposed;
-    private DateTimeOffset bobUntil, gameOverUntil;
+    private CountdownSnapshot state = new(false, false, TimeSpan.Zero, TimeSpan.Zero, 0);
+    private long? suppressedEndRunId;
     private readonly CancellationTokenSource lifetime = new();
     private Task? refreshTask;
     protected override void OnInitialized()
     {
-        CountdownService.OnStartOfEvent += OnStart;
-        CountdownService.OnEndOfEvent += OnEnd;
+        ReadState();
         refreshTask = RefreshAsync();
     }
-    private void OnStart(TimeSpan duration) => _ = UpdateAsync(() => { bobUntil = DateTimeOffset.UtcNow.AddSeconds(2.5); gameOverUntil = default; });
-    private void OnEnd() => _ = UpdateAsync(() => { gameOverUntil = DateTimeOffset.UtcNow.AddSeconds(15); bobUntil = default; });
-    private async Task UpdateAsync(Action update)
+    private void ReadState()
     {
-        try { await InvokeAsync(() => { if (!disposed) { update(); RenderState(); } }); }
-        catch (Exception ex) when (disposed) { Logger.LogDebug(ex, "Game display closed"); }
+        var latest = CountdownService.Snapshot;
+        if (state.RunId != latest.RunId) suppressedEndRunId = null;
+        state = latest;
+        var now = Clock.GetUtcNow();
+        showBobMessage = state.IsRunning && state.StartedUtc is { } start && now < start.AddSeconds(2.5);
+        showGameOver = !state.IsRunning && !state.IsPreCountdownRunning && state.RunId != suppressedEndRunId &&
+            state.EndedUtc is { } end && now < end.AddSeconds(15);
     }
     private void RenderState()
     {
-        showBobMessage = DateTimeOffset.UtcNow < bobUntil;
-        showGameOver = DateTimeOffset.UtcNow < gameOverUntil;
+        ReadState();
         StateHasChanged();
     }
     private async Task RefreshAsync()
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200), Clock);
         try { while (await timer.WaitForNextTickAsync(lifetime.Token)) await InvokeAsync(() => { if (!disposed) RenderState(); }); }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { /* Navigating away cancels the display timer. */ }
     }
     private async Task StartCountdown()
     {
-        bobUntil = gameOverUntil = default;
         commandError = null;
         try { await Control.StartGameAsync(); }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { commandError = ex.Message; }
@@ -102,16 +104,25 @@
     {
         try
         {
-            if (await JSRuntime.InvokeAsync<bool>("confirm", "Stop the countdown?")) { await Control.StopGameAsync(); bobUntil = gameOverUntil = default; RenderState(); }
+            if (await JSRuntime.InvokeAsync<bool>("confirm", lifetime.Token, "Stop the countdown?"))
+            {
+                if (disposed) return;
+                var stoppedRunId = CountdownService.Snapshot.RunId;
+                await Control.StopGameAsync();
+                if (disposed) return;
+                ReadState();
+                suppressedEndRunId = stoppedRunId;
+                RenderState();
+            }
         }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (JSDisconnectedException ex) { Logger.LogDebug(ex, "Game display circuit closed"); }
         catch (Exception ex) when (ex is InvalidOperationException or JSException) { commandError = ex.Message; }
     }
     private static string FormatTime(TimeSpan time) => $"{Math.Max(0, (int)time.TotalSeconds)}";
     public async ValueTask DisposeAsync()
     {
         disposed = true;
-        CountdownService.OnStartOfEvent -= OnStart;
-        CountdownService.OnEndOfEvent -= OnEnd;
         await lifetime.CancelAsync();
         if (refreshTask is not null) await refreshTask;
         lifetime.Dispose();

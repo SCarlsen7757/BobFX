@@ -3,7 +3,7 @@ using BobFx.Core.Services.Effects;
 using Microsoft.AspNetCore.Mvc;
 using System.ComponentModel.DataAnnotations;
 namespace BobFx.Core.Controllers;
-public sealed record StartEffectRequest(string Effect = "Rainbow", [Range(10, 60000)] int SpeedMs = 100);
+public sealed record StartEffectRequest(string Effect = "Rainbow", [Range(10, 60000)] int? SpeedMs = null);
 public sealed record ChangeSpeedRequest([Range(10, 60000)] int SpeedMs);
 [ApiController]
 [Route("api/[controller]")]
@@ -14,7 +14,11 @@ public sealed class DRgbController(DRgbService ledService, IRgbEffectFactory fac
     {
         if (!Enum.TryParse(request.Effect, true, out RgbEffect selected) || !Enum.IsDefined(selected))
             return Task.FromResult<IActionResult>(Problem(statusCode: 400, title: "Invalid effect"));
-        return Command(() => control.StartManualEffectAsync(b => b.WithEffect(selected).WithSpeed(request.SpeedMs)));
+        return Command(() => control.StartManualEffectAsync(b =>
+        {
+            b.WithEffect(selected);
+            if (request.SpeedMs is int speed) b.WithSpeed(speed);
+        }));
     }
     [HttpPost("stop")]
     public Task<IActionResult> Stop() => Command(control.StopManualEffectAsync);
