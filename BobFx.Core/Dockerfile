@@ -21,6 +21,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD curl 
 
 FROM base AS final
 ARG VERSION=0.0.0-local
-LABEL org.opencontainers.image.title="BobFX" org.opencontainers.image.version=$VERSION org.opencontainers.image.source="https://github.com/SCarlsen7757/BobFX"
+ARG REVISION=local
+LABEL org.opencontainers.image.title="BobFX" org.opencontainers.image.version=$VERSION org.opencontainers.image.revision=$REVISION org.opencontainers.image.source="https://github.com/SCarlsen7757/BobFX"
 COPY --from=build --chown=$APP_UID:$APP_UID /app/publish .
 ENTRYPOINT ["dotnet", "BobFx.Core.dll"]

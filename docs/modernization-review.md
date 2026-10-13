@@ -48,6 +48,16 @@ Browser regression validation on 2026-10-13:
 
 Before production rollout, run CI and test on the actual Linux LAN host with multiple WLED devices: broadcast output, discovery, packet/LED limits, rapid Stop/Start, manual effect ownership, device idle playlist recovery, and browser audio across two clients. UDP send success does not prove device receipt. This deployment has no per-user authentication; anyone in the allowed networks can operate it.
 
+## Release follow-ups (#12 and #19)
+
+The release workflow now verifies the exact candidate architecture digests and promotes their full index without rebuilding. HIGH/CRITICAL findings, including unfixed findings, block unless a reviewed package/target-specific exception with an owner, tracking issue, rationale and future expiry applies. The default exception list is empty; complete reports and suppression summaries are retained.
+
+Stable images carry source revision and version labels. Release verification checks both runtime assemblies, hardened health probes, platform-associated SBOM/provenance, and final digest equality. Existing stable images are re-verified on reruns and cannot be replaced by different digests. `.github/release.yml` groups merged PRs by work-type labels with explicit precedence and no author exclusions.
+
+Local validation on 2026-10-13 passed 16 release-policy/category tests, actionlint, and a real multi-architecture candidate build in a temporary loopback registry. Both architecture digests passed full Trivy 0.75.0 scans with no HIGH/CRITICAL findings or exceptions, nonroot/read-only health smoke tests, assembly version `0.7.0.0`, OCI version `0.7.0`, and per-platform SBOM/provenance checks. Promotion retained the exact index digest; a matching-digest rerun succeeded without rebuilding. Locked restore, Release analyzer build and the base branch's 58 .NET tests also passed. This branch is independent of the application PR, whose ten additional .NET tests and seven Chromium checks passed separately.
+
+Issues #12/#19 remain open until a trusted stable-tag release validates the GHCR publication and downloadable evidence. Local registry validation and unit tests do not establish a production release. Merge the application follow-up and release follow-up PRs before tagging `v0.7.0`; retain the remaining Linux LAN hardware/audio rollout checks.
+
 ## GitHub publication
 
 ## Remaining application follow-ups (2026-10-13)
