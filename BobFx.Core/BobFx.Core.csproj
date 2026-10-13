@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <!-- Docker restores before copying Razor files; include the Blazor assets dependency in both restores. -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
     <AnalysisLevel>latest</AnalysisLevel>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
     <DockerfileContext>..</DockerfileContext>
