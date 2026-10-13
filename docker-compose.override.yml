@@ -1,20 +1,4 @@
+# Visual Studio loads this file automatically.
+# All development settings live in docker-compose.yml; no production overrides.
 services:
-  bobfx:
-    environment:
-      # Development overrides
-      - WLED_LED_COUNT=24
-      - WLED_TARGET_ADDRESS=192.168.100.255
-      - WLED_DISCOVERY_INTERVAL_SECONDS=10
-
-      # Countdown Configuration
-      - PRE_COUNTDOWN_TIME_SECONDS=5
-      - COUNTDOWN_TIME_SECONDS=60
-      - COUNTDOWN_DEVIATION_SECONDS=20
-      
-      # ASP.NET Core Configuration
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_URLS=http://+:5159
-
-    # Override network mode for Windows/Visual Studio debugging
-    # Use default bridge networking instead of host mode
-    network_mode: "bridge"
+  bobfx: {}

@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    labels: [chore, dependencies, api]
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: docker
+    directory: /BobFx.Core
+    labels: [chore, dependencies, infra]
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    labels: [chore, dependencies, infra]
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

@@ -178,13 +178,7 @@ public class RgbEffectBuilder
                 breathingEffect.MaxBrightness = maxBrightness.Value;
         }
 
-        // Validate the configured effect
-        var validationResult = effect.Validate();
-        if (!validationResult.IsValid)
-        {
-            throw new InvalidOperationException(
-        $"Effect configuration is invalid: {string.Join(", ", validationResult.Errors)}");
-        }
+        EffectValidation.EnsureValid(effect);
 
         return effect;
     }

@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="BobFx.Core/BobFx.Core.csproj" />
+  <Project Path="BobFx.Core.Tests/BobFx.Core.Tests.csproj" />
+</Solution>

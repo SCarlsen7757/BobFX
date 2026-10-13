@@ -1,0 +1,102 @@
+[
+  {
+    "name": "api",
+    "color": "1d76db",
+    "description": "Backend controllers, application services, and game state"
+  },
+  {
+    "name": "blocked",
+    "color": "6e6e6e",
+    "description": "Waiting on external work before it can proceed"
+  },
+  {
+    "name": "breaking change",
+    "color": "5319e7",
+    "description": "Requires incompatible API, configuration, or deployment migration"
+  },
+  {
+    "name": "bug",
+    "color": "d73a4a",
+    "description": "Something isn't working as intended"
+  },
+  {
+    "name": "chore",
+    "color": "d9c9b8",
+    "description": "Build, tooling, dependencies, or cleanup"
+  },
+  {
+    "name": "dependencies",
+    "color": "6f42c1",
+    "description": "Dependency updates (name matches Dependabot's default)"
+  },
+  {
+    "name": "documentation",
+    "color": "a67c52",
+    "description": "README, setup, networking, operations, and code documentation"
+  },
+  {
+    "name": "duplicate",
+    "color": "cfd3d7",
+    "description": "This issue or pull request already exists"
+  },
+  {
+    "name": "feature",
+    "color": "e36209",
+    "description": "New capability, or an improvement to an existing one"
+  },
+  {
+    "name": "good first issue",
+    "color": "7057ff",
+    "description": "Good for newcomers"
+  },
+  {
+    "name": "help wanted",
+    "color": "8b5cf6",
+    "description": "Extra attention is needed"
+  },
+  {
+    "name": "infra",
+    "color": "1d76db",
+    "description": "Docker, configuration, CI/CD, versioning, and image publishing"
+  },
+  {
+    "name": "needs info",
+    "color": "9e9e9e",
+    "description": "Waiting on more detail from the reporter"
+  },
+  {
+    "name": "performance",
+    "color": "d4a72c",
+    "description": "Speed, memory, query cost, or render cost"
+  },
+  {
+    "name": "refactor",
+    "color": "c5a880",
+    "description": "Internal restructuring with no behaviour change"
+  },
+  {
+    "name": "security",
+    "color": "b60205",
+    "description": "Access control, unsafe input, network exposure, or supply-chain concern"
+  },
+  {
+    "name": "web",
+    "color": "1d76db",
+    "description": "Blazor UI, forms, styles, and browser interactions"
+  },
+  {
+    "name": "wontfix",
+    "color": "ffffff",
+    "description": "This will not be worked on"
+  },
+  {
+    "name": "wled",
+    "color": "0f8b8d",
+    "description": "WLED discovery, UDP realtime output, and RGB effects"
+  },
+  {
+    "name": "audio",
+    "color": "0f8b8d",
+    "description": "Browser sound events, activation, playback, and mute"
+  }
+]

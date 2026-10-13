@@ -649,3 +649,7 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Local validation artifacts and offline NuGet feed
+.validation/
+__pycache__/

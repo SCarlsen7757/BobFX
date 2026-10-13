@@ -1,258 +1,94 @@
-﻿using BobFx.Core.Services.Effects;
+using BobFx.Core.Services.Effects;
 using Microsoft.Extensions.Options;
 using System.Numerics;
+namespace BobFx.Core.Services;
 
-namespace BobFx.Core.Services
+/// <summary>One hosted renderer owns the mutable frame; consumers receive copies.</summary>
+public sealed class DRgbService : BackgroundService
 {
-    public class DRgbService
+    private readonly Lock sync = new();
+    private readonly Vector3[] leds;
+    private readonly IRgbEffectFactory factory;
+    private readonly ILogger<DRgbService> logger;
+    private readonly TimeProvider clock;
+    private IRgbEffect? currentEffect;
+    private bool completed;
+    private long lastFrame;
+    private int udpActive;
+    private int ready;
+    public bool IsReady => Volatile.Read(ref ready) != 0;
+    private string? lastError;
+    public string? LastError => Volatile.Read(ref lastError);
+    public int LedCount => leds.Length;
+    public bool IsUdpActive { get => Volatile.Read(ref udpActive) != 0; internal set => Volatile.Write(ref udpActive, value ? 1 : 0); }
+    public RgbEffect CurrentEffect { get { lock (sync) return currentEffect?.EffectType ?? RgbEffect.Off; } }
+    public TimeSpan Speed { get { lock (sync) return currentEffect?.Speed ?? TimeSpan.FromMilliseconds(100); } }
+    public DRgbService(ILogger<DRgbService> logger, IOptions<WLedOptions> options, IRgbEffectFactory factory, TimeProvider clock)
     {
-        private readonly ILogger<DRgbService> logger;
-        private readonly IRgbEffectFactory effectFactory;
-        private readonly Lock @lock = new();
-        private CancellationTokenSource? cts;
-        private IRgbEffect? currentEffect;
-        private Task? effectTask;
-
-        public Vector3[] Leds { get; init; }
-        public event Action? OnUpdate;
-
-        public RgbEffect CurrentEffect => currentEffect?.EffectType ?? RgbEffect.Off;
-        public TimeSpan Speed => currentEffect?.Speed ?? TimeSpan.FromMilliseconds(100);
-        public IRgbEffect? CurrentEffectInstance => currentEffect;
-        public int LedCount { get; init; }
-        public bool IsUdpActive { get; set; } = false;
-
-        public DRgbService(ILogger<DRgbService> logger,
-                           IOptions<WLedOptions.LedOptions> ledOptions,
-                           IRgbEffectFactory effectFactory)
+        this.logger = logger; this.factory = factory; this.clock = clock;
+        leds = new Vector3[options.Value.Led.LedCount];
+    }
+    internal Task StartEffectAsync(Action<RgbEffectBuilder> configure)
+    {
+        var builder = new RgbEffectBuilder(factory); configure(builder);
+        return StartEffectAsync(builder.Build());
+    }
+    internal Task StartEffectAsync(IRgbEffect effect)
+    {
+        Validate(effect);
+        lock (sync)
         {
-            this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            this.effectFactory = effectFactory ?? throw new ArgumentNullException(nameof(effectFactory));
-            ArgumentNullException.ThrowIfNull(ledOptions);
-
-            LedCount = ledOptions.Value.LedCount;
-            Leds = new Vector3[LedCount];
-            this.logger.LogInformation("DRgbService initialized with {LedCount} LEDs", LedCount);
+            effect.Initialize(leds.Length, clock);
+            completed = effect.Apply(leds, CancellationToken.None);
+            Volatile.Write(ref lastError, null);
+            currentEffect = effect; lastFrame = clock.GetTimestamp();
         }
-
-        /// <summary>
-        /// Start an effect using the effect instance directly.
-        /// </summary>
-        public async Task StartEffectAsync(IRgbEffect effect)
+        return Task.CompletedTask;
+    }
+    internal void StopEffect()
+    {
+        lock (sync) { currentEffect = null; completed = true; leds.AsSpan().Clear(); }
+    }
+    internal void SetSpeed(TimeSpan speed) => UpdateEffect(effect => effect.Speed = speed);
+    internal void UpdateEffect(Action<IRgbEffect> update)
+    {
+        lock (sync)
         {
-            ArgumentNullException.ThrowIfNull(effect);
-
-            // Validate the effect before starting
-            var validation = effect.Validate();
-            if (!validation.IsValid)
-            {
-                throw new InvalidOperationException(
-                    $"Effect validation failed: {string.Join(", ", validation.Errors)}");
-            }
-
-            await StopAndWaitForCurrentEffect();
-
-            lock (@lock)
-            {
-                currentEffect = effect;
-                currentEffect.Initialize(LedCount);
-                cts = new CancellationTokenSource();
-                effectTask = RunEffectAsync(cts.Token);
-                logger.LogInformation("Started effect {Effect} with speed {Speed}ms",
-                    effect.EffectType, effect.Speed.TotalMilliseconds);
-            }
-        }
-
-        /// <summary>
-        /// Start an effect using a builder.
-        /// </summary>
-        public async Task StartEffectAsync(Action<RgbEffectBuilder> configure)
-        {
-            var builder = new RgbEffectBuilder(effectFactory);
-            configure(builder);
-            var effect = builder.Build();
-            await StartEffectAsync(effect);
-        }
-
-        /// <summary>
-        /// Start an effect by type with default configuration.
-        /// </summary>
-        public async Task StartEffectAsync(RgbEffect effectType)
-        {
-            var effect = effectFactory.Create(effectType);
-            await StartEffectAsync(effect);
-        }
-
-        public void StopEffect()
-        {
-            lock (@lock)
-            {
-                StopEffectInternal();
-                logger.LogInformation("Stopped effect");
-            }
-        }
-
-        public void SetSpeed(TimeSpan speed)
-        {
-            lock (@lock)
-            {
-                if (currentEffect != null)
-                {
-                    currentEffect.Speed = speed;
-                    logger.LogInformation("Effect speed set to {Speed}ms", speed.TotalMilliseconds);
-                }
-            }
-        }
-
-        /// <summary>
-        /// Update the current effect's properties while it's running.
-        /// </summary>
-        public void UpdateEffect(Action<IRgbEffect> update)
-        {
-            lock (@lock)
-            {
-                if (currentEffect != null)
-                {
-                    update(currentEffect);
-                    logger.LogInformation("Effect {Effect} updated", currentEffect.EffectType);
-                }
-            }
-        }
-
-        private async Task StopAndWaitForCurrentEffect()
-        {
-            CancellationTokenSource? oldCts = null;
-            Task? oldTask;
-
-            lock (@lock)
-            {
-                if (cts != null)
-                {
-                    oldCts = cts;
-                    cts.Cancel();
-                }
-                oldTask = effectTask;
-                cts = null;
-            }
-
-            if (oldTask is not null)
-            {
-                try
-                {
-                    await oldTask;
-                }
-                catch (TaskCanceledException ex)
-                {
-                    logger.LogDebug(ex, "Task was canceled while waiting for the current effect to stop.");
-                }
-                catch (OperationCanceledException ex)
-                {
-                    logger.LogDebug(ex, "Operation was canceled while waiting for the current effect to stop.");
-                }
-                finally
-                {
-                    oldCts?.Dispose();
-                }
-            }
-        }
-
-        private void StopEffectInternal()
-        {
-            cts?.Cancel();
-        }
-
-        private void ClearStrip()
-        {
-            for (int i = 0; i < LedCount; i++)
-                Leds[i] = Vector3.Zero;
-            OnUpdate?.Invoke();
-        }
-
-        private async Task RunEffectAsync(CancellationToken token)
-        {
-            bool wasCancelled = false;
-            try
-            {
-                while (!token.IsCancellationRequested && currentEffect != null)
-                {
-                    bool completed;
-
-                    lock (@lock)
-                    {
-                        // Apply the effect using the strategy pattern
-                        completed = currentEffect.Apply(Leds.AsSpan(), token);
-                    }
-
-                    OnUpdate?.Invoke();
-
-                    if (completed)
-                    {
-                        logger.LogInformation("Effect {Effect} completed", currentEffect.EffectType);
-                        break;
-                    }
-
-                    await Task.Delay(currentEffect.Speed, token);
-                }
-            }
-            catch (TaskCanceledException)
-            {
-                wasCancelled = true;
-            }
-            catch (OperationCanceledException)
-            {
-                wasCancelled = true;
-            }
-            finally
-            {
-                // Only clear the strip if the effect was cancelled, not if it completed naturally
-                if (wasCancelled)
-                {
-                    ClearStrip();
-                }
-                else
-                {
-                    // Effect completed naturally, trigger one final update to show the final state
-                    OnUpdate?.Invoke();
-                }
-            }
-        }
-
-        public byte[] ToByteArray()
-        {
-            byte[] data = new byte[Leds.Length * 3];
-
-            lock (@lock)
-            {
-                for (int i = 0; i < Leds.Length; i++)
-                {
-                    int index = i * 3;
-                    var (r, g, b) = ColorHelper.ToRgbBytes(Leds[i]);
-                    data[index] = r;
-                    data[index + 1] = g;
-                    data[index + 2] = b;
-                }
-            }
-
-            return data;
-        }
-
-        public void CopyTo(Span<byte> dest)
-        {
-            int required = Leds.Length * 3;
-            if (dest.Length < required)
-                throw new ArgumentException($"Destination span is too small. Required {required} bytes.", nameof(dest));
-
-            lock (@lock)
-            {
-                for (int i = 0; i < Leds.Length; i++)
-                {
-                    int index = i * 3;
-                    var (r, g, b) = ColorHelper.ToRgbBytes(Leds[i]);
-                    dest[index] = r;
-                    dest[index + 1] = g;
-                    dest[index + 2] = b;
-                }
-            }
+            if (currentEffect is null) return;
+            var candidate = currentEffect.Clone(); update(candidate); Validate(candidate);
+            candidate.Initialize(leds.Length); currentEffect = candidate; completed = false;
         }
     }
+    public RgbStatus GetStatus() { lock (sync) return new(currentEffect?.EffectType ?? RgbEffect.Off, currentEffect?.Speed ?? TimeSpan.FromMilliseconds(100), leds.Length, IsUdpActive, LastError); }
+    public Vector3[] GetSnapshot() { lock (sync) return (Vector3[])leds.Clone(); }
+    public void CopyTo(Span<byte> destination)
+    {
+        if (destination.Length < leds.Length * 3) throw new ArgumentException("Destination is too small.", nameof(destination));
+        lock (sync)
+            for (var i = 0; i < leds.Length; i++)
+            {
+                var (r, g, b) = ColorHelper.ToRgbBytes(leds[i]);
+                destination[i * 3] = r; destination[i * 3 + 1] = g; destination[i * 3 + 2] = b;
+            }
+    }
+    private static void Validate(IRgbEffect effect) => EffectValidation.EnsureValid(effect);
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(10), clock);
+        Volatile.Write(ref ready, 1);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+                lock (sync)
+                {
+                    if (currentEffect is null || completed || clock.GetElapsedTime(lastFrame) < currentEffect.Speed) continue;
+                    try { completed = currentEffect.Apply(leds, stoppingToken); lastFrame = clock.GetTimestamp(); }
+                    catch (Exception ex) { Volatile.Write(ref lastError, "LED renderer failed"); logger.LogError(ex, "LED renderer failed"); currentEffect = null; leds.AsSpan().Clear(); IsUdpActive = false; }
+                }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        finally { Volatile.Write(ref ready, 0); StopEffect(); IsUdpActive = false; }
+    }
 }
+
+public sealed record RgbStatus(RgbEffect Effect, TimeSpan Speed, int LedCount, bool Streaming, string? LastError);

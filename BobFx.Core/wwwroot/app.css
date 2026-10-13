@@ -63,3 +63,24 @@ h1:focus {
 .form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
     text-align: start;
 }
+
+/* Local controls and layout: no external CSS dependency. */
+* { box-sizing: border-box; }
+button, input, select { font: inherit; border: 1px solid #747d89; border-radius: .4rem; padding: .55rem .8rem; background: #252c36; color: #fff; }
+button { cursor: pointer; }
+button:hover { background: #35465e; }
+button:disabled { opacity: .5; cursor: default; }
+:focus-visible { outline: 3px solid #7ac5ff; outline-offset: 3px; }
+article { padding: 1.5rem; max-width: 100%; }
+.audio-controls, .button-group { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin: 1rem 0; }
+.parameters { display: grid; gap: .75rem; max-width: 34rem; }
+.parameters > div { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
+.error-message { color: #ffb6b6; padding: .75rem; border: 1px solid #ffb6b6; }
+.table { width: 100%; border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: .75rem; border-bottom: 1px solid #616875; }
+.btn { display: inline-block; text-decoration: none; padding: .5rem; border: 1px solid #747d89; border-radius: .4rem; }
+.device-dialog { background: #202733; color: #fff; border: 1px solid #747d89; border-radius: .75rem; max-width: min(36rem, 95vw); }
+.device-dialog::backdrop { background: #000b; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.nav-link { display: block; padding: .75rem; }
+.navbar-toggler { display: none; }

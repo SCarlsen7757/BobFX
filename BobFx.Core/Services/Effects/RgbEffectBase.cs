@@ -11,11 +11,13 @@ public abstract class RgbEffectBase : IRgbEffect
     public TimeSpan Speed { get; set; } = TimeSpan.FromMilliseconds(100);
 
     protected int Step { get; set; }
-    protected DateTime StartTime { get; set; }
+    protected long StartTimestamp { get; set; }
+    protected TimeProvider Clock { get; private set; } = TimeProvider.System;
     protected int LedCount { get; private set; }
 
-    public virtual void Initialize(int ledCount)
+    public virtual void Initialize(int ledCount, TimeProvider? clock = null)
     {
+        Clock = clock ?? TimeProvider.System;
         LedCount = ledCount;
         Reset();
     }
@@ -25,7 +27,7 @@ public abstract class RgbEffectBase : IRgbEffect
     public virtual void Reset()
     {
         Step = 0;
-        StartTime = DateTime.UtcNow;
+        StartTimestamp = Clock.GetTimestamp();
     }
 
     public abstract RgbEffectInfo GetInfo();

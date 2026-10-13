@@ -13,6 +13,8 @@
     <None Include="docker-compose.yml" />
     <None Include="docker-compose.override.yml" />
     <None Include=".dockerignore" />
-    <None Include="GitVersion.yml" />
+    <None Include="compose.prod.yaml" />
+    <None Include=".env.example" />
+    <None Include="README.md" />
   </ItemGroup>
 </Project>

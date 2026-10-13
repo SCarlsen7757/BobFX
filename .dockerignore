@@ -1,0 +1,17 @@
+.git
+.github
+**/bin
+**/obj
+**/node_modules
+**/.vs
+**/.vscode
+**/*.user
+**/*.env
+**/.env*
+!**/.env.example
+**/*.pfx
+**/*.pem
+**/TestResults
+**/*.trx
+**/*.binlog
+.validation

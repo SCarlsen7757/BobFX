@@ -11,7 +11,7 @@ public class FadeInEffect : RgbEffectBase
 
     public override bool Apply(Span<Vector3> leds, CancellationToken token)
     {
-        var elapsed = DateTime.UtcNow - StartTime;
+        var elapsed = Clock.GetElapsedTime(StartTimestamp);
 
         if (elapsed >= FadeDuration)
         {
@@ -39,7 +39,7 @@ public class FadeInEffect : RgbEffectBase
         Description = "Gradually fade in to specified color over a set duration",
         DefaultSpeed = TimeSpan.FromMilliseconds(50),
         ColorLabels = ["Target Color"],
-        CustomParameters = new() { ["FadeDuration"] = typeof(TimeSpan) }
+        CustomParameters = new() { ["FadeDuration"] = "duration" }
     };
 
     public override ValidationResult Validate()

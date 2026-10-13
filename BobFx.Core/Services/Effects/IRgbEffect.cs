@@ -20,7 +20,7 @@ public interface IRgbEffect
     /// <summary>
     /// Initialize the effect before first render.
     /// </summary>
-    void Initialize(int ledCount);
+    void Initialize(int ledCount, TimeProvider? clock = null);
 
     /// <summary>
     /// Apply the effect to the LED array.

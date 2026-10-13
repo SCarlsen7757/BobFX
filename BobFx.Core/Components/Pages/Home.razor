@@ -1,13 +1,14 @@
-﻿@page "/"
+﻿@inject RgbAndSoundControlService Control
+@page "/"
 @using BobFx.Core.Services
 @inject CountdownService CountdownService
 @inject IJSRuntime JSRuntime
-@inject SoundService SoundService
-@implements IDisposable
+@inject ILogger<Home> Logger
+@implements IAsyncDisposable
 
 <PageTitle>Home</PageTitle>
 
-<script src="/js/sounds.js"></script>
+
 
 <div class="home-container">
     <h1>BobFx Controller</h1>
@@ -22,7 +23,7 @@
                 </div>
             }
 
-            <button class="btn-countdown btn-start" @onclick="StartCountdown">
+            <button class="btn-countdown btn-start" @onclick="StartCountdown" disabled="@(Control.Phase is GamePhase.PreCountdown or GamePhase.Running)">
                 <span class="btn-icon">▶</span>
                 <span class="btn-text">Start Countdown</span>
             </button>
@@ -32,6 +33,7 @@
             <div class="pre-countdown-display">
                 <div class="pre-countdown-label">Pre-Countdown Active</div>
                 <div class="pre-countdown-time">@FormatTime(CountdownService.PreCountdownRemaining)</div>
+                <button class="btn-countdown btn-stop" @onclick="StopCountdown">Stop pre-countdown</button>
             </div>
         }
         else
@@ -56,126 +58,62 @@
     </div>
 </div>
 
-@code {
-    private bool showBobMessage = false;
-    private bool showGameOver = false;
-    private CancellationTokenSource? bobMessageCts;
-    private CancellationTokenSource? gameOverCts;
+@if (commandError is not null) { <p role="alert" class="error-message">@commandError</p> }
 
+@code {
+    private string? commandError;
+    private bool showBobMessage, showGameOver, disposed;
+    private DateTimeOffset bobUntil, gameOverUntil;
+    private readonly CancellationTokenSource lifetime = new();
+    private Task? refreshTask;
     protected override void OnInitialized()
     {
-        CountdownService.OnTick += OnTick;
-        CountdownService.OnStartOfEvent += OnCountdownStart;
-        CountdownService.OnEndOfEvent += OnCountdownEnd;
+        CountdownService.OnStartOfEvent += OnStart;
+        CountdownService.OnEndOfEvent += OnEnd;
+        refreshTask = RefreshAsync();
     }
-
-    protected override void OnAfterRender(bool firstRender)
+    private void OnStart(TimeSpan duration) => _ = UpdateAsync(() => { bobUntil = DateTimeOffset.UtcNow.AddSeconds(2.5); gameOverUntil = default; });
+    private void OnEnd() => _ = UpdateAsync(() => { gameOverUntil = DateTimeOffset.UtcNow.AddSeconds(15); bobUntil = default; });
+    private async Task UpdateAsync(Action update)
     {
-        if (firstRender)
-        {
-            // Register JS runtime with SoundService so server code can call into browser
-            SoundService.RegisterJsRuntime(JSRuntime);
-        }
+        try { await InvokeAsync(() => { if (!disposed) { update(); RenderState(); } }); }
+        catch (Exception ex) when (disposed) { Logger.LogDebug(ex, "Game display closed"); }
     }
-
-    private void OnTick()
+    private void RenderState()
     {
-        InvokeAsync(StateHasChanged);
+        showBobMessage = DateTimeOffset.UtcNow < bobUntil;
+        showGameOver = DateTimeOffset.UtcNow < gameOverUntil;
+        StateHasChanged();
     }
-
-    private async void OnCountdownStart(TimeSpan duration)
+    private async Task RefreshAsync()
     {
-        // Cancel any existing game over display
-        gameOverCts?.Cancel();
-
-        showBobMessage = true;
-        showGameOver = false;
-        await InvokeAsync(StateHasChanged);
-
-        // Create new cancellation token for BOB message
-        bobMessageCts?.Cancel();
-        bobMessageCts = new CancellationTokenSource();
-
-        try
-        {
-            await Task.Delay(2500, bobMessageCts.Token); // Show "BOB!" for 2.5 seconds
-            showBobMessage = false;
-            await InvokeAsync(StateHasChanged);
-        }
-        catch (TaskCanceledException)
-        {
-            // Task was cancelled, just clean up
-            showBobMessage = false;
-        }
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
+        try { while (await timer.WaitForNextTickAsync(lifetime.Token)) await InvokeAsync(() => { if (!disposed) RenderState(); }); }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
     }
-
-    private async void OnCountdownEnd()
-    {
-        showGameOver = true;
-        await InvokeAsync(StateHasChanged);
-
-        // Create new cancellation token for game over message
-        gameOverCts?.Cancel();
-        gameOverCts = new CancellationTokenSource();
-
-        try
-        {
-            // Auto-dismiss game over after 15 seconds
-            await Task.Delay(15000, gameOverCts.Token);
-            showGameOver = false;
-            await InvokeAsync(StateHasChanged);
-        }
-        catch (TaskCanceledException)
-        {
-            // Task was cancelled, state is already managed elsewhere
-        }
-    }
-
     private async Task StartCountdown()
     {
-        // Cancel any pending timers
-        bobMessageCts?.Cancel();
-        gameOverCts?.Cancel();
-
-        showGameOver = false; // Reset game over message
-        await CountdownService.StartWithPreCountdownAsync();
+        bobUntil = gameOverUntil = default;
+        commandError = null;
+        try { await Control.StartGameAsync(); }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { commandError = ex.Message; }
     }
-
     private async Task StopCountdown()
     {
-        // Show confirmation dialog
-        var confirmed = await JSRuntime.InvokeAsync<bool>(
-       "confirm",
-       "Are you sure you want to stop the countdown?");
-
-        if (confirmed)
+        try
         {
-            // Cancel any pending timers
-            bobMessageCts?.Cancel();
-
-            CountdownService.Stop();
-            showBobMessage = false;
+            if (await JSRuntime.InvokeAsync<bool>("confirm", "Stop the countdown?")) { await Control.StopGameAsync(); bobUntil = gameOverUntil = default; RenderState(); }
         }
+        catch (Exception ex) when (ex is InvalidOperationException or JSException) { commandError = ex.Message; }
     }
-
-    private string FormatTime(TimeSpan time)
+    private static string FormatTime(TimeSpan time) => $"{Math.Max(0, (int)time.TotalSeconds)}";
+    public async ValueTask DisposeAsync()
     {
-        return $"{(int)time.TotalSeconds}";
-    }
-
-    public void Dispose()
-    {
-        CountdownService.OnTick -= OnTick;
-        CountdownService.OnStartOfEvent -= OnCountdownStart;
-        CountdownService.OnEndOfEvent -= OnCountdownEnd;
-
-        // Cancel and dispose of cancellation token sources
-        bobMessageCts?.Cancel();
-        bobMessageCts?.Dispose();
-        gameOverCts?.Cancel();
-        gameOverCts?.Dispose();
-
-        // Unregister JS runtime
-        SoundService.UnregisterJsRuntime(JSRuntime);
+        disposed = true;
+        CountdownService.OnStartOfEvent -= OnStart;
+        CountdownService.OnEndOfEvent -= OnEnd;
+        await lifetime.CancelAsync();
+        if (refreshTask is not null) await refreshTask;
+        lifetime.Dispose();
     }
 }
