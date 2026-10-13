@@ -150,7 +150,8 @@
             await Discovery.ScanAsync(lifetime.Token);
             if (!disposed) scanStatus = "Scan complete.";
         }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (OperationCanceledException ex) when (lifetime.IsCancellationRequested)
+        { Logger.LogDebug(ex, "Manual WLED scan cancelled because the page closed"); }
         catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
         {
             Logger.LogWarning(ex, "Manual WLED scan failed");
@@ -191,7 +192,8 @@
                 if (Interlocked.Exchange(ref refreshRequested, 0) != 0)
                     await InvokeAsync(() => { if (!disposed) StateHasChanged(); });
         }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (OperationCanceledException ex) when (lifetime.IsCancellationRequested)
+        { Logger.LogDebug(ex, "WLED refresh loop cancelled because the page closed"); }
     }
     protected override Task OnAfterRenderAsync(bool firstRender)
     {
@@ -223,26 +225,29 @@
             }
             if (!open && !disposed) { ShowModal = false; SelectedDevice = null; }
         }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (OperationCanceledException ex) when (lifetime.IsCancellationRequested)
+        { Logger.LogDebug(ex, "WLED dialog operation cancelled because the page closed"); }
         catch (JSDisconnectedException ex) { Logger.LogDebug(ex, "WLED dialog circuit closed"); }
     }
     public async ValueTask DisposeAsync()
     {
-        disposed = true;
-        Discovery.DevicesUpdated -= Discovery_DevicesUpdated;
-        await lifetime.CancelAsync();
-        try
+        using (lifetime)
         {
-            await Task.WhenAll(new[] { scanTask, refreshTask, dialogTask }.OfType<Task>());
-        }
-        finally
-        {
+            disposed = true;
+            Discovery.DevicesUpdated -= Discovery_DevicesUpdated;
+            await lifetime.CancelAsync();
             try
             {
-                if (module is not null) await module.DisposeAsync();
+                await Task.WhenAll(new[] { scanTask, refreshTask, dialogTask }.OfType<Task>());
             }
-            catch (JSDisconnectedException ex) { Logger.LogDebug(ex, "WLED dialog circuit closed during disposal"); }
-            finally { lifetime.Dispose(); }
+            finally
+            {
+                try
+                {
+                    if (module is not null) await module.DisposeAsync();
+                }
+                catch (JSDisconnectedException ex) { Logger.LogDebug(ex, "WLED dialog circuit closed during disposal"); }
+            }
         }
     }
 }

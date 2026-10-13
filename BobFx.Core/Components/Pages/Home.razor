@@ -115,7 +115,8 @@
                 RenderState();
             }
         }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (OperationCanceledException ex) when (lifetime.IsCancellationRequested)
+        { Logger.LogDebug(ex, "Countdown confirmation cancelled because the page closed"); }
         catch (JSDisconnectedException ex) { Logger.LogDebug(ex, "Game display circuit closed"); }
         catch (Exception ex) when (ex is InvalidOperationException or JSException) { commandError = ex.Message; }
     }

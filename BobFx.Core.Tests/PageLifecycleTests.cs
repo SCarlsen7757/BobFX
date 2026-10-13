@@ -1,6 +1,7 @@
 using System.Reflection;
 using BobFx.Core.Components.Pages;
 using BobFx.Core.Services;
+using BobFx.Core.Services.Effects;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -11,6 +12,60 @@ namespace BobFx.Core.Tests;
 
 public sealed class PageLifecycleTests
 {
+    [Fact]
+    public async Task HomeDoesNotRenderAfterDisposalWhileStopCommandIsPending()
+    {
+        var clock = new FakeTimeProvider();
+        var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
+        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), clock);
+        using var control = new RgbAndSoundControlService(countdown, rgb,
+            new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance);
+        await control.StartGameAsync(false, duration: TimeSpan.FromSeconds(10), deviation: TimeSpan.Zero);
+        var page = new Home();
+        Set(page, "CountdownService", countdown);
+        Set(page, "Control", control);
+        Set(page, "Clock", clock);
+        Set(page, "Logger", NullLogger<Home>.Instance);
+        Set(page, "JSRuntime", new Confirmed());
+        Read(page);
+        var state = Field<CountdownSnapshot>(page, "state");
+        var commands = Field<SemaphoreSlim>(control, "commands");
+        await commands.WaitAsync();
+        Task pending;
+        try
+        {
+            pending = (Task)Call(page, "StopCountdown")!;
+            Assert.False(pending.IsCompleted);
+            await page.DisposeAsync();
+        }
+        finally { commands.Release(); }
+        await pending.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Same(state, Field<CountdownSnapshot>(page, "state"));
+        Assert.Null(Field<long?>(page, "suppressedEndRunId"));
+    }
+
+    [Fact]
+    public async Task DialogCloseDoesNotMutatePageAfterDisposalWhileInteropIsPending()
+    {
+        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance,
+            Options.Create(new WLedOptions()), new NoHttp(), new PendingDiscovery());
+        var module = new PendingClose();
+        var page = new WLed();
+        Set(page, "Discovery", discovery);
+        Set(page, "Logger", NullLogger<WLed>.Instance);
+        Set(page, "ShowModal", true);
+        SetField(page, "module", module);
+        var close = (Task)Call(page, "QueueDialogAsync", false)!;
+        Assert.False(close.IsCompleted);
+        var dispose = page.DisposeAsync().AsTask();
+        Assert.False(dispose.IsCompleted);
+        module.Closed.SetResult();
+        await dispose.WaitAsync(TimeSpan.FromSeconds(3));
+        await close;
+        Assert.True((bool)typeof(WLed).GetProperty("ShowModal", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!);
+        Assert.True(module.Disposed);
+    }
+
     [Fact]
     public async Task NavigationCancelsScanAndWaitsForItsCompletionWithoutUpdatingPage()
     {
@@ -46,6 +101,7 @@ public sealed class PageLifecycleTests
         {
             var page = new WLed();
             Set(page, "Discovery", discovery);
+            Set(page, "Logger", NullLogger<WLed>.Instance);
             Call(page, "OnInitialized");
             Assert.Single(Subscribers(discovery));
             await page.DisposeAsync();
@@ -179,6 +235,25 @@ public sealed class PageLifecycleTests
     {
         public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) => InvokeAsync<TValue>(identifier, CancellationToken.None, args);
         public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args) => (TValue)await imported;
+    }
+    private sealed class Confirmed : IJSRuntime
+    {
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) => InvokeAsync<TValue>(identifier, CancellationToken.None, args);
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args) => ValueTask.FromResult((TValue)(object)true);
+    }
+    private sealed class PendingClose : IJSObjectReference
+    {
+        public TaskCompletionSource Closed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool Disposed { get; private set; }
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) => InvokeAsync<TValue>(identifier, CancellationToken.None, args);
+        public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args)
+        {
+            Assert.Equal("close", identifier);
+            // Simulate an already dispatched interop operation completing after cancellation.
+            await Closed.Task;
+            return default!;
+        }
+        public ValueTask DisposeAsync() { Disposed = true; return ValueTask.CompletedTask; }
     }
     private sealed class DialogModule(bool disconnected) : IJSObjectReference
     {
