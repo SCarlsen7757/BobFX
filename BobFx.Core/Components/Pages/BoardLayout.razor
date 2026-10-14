@@ -1,0 +1,186 @@
+@page "/layout"
+@using BobFx.Core.Services
+@inject InstallationSettingsStore Store
+@inject RgbAndSoundControlService Control
+@inject InstallationOutputService Output
+
+<PageTitle>Board layout</PageTitle>
+<h1>Board layout</h1>
+<p>Arrange boards from left to right. Top and bottom face the players. Select devices on the WLED page first.</p>
+<p role="status">@message</p>
+<div class="board-row">
+    @for (var i = 0; i < draft.Boards.Count; i++)
+    {
+        var index = i;
+        var board = draft.Boards[i];
+        <div>
+            <button class="board-tile @(editingId == board.Id ? "selected" : "")" @onclick="() => Edit(board)">
+                <svg viewBox="0 0 200 200" class="strip-preview" aria-label="LED strip mapping preview">
+                    @for (var side = 0; side < 4; side++)
+                    {
+                        var pixels = BoardSceneRenderer.EdgePixels(board, side);
+                        var displayed = Math.Min(64, pixels.Length);
+                        @for (var led = 0; led < displayed; led++)
+                        {
+                            var fraction = (led + 0.5) / displayed;
+                            var x = side == 0 ? 10 + fraction * 180 : side == 1 ? 190 : side == 2 ? 190 - fraction * 180 : 10;
+                            var y = side == 0 ? 10 : side == 1 ? 10 + fraction * 180 : side == 2 ? 190 : 190 - fraction * 180;
+                            var pixel = pixels[led * pixels.Length / displayed];
+                            <circle cx="@x.ToString(System.Globalization.CultureInfo.InvariantCulture)" cy="@y.ToString(System.Globalization.CultureInfo.InvariantCulture)" r="2.5" fill="@(side is 0 or 2 ? "#75eea8" : "#3aaed8")"><title>LED @pixel</title></circle>
+                        }
+                    }
+                </svg>
+                <span class="board-edge top">Top · @board.Edges[(4 - board.Rotation / 90) % 4].Count LEDs</span>
+                <span class="board-edge right">Right · @board.Edges[(5 - board.Rotation / 90) % 4].Count</span>
+                <strong>@(i + 1). @board.Name</strong>
+                <span class="board-edge left">Left · @board.Edges[(7 - board.Rotation / 90) % 4].Count</span>
+                <span class="board-edge bottom">Bottom · @board.Edges[(6 - board.Rotation / 90) % 4].Count LEDs</span>
+            </button>
+            <button aria-label="Move @board.Name left" disabled="@(i == 0)" @onclick="() => Move(index, -1)">←</button>
+            <button aria-label="Move @board.Name right" disabled="@(i == draft.Boards.Count - 1)" @onclick="() => Move(index, 1)">→</button>
+            <button @onclick="() => Remove(board.Id)">Remove</button>
+        </div>
+    }
+</div>
+<label for="new-device">Device for new board</label>
+<select id="new-device" @bind="newDevice">
+    <option value="">Choose device</option>
+    @foreach (var d in draft.Devices.Where(d => d.Selected && !draft.Boards.Any(b => b.DeviceMac == d.Mac)))
+    { <option value="@d.Mac">@d.Name (@d.LedCount LEDs)</option> }
+</select>
+<button @onclick="Add" disabled="@string.IsNullOrEmpty(newDevice)">Add board</button>
+
+@if (editingId is not null)
+{
+    <section aria-label="Board settings">
+        <h2>Board settings</h2>
+        <label for="board-name">Name</label><input id="board-name" @bind="editName" />
+        <label for="board-device">WLED device</label>
+        <select id="board-device" @bind="editDevice">
+            @foreach (var d in draft.Devices.Where(d => d.Selected)) { <option value="@d.Mac">@d.Name (@d.LedCount LEDs)</option> }
+        </select>
+        <label for="rotation">Rotation</label><select id="rotation" @bind="rotation">
+            @foreach (var angle in new[] { 0, 90, 180, 270 }) { <option value="@angle">@angle°</option> }
+        </select>
+        <p>Map physical strips clockwise before rotation. Indexes start at zero. Reverse a strip if its wiring runs the other way.</p>
+        @for (var e = 0; e < 4; e++)
+        {
+            var edge = e;
+            var editor = edges[e];
+            <fieldset><legend>@edgeNames[e] strip</legend>
+                <label for="start-@e">First LED index</label><input id="start-@e" type="number" min="0" @bind="editor.Start" />
+                <label for="count-@e">LED count</label><input id="count-@e" type="number" min="1" @bind="editor.Count" />
+                <label><input type="checkbox" @bind="editor.Reversed" /> Reverse direction</label>
+                <p>Preview indices: @string.Join(" → ", PreviewEdge(edge).Take(12))@(edges[e].Count > 12 ? " …" : "")</p>
+            </fieldset>
+        }
+        <button @onclick="() => ApplyBoard()">Apply board settings</button>
+        <button disabled="@busy" @onclick="() => Locate(editDevice)">Locate board</button>
+    </section>
+}
+
+<section>
+    <h2>Idle sync</h2>
+    <label><input type="checkbox" @bind="idleEnabled" /> Enable WLED idle sync</label>
+    <label for="idle-master">Master</label><select id="idle-master" @bind="master">
+        <option value="">Choose master</option>
+        @foreach (var d in draft.Devices.Where(d => d.Selected)) { <option value="@d.Mac">@d.Name</option> }
+    </select>
+    <label for="sync-group">Sync group</label><input id="sync-group" type="number" min="1" max="8" @bind="group" />
+    <p>Choose followers. Configure the idle playlist on the master's WLED web page.</p>
+    @foreach (var d in draft.Devices.Where(d => d.Selected && d.Mac != master))
+    { <label><input type="checkbox" checked="@followers.Contains(d.Mac)" @onchange="e => ToggleFollower(d.Mac, (bool)e.Value!)" /> @d.Name</label> }
+</section>
+<section>
+    <h2>Animation timing</h2>
+    <label for="fps">Frames per second</label><input id="fps" type="number" min="10" max="60" @bind="fps" />
+    <label for="flash-seconds">Red flash seconds</label><input id="flash-seconds" type="number" min="1" max="10" step="0.1" @bind="flashSeconds" />
+    <label for="dot-seconds">Dot seconds</label><input id="dot-seconds" type="number" min="1" max="30" step="0.1" @bind="dotSeconds" />
+    <label for="dot-speed">Dot circuits per second</label><input id="dot-speed" type="number" min="1" max="20" step="0.1" @bind="dotSpeed" />
+</section>
+<button disabled="@busy" @onclick="Save">Save layout and settings</button>
+<button disabled="@busy" @onclick="Reload">Reload saved settings</button>
+
+@code {
+    private InstallationSettings draft = new();
+    private string? editingId, message;
+    private string newDevice = "", editDevice = "", editName = "", master = "";
+    private int rotation, group = 1, fps = 30;
+    private double flashSeconds = 2, dotSeconds = 3, dotSpeed = 4;
+    private bool idleEnabled, busy;
+    private HashSet<string> followers = [];
+    private readonly string[] edgeNames = ["Top", "Right", "Bottom", "Left"];
+    private EditableEdge[] edges = [];
+    protected override void OnInitialized() => Reload();
+    private void Reload()
+    {
+        draft = Store.Snapshot; editingId = null;
+        idleEnabled = draft.IdleSync.Enabled; master = draft.IdleSync.MasterMac ?? ""; group = draft.IdleSync.Group; followers = draft.IdleSync.Followers.ToHashSet();
+        fps = draft.Animation.FramesPerSecond; flashSeconds = draft.Animation.FlashSeconds; dotSeconds = draft.Animation.DotSeconds; dotSpeed = draft.Animation.DotLapsPerSecond;
+    }
+    private void Add()
+    {
+        var d = draft.Devices.FirstOrDefault(d => d.Mac == newDevice);
+        if (d is null) return;
+        if (d.LedCount < 4) { message = "A square board needs at least four LEDs."; return; }
+        var counts = Enumerable.Range(0, 4).Select(e => d.LedCount / 4 + (e < d.LedCount % 4 ? 1 : 0)).ToArray();
+        var start = 0;
+        var mappings = counts.Select(count => { var edge = new EdgeSettings(start, count); start += count; return edge; }).ToList();
+        var b = new BoardSettings { Name = d.Name, DeviceMac = d.Mac, Edges = mappings };
+        draft.Boards.Add(b); newDevice = ""; Edit(b);
+    }
+    private void Edit(BoardSettings b)
+    {
+        editingId = b.Id; editName = b.Name; editDevice = b.DeviceMac; rotation = b.Rotation;
+        edges = b.Edges.Select(e => new EditableEdge { Start = e.Start, Count = e.Count, Reversed = e.Reversed }).ToArray();
+    }
+    private IEnumerable<int> PreviewEdge(int edge)
+    {
+        var e = edges[edge];
+        if (e.Count is < 1 or > 65535 || e.Start < 0 || (long)e.Start + e.Count > 65535) return [];
+        var indices = Enumerable.Range(e.Start, e.Count);
+        return e.Reversed ? indices.Reverse() : indices;
+    }
+    private bool ApplyBoard()
+    {
+        if (editingId is null) return true;
+        var index = draft.Boards.FindIndex(b => b.Id == editingId);
+        var previous = draft.Boards[index];
+        draft.Boards[index] = previous with { Name = editName, DeviceMac = editDevice, Rotation = rotation, Edges = edges.Select(e => new EdgeSettings(e.Start, e.Count, e.Reversed)).ToList() };
+        try { InstallationSettingsStore.Validate(draft); message = "Board settings applied. Save the layout to keep them."; return true; }
+        catch (ArgumentException ex) { draft.Boards[index] = previous; message = ex.Message; return false; }
+    }
+    private void Move(int index, int delta) { (draft.Boards[index], draft.Boards[index + delta]) = (draft.Boards[index + delta], draft.Boards[index]); }
+    private void Remove(string id) { draft.Boards.RemoveAll(b => b.Id == id); if (editingId == id) editingId = null; }
+    private void ToggleFollower(string mac, bool selected) { if (selected) followers.Add(mac); else followers.Remove(mac); }
+    private async Task Locate(string mac)
+    {
+        busy = true;
+        try { await Output.LocateAsync(mac); message = "Locate finished; idle returns after the realtime lease expires."; }
+        catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { message = ex.Message; }
+        finally { busy = false; }
+    }
+    private async Task Save()
+    {
+        busy = true;
+        try
+        {
+            if (editingId is not null)
+            {
+                if (!ApplyBoard()) return;
+            }
+            draft = draft with { IdleSync = new IdleSyncSettings { Enabled = idleEnabled, MasterMac = string.IsNullOrEmpty(master) ? null : master, Group = group, Followers = followers.Where(m => m != master).ToList() },
+                Animation = new AnimationSettings { FramesPerSecond = fps, FlashSeconds = flashSeconds, DotSeconds = dotSeconds, DotLapsPerSecond = dotSpeed } };
+            await Control.ConfigureAsync(async () =>
+            {
+                // Preserve device/controller changes made in another page.
+                await Store.UpdateAsync(s => s with { Boards = draft.Boards, IdleSync = draft.IdleSync, Animation = draft.Animation });
+                await Output.ApplyIdleSyncAsync();
+            });
+            message = Output.Errors.Count == 0 ? "Layout saved." : "Layout saved; some devices could not apply idle sync. Check installation status.";
+        }
+        catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { message = ex.Message; }
+        finally { busy = false; }
+    }
+    private sealed class EditableEdge { public int Start { get; set; } public int Count { get; set; } public bool Reversed { get; set; } }
+}

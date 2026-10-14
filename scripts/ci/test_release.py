@@ -74,6 +74,28 @@ class VulnerabilityPolicyTests(unittest.TestCase):
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_smoke_verifies_nonroot_settings_survive_recreation(self):
+        saved = {"version": 1, "animation": {"framesPerSecond": 30}}
+        def command(*args):
+            if args[1:3] == ("inspect", "--format"):
+                return "healthy"
+            if args[1] == "exec" and args[3:5] == ("id", "-u"):
+                return "1654"
+            if args[1] == "exec" and "curl" in args:
+                if "--data-binary" in args:
+                    saved.update(json.loads(args[args.index("--data-binary") + 1]))
+                    return ""
+                return json.dumps(saved)
+            return ""
+        with tempfile.TemporaryDirectory() as directory, patch.object(release, "run", side_effect=command) as commands:
+            release.smoke("image", "arm64", evidence=Path(directory))
+            launches = [call.args for call in commands.call_args_list if call.args[:2] == ("docker", "run")]
+            self.assertEqual(2, len(launches))
+            self.assertEqual(launches[0], launches[1])
+            self.assertIn("type=volume,source=bobfx-smoke-arm64-data,target=/app/data", launches[0])
+            self.assertEqual(23, saved["animation"]["framesPerSecond"])
+            self.assertTrue(json.loads((Path(directory) / "persistence-arm64.json").read_text())["settingsSurvivedRecreation"])
+
     def test_exact_platforms_and_attestations_are_required(self):
         self.assertEqual({"amd64": AMD, "arm64": ARM}, release.platforms(index()))
         for position in (0, 1, 2, 3):

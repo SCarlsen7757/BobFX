@@ -4,10 +4,35 @@
 @inject WLedDiscoveryService Discovery
 @inject IJSRuntime JS
 @inject ILogger<WLed> Logger
+@inject WLedRegistryService Registry
+@inject InstallationSettingsStore Settings
+@inject InstallationOutputService Output
+@inject RgbAndSoundControlService Control
 @implements IAsyncDisposable
 
 <PageTitle>WLED devices</PageTitle>
 <h1>WLED devices</h1>
+<p>Select the devices BobFX should control, then assign their edge strips on the Board layout page.</p>
+<p role="status">@deviceStatus</p>
+<fieldset><legend>Add device manually</legend>
+    <label for="manual-address">Private IPv4 address</label><input id="manual-address" @bind="manualAddress" />
+    <label for="manual-port">HTTP port</label><input id="manual-port" type="number" min="1" max="65535" @bind="manualPort" />
+    <button disabled="@deviceBusy" @onclick="AddManual">Check and add device</button>
+</fieldset>
+@if (Settings.Snapshot.Devices.Count > 0)
+{
+    <h2>Registered devices</h2>
+    @foreach (var saved in Settings.Snapshot.Devices)
+    {
+        <div>
+            <label><input type="checkbox" checked="@saved.Selected" disabled="@deviceBusy" @onchange="e => SelectSaved(saved, (bool)e.Value!)" /> @saved.Name · @Output.Resolve(saved).Address · @Output.Resolve(saved).LedCount LEDs</label>
+            <button disabled="@(deviceBusy || Control.Phase != GamePhase.Idle || Control.IsLocating)" @onclick="() => Locate(saved.Mac)">Locate @saved.Name</button>
+            <button disabled="@deviceBusy" @onclick="() => RemoveSaved(saved.Mac)">Remove device</button>
+            @if (Output.Errors.TryGetValue(saved.Mac, out var error)) { <span role="status">@error</span> }
+        </div>
+    }
+}
+<h2>Discovered devices</h2>
 
 <div>
     <button @ref="scanButton" @onclick="Refresh" disabled="@scanning" class="btn btn-primary">@(scanning ? "Scanning…" : "Scan")</button>
@@ -53,6 +78,8 @@
                             {
                                 <a href="@DeviceUrl(d)" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-light">Web page</a>
                                 <button @onclick="() => ShowDetails(d)" class="btn btn-sm btn-outline-info ms-1">Details</button>
+                                <button disabled="@deviceBusy" @onclick="() => Register(d)">Select for BobFX</button>
+                                <button disabled="@(deviceBusy || Control.Phase != GamePhase.Idle || Control.IsLocating)" @onclick="() => LocateDiscovered(d)">Locate</button>
                             }
                             else
                             {
@@ -108,6 +135,33 @@
 @code {
     private IReadOnlyList<WLedDevice> Devices => Discovery.Devices;
     private bool scanning, disposed, openPending;
+    private bool deviceBusy;
+    private string manualAddress = "";
+    private int manualPort = 80;
+    private string? deviceStatus;
+    private Task AddManual() => DeviceAction(() => Registry.AddManualAsync(manualAddress, manualPort, lifetime.Token), "Device registered.");
+    private Task Register(WLedDevice device) => DeviceAction(() => Registry.SelectAsync(device, lifetime.Token), "Device selected.");
+    private Task SelectSaved(DeviceSettings device, bool selected) => DeviceAction(() => Control.ConfigureAsync(() => Settings.UpdateAsync(s => s with
+    { Devices = s.Devices.Select(d => d.Mac == device.Mac ? d with { Selected = selected } : d).ToList() }, lifetime.Token)), "Selection saved.");
+    private Task Locate(string mac) => DeviceAction(() => Output.LocateAsync(mac, lifetime.Token), "Locate finished.");
+    private Task RemoveSaved(string mac) => DeviceAction(() => Control.ConfigureAsync(() => Settings.UpdateAsync(s =>
+    {
+        if (s.Boards.Any(b => b.DeviceMac == mac) || s.IdleSync.MasterMac == mac || s.IdleSync.Followers.Contains(mac))
+            throw new ArgumentException("Remove this device from board layout and idle sync before deleting it.");
+        return s with { Devices = s.Devices.Where(d => d.Mac != mac).ToList() };
+    }, lifetime.Token)), "Device removed.");
+    private Task LocateDiscovered(WLedDevice device) => DeviceAction(async () =>
+    {
+        await Output.LocateDeviceAsync(new DeviceSettings(device.Mac, device.Name, device.Address.ToString(), device.Port,
+            device.Info?.Leds?.Count ?? 0, device.Info?.Udpport ?? 21324, false), lifetime.Token);
+    }, "Locate finished.");
+    private async Task DeviceAction(Func<Task> action, string success)
+    {
+        deviceBusy = true;
+        try { await action(); if (!disposed) deviceStatus = success; }
+        catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { if (!disposed) deviceStatus = ex.Message; }
+        finally { deviceBusy = false; }
+    }
     private string? scanStatus;
     private ElementReference dialog, scanButton;
     private IJSObjectReference? module;

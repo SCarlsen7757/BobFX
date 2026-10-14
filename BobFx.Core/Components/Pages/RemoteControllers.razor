@@ -1,0 +1,74 @@
+@page "/controllers"
+@using BobFx.Core.Services
+@inject InstallationSettingsStore Store
+@inject RgbAndSoundControlService Control
+@inject BusyBarService BusyBars
+@implements IAsyncDisposable
+
+<PageTitle>Remote controllers</PageTitle>
+<h1>Remote controllers</h1>
+<p>BUSY Bars use local Wi-Fi API access. Mount each password as a Docker secret; enter its filename here, never the password.</p>
+<p>Color animations are the default. Showing the timer reveals the remaining game time. Remote input uses START to start and BACK to stop; API 27.x input support is checked at connection.</p>
+<p role="status">@message</p>
+@foreach (var bar in controllers)
+{
+    <div>
+        <button @onclick="() => Edit(bar)">@bar.Name · @bar.Address · @(bar.Enabled ? "Enabled" : "Disabled")</button>
+        <button @onclick="() => Remove(bar.Id)">Remove</button>
+        @if (BusyBars.Statuses.TryGetValue(bar.Id, out var status)) { <span>@status.State · API @status.ApiVersion</span> }
+    </div>
+}
+<button @onclick="New">Add BUSY Bar</button>
+@if (id is not null)
+{
+    <fieldset><legend>BUSY Bar settings</legend>
+        <label for="controller-name">Name</label><input id="controller-name" @bind="name" />
+        <label for="controller-address">Private IPv4 address</label><input id="controller-address" @bind="address" />
+        <label for="controller-port">HTTP port</label><input id="controller-port" type="number" min="1" max="65535" @bind="port" />
+        <label for="controller-secret">Docker secret filename</label><input id="controller-secret" @bind="secretName" />
+        <label><input type="checkbox" @bind="enabled" /> Enable integration</label>
+        <label><input type="checkbox" @bind="showTimer" /> Show remaining game timer</label>
+        <label><input type="checkbox" @bind="remoteEnabled" /> Enable START/BACK game controls</label>
+        <button @onclick="() => Apply()">Apply controller settings</button>
+    </fieldset>
+}
+<button @onclick="Save">Save controllers</button>
+<button @onclick="Reload">Reload saved controllers</button>
+
+@code {
+    private List<BusyBarSettings> controllers = [];
+    private string? id, message;
+    private string name = "", address = "", secretName = "busybar_token";
+    private int port = 80;
+    private bool enabled, showTimer, remoteEnabled;
+    private readonly CancellationTokenSource lifetime = new();
+    private Task? refresh;
+    protected override void OnInitialized() { Reload(); refresh = RefreshAsync(); }
+    private async Task RefreshAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try { while (await timer.WaitForNextTickAsync(lifetime.Token)) await InvokeAsync(StateHasChanged); }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+    }
+    public async ValueTask DisposeAsync()
+    { await lifetime.CancelAsync(); if (refresh is not null) await refresh; lifetime.Dispose(); }
+    private void Reload() { controllers = Store.Snapshot.Controllers; id = null; }
+    private void New() => Edit(new BusyBarSettings());
+    private void Edit(BusyBarSettings bar)
+    { id = bar.Id; name = bar.Name; address = bar.Address; port = bar.Port; secretName = bar.SecretName; enabled = bar.Enabled; showTimer = bar.ShowTimer; remoteEnabled = bar.RemoteEnabled; }
+    private void Remove(string controllerId) { controllers.RemoveAll(c => c.Id == controllerId); if (id == controllerId) id = null; }
+    private bool Apply()
+    {
+        if (id is null) return true;
+        var bar = new BusyBarSettings { Id = id, Name = name, Address = address, Port = port, SecretName = secretName, Enabled = enabled, ShowTimer = showTimer, RemoteEnabled = remoteEnabled };
+        var updated = controllers.Where(c => c.Id != id).Append(bar).ToList();
+        try { InstallationSettingsStore.Validate(Store.Snapshot with { Controllers = updated }); controllers = updated; message = "Controller settings applied. Save to keep them."; return true; }
+        catch (ArgumentException ex) { message = ex.Message; return false; }
+    }
+    private async Task Save()
+    {
+        if (!Apply()) return;
+        try { await Control.ConfigureAsync(() => Store.UpdateAsync(s => s with { Controllers = controllers })); message = "Controllers saved. Enabled devices will connect automatically."; }
+        catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { message = ex.Message; }
+    }
+}

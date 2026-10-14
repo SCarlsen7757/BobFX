@@ -76,19 +76,41 @@ def metadata(config, architecture, version, revision):
 
 def smoke(reference, architecture, version=None, evidence=Path("release-evidence")):
     name = f"bobfx-smoke-{architecture}"
-    run("docker", "run", "-d", "--name", name, "--platform", f"linux/{architecture}",
+    volume = f"{name}-data"
+    command = ("docker", "run", "-d", "--name", name, "--platform", f"linux/{architecture}",
         "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "--mount", f"type=volume,source={volume},target=/app/data",
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
         "--tmpfs", "/home/app/.aspnet:rw,noexec,nosuid,size=16m,uid=1654,gid=1654",
         "-e", "ASPNETCORE_ENVIRONMENT=Production", "-e", "AllowedHosts=localhost",
         "-e", "Security__AllowedClientNetworks__0=127.0.0.0/8",
-        "-e", "WLed__Udp__TargetAddress=127.0.0.1", reference)
+        "-e", "Settings__DataPath=/app/data", reference)
+    run("docker", "volume", "create", volume)
+    run(*command)
     try:
         for _ in range(30):
             status = run("docker", "inspect", "--format", "{{.State.Health.Status}}", name)
             if status == "healthy":
                 if run("docker", "exec", name, "id", "-u") != "1654":
                     raise ValueError("Runtime must use UID 1654")
+                settings_url = "http://127.0.0.1:8080/api/installation"
+                settings = json.loads(run("docker", "exec", name, "curl", "--fail", "--silent", settings_url))
+                settings["animation"]["framesPerSecond"] = 23
+                run("docker", "exec", name, "curl", "--fail", "--silent", "-X", "PUT",
+                    "-H", "Content-Type: application/json", "--data-binary", json.dumps(settings), settings_url)
+                run("docker", "rm", "-f", name)
+                run(*command)
+                for _ in range(30):
+                    if run("docker", "inspect", "--format", "{{.State.Health.Status}}", name) == "healthy":
+                        break
+                    time.sleep(3)
+                else:
+                    raise ValueError("Recreated container failed to become healthy")
+                restored = json.loads(run("docker", "exec", name, "curl", "--fail", "--silent", settings_url))
+                if restored != settings:
+                    raise ValueError("Installation settings did not survive container recreation")
+                evidence.mkdir(parents=True, exist_ok=True)
+                (evidence / f"persistence-{architecture}.json").write_text(json.dumps({"settingsSurvivedRecreation": True, "uid": 1654}) + "\n", encoding="utf-8")
                 if version:
                     assembly = evidence / f"BobFx.Core-{architecture}.dll"
                     run("docker", "cp", f"{name}:/app/BobFx.Core.dll", str(assembly))
@@ -104,6 +126,7 @@ def smoke(reference, architecture, version=None, evidence=Path("release-evidence
             (evidence / f"smoke-{architecture}.log").write_text(run("docker", "logs", name), encoding="utf-8")
         finally:
             run("docker", "rm", "-f", name)
+            run("docker", "volume", "rm", volume)
 
 
 def attestation(data, platform, key):

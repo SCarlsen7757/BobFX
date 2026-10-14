@@ -1,0 +1,9 @@
+# Optional overlay: add one secret mapping per configured BUSY Bar.
+# docker compose --env-file .env -f compose.prod.yaml -f compose.busybar.yaml up -d
+services:
+  bobfx:
+    secrets:
+      - busybar_token
+secrets:
+  busybar_token:
+    file: ${BUSYBAR_TOKEN_FILE:?Set the path to a file containing the BUSY Bar Wi-Fi API password}

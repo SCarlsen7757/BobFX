@@ -7,7 +7,7 @@ const output = fileURLToPath(new URL(`./.app/${process.pid}/`, import.meta.url))
 // Test the published app, including generated Blazor scripts and scoped styles.
 const publish = spawnSync('dotnet', [
     'publish', 'BobFx.Core/BobFx.Core.csproj', '--configuration', 'Release',
-    '--no-restore', '--output', output, '/p:UseAppHost=false',
+    '--no-restore', '--disable-build-servers', '-m:1', '--output', output, '/p:UseAppHost=false',
 ], { cwd: root, stdio: 'inherit' });
 if (publish.error) throw publish.error;
 if (publish.status !== 0) process.exit(publish.status ?? 1);

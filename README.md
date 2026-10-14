@@ -1,8 +1,8 @@
 # BobFX
 
-BobFX provides light and sound effects for **Bob**, a board game related to Carrom. A shared game countdown drives RGB effects on multiple WLED devices. The application uses ASP.NET Core / Blazor Server on .NET 10 LTS; browsers control one shared game, and the server broadcasts WLED realtime RGB frames over UDP.
+BobFX provides light and sound effects for **Bob**, a board game related to Carrom. A shared hidden countdown drives animations over an ordered row of square WLED boards. The application uses ASP.NET Core / Blazor Server on .NET 10 LTS; browsers and optional BUSY Bar remotes control one shared game. The server sends each selected WLED device its own realtime pixels using UDP unicast.
 
-When realtime output stops, WLED's realtime lease expires and the devices resume their configured idle playlist. This release preserves that behavior; a new idle experience is separate work.
+When realtime output stops, WLED's realtime lease expires and devices return to their native effects. An optional WLED idle master synchronizes its effect changes with configured followers. Author the master's playlist in WLED. See [board and controller setup](docs/installation.md) for layout, Locate, animations, persistence, and hardware acceptance.
 
 ## Run locally
 
@@ -16,7 +16,7 @@ node --test BobFx.Core.Tests/BrowserAudio.test.mjs
 dotnet run --project BobFx.Core --launch-profile http
 ```
 
-Open http://localhost:5159. Game state exists in memory; restarting resets it. No database or frontend npm build is required. Navigation and WLED discovery are available in production. Manual effect controls are rejected while a game is active or ending; stop the game first.
+Open http://localhost:5159. Installation settings are saved as versioned JSON; game state exists in memory and resets on restart. Native execution defaults to a `data` directory beside the executable; override `Settings__DataPath` if needed. No database or frontend npm build is required. Manual effects, Locate and settings changes are rejected while a game owns the output. Stop manual output before configuring or locating devices.
 
 ## Browser regression tests
 
@@ -32,7 +32,7 @@ npx playwright install chromium
 npm test
 ```
 
-`npm test` publishes and starts a dedicated Production app on `http://127.0.0.1:5187`, waits for readiness, runs the tests sequentially against the shared game state, then stops the app. Keep that port free. UDP output targets loopback, so these tests do not send lighting commands to LAN devices. Discovery still runs, but no test requires a physical device. These tests use actual Blazor/SignalR event handling rather than mocked HTTP responses.
+`npm test` publishes and starts a dedicated Production app on `http://127.0.0.1:5187`, waits for readiness, runs the tests sequentially against shared game state, then stops the app. Keep that port free. Tests restore installation settings after editing them and do not stream to selected physical devices. Discovery still runs, but no test requires a physical device. These tests use actual Blazor/SignalR event handling rather than mocked HTTP responses.
 
 Use `npm run test:ui` for the interactive test runner, `npm run test:headed` to watch Chromium, and `npm run report` to inspect the HTML report. Failed tests retain screenshots, video, browser console output, and Playwright traces under `e2e/test-results`. CI installs Chromium with its Linux dependencies and uploads reports/traces; browser failures block the release quality gate. Physical WLED output and network discovery still need hardware testing.
 
@@ -46,10 +46,10 @@ This development file publishes HTTP on loopback only. The Visual Studio overrid
 
 ## Production on a Linux LAN host
 
-Use a Linux Docker Engine host on the **same LAN/subnet as the WLED devices**. Production uses host networking for UDP broadcast and mDNS and binds HTTP to an explicitly selected host address. Enable WLED realtime UDP reception on port 21324, configure LED counts, and configure the playlist each device should resume when realtime ends.
+Use a Linux Docker Engine host on the **same LAN/subnet as the WLED devices**, with a 64-bit OS on Raspberry Pi 3/4. Production uses host networking for mDNS and binds HTTP to an explicitly selected host address. Enable WLED realtime UDP reception and configure each device's actual LED outputs in WLED. BobFX reads device counts and ports. Pi 4 is preferred; capacity on Pi 3 requires a hardware benchmark. Connect the Pi by Ethernet where possible.
 
 1. Copy `.env.example` to `.env`.
-2. Set `BOBFX_IMAGE_DIGEST` to the full `sha256:...` digest from a published GitHub release. Replace the sample host IP, trusted client CIDR, hostnames, and subnet broadcast address.
+2. Set `BOBFX_IMAGE_DIGEST` to the full `sha256:...` digest from a published GitHub release that includes these features. Replace the sample host IP, trusted client CIDR, and hostnames.
 3. Validate and launch the **standalone** production file:
 
 ```sh
@@ -62,9 +62,9 @@ docker compose --env-file .env -f compose.prod.yaml logs --tail 100 bobfx
 
 Open `http://<BOBFX_BIND_ADDRESS>:5159` from an allowed operator device. Required variables have no permissive defaults. The trusted CIDR must include the bind address so the container's HTTP health probe is allowed; the example assumes operators and server share one trusted subnet. For finer controls, configure additional indexed `Security__AllowedClientNetworks__N` entries in Compose.
 
-The service runs as UID 1654, drops Linux capabilities, denies privilege escalation, uses a read-only filesystem with bounded temporary storage, limits CPU/memory/processes, and rotates logs. No application state is persisted. Temporary ASP.NET Data Protection keys change on recreation, so reload open browser tabs after an upgrade.
+The service runs as UID 1654, drops Linux capabilities, denies privilege escalation, uses a read-only filesystem with bounded temporary storage, limits CPU/memory/processes, and rotates logs. The named `bobfx-data` volume makes only `/app/data` writable and preserves installation settings across recreation/upgrades. Do not use `down --volumes` unless intentionally discarding settings. Temporary ASP.NET Data Protection keys change on recreation, so reload open browser tabs after an upgrade.
 
-This is a **trusted-LAN deployment**, without per-user login. Anyone in an allowed client network can control the shared game. WLED UDP and device HTTP traffic are unauthenticated and unencrypted. Keep WLED and BobFX off the public internet; firewall HTTP 5159 to operator clients. Network access needs outbound UDP 21324 to devices, multicast mDNS UDP 5353, and outbound HTTP to discovered WLED devices. Wi-Fi client isolation or VLAN boundaries can block discovery and output. Host networking has no Docker port mapping.
+This is a **trusted-LAN deployment**, without per-user login. Anyone in an allowed client network can control the shared game. WLED UDP and device HTTP traffic are unauthenticated and unencrypted. Keep WLED and BobFX off the public internet; firewall HTTP 5159 to operator clients. Network access needs outbound UDP to the reported WLED ports (usually 21324), multicast mDNS UDP 5353, and local HTTP to WLED/BUSY Bar devices. Disable the travel router's Wi-Fi client isolation. Host networking has no Docker port mapping.
 
 For updates, replace the image digest, pull, and recreate. For rollback, restore the previous digest and recreate using the same commands. Keep both digests in deployment records.
 
@@ -74,10 +74,8 @@ Configuration uses normal ASP.NET Core precedence: appsettings, environment-spec
 
 | Environment key | Default / constraint |
 | --- | --- |
-| `WLed__Led__LedCount` | 30; 1–490 LEDs per realtime frame |
-| `WLed__Udp__TargetAddress` | 255.255.255.255; IPv4 broadcast or unicast address |
-| `WLed__Udp__TargetPort` | 21324; 1–65535 |
-| `WLed__Udp__UpdateIntervalMs` | 16; 10–500 ms |
+| `Settings__DataPath` | Executable directory `/data`; production Compose sets `/app/data` |
+| `BusyBar__SecretsPath` | `/run/secrets`; controller settings store secret filenames only |
 | `WLed__Discovery__UpdateIntervalSeconds` | 60; 5–3600 seconds |
 | `Countdown__PreDurationSeconds` | 5; 0–60 seconds |
 | `Countdown__DurationSeconds` | 600; 1–86400 seconds |
@@ -87,14 +85,16 @@ Configuration uses normal ASP.NET Core precedence: appsettings, environment-spec
 | `ASPNETCORE_URLS` | Production Compose sets the required LAN bind address |
 | `Logging__LogLevel__Default` | Information |
 
-The production `.env` file exposes short deployment names such as `WLED_LED_COUNT`, then Compose maps them to the hierarchical application keys above. Outside Compose, use the hierarchical keys directly.
+The production `.env` file exposes deployment names such as `BOBFX_BIND_ADDRESS` and `WLED_DISCOVERY_INTERVAL_SECONDS`, then Compose maps them to hierarchical application keys. Outside Compose, use the hierarchical keys directly.
+
+For the next version, remove `WLED_TARGET_ADDRESS`, `WLED_LED_COUNT`, `WLED_TARGET_PORT`, and `WLED_UPDATE_INTERVAL_MS` from deployment configuration: production Compose no longer consumes them. Select devices and set board mappings in the web UI; animation cadence defaults to 30 FPS and is saved with the layout. The legacy `WLed:Led`/`WLed:Udp` options remain accepted for compatibility with effect-preview/protocol tests, but do not select production output destinations or device counts.
 
 Breaking migration changes:
 
 - Upgrade developer/runtime tooling from .NET 9 to .NET 10 and restore from checked-in package locks.
 - Replace legacy flat application configuration (`WLED_*`, `PRE_COUNTDOWN_*`, `COUNTDOWN_*`) with the table's hierarchical keys. The former Compose `*_TIME_SECONDS` keys never matched application `*_DURATION_SECONDS` keys.
 - Replace the ignored `CountdownConfiguration` JSON section with `Countdown`.
-- Replace implicit production/development Compose merging with explicit `-f compose.prod.yaml`. Production requires an image digest, bind address, allowed hosts, trusted CIDR, and broadcast address.
+- Replace implicit production/development Compose merging with explicit `-f compose.prod.yaml`. Production requires an image digest, bind address, allowed hosts, and trusted CIDR. WLED output selection now comes from persisted device settings.
 - Effect start/speed endpoints now require JSON bodies instead of query parameters. Game start endpoints accept an optional JSON body; omitted settings use configured defaults. Invalid input returns Problem Details with HTTP 400; output ownership conflicts return HTTP 409. Browser calls must use the application's own origin; trusted CLI callers can omit Origin. No wildcard/public production configuration is supported.
 - Browser audio defaults muted. Each browser must select **Enable audio**; **Mute audio** disables only that browser. Reloading a tab resets this opt-in. Enabled clients hear the existing game-over sound; playback errors appear beside the control.
 
@@ -114,12 +114,12 @@ Replace `bobfx.local` with a configured allowed hostname or the host LAN IP.
 
 ## Health and troubleshooting
 
-`/health/live` reports that the HTTP process is alive. `/health/ready` checks the renderer/coordinator and active-stream UDP failures and backs the Docker healthcheck. `/health/status` exposes renderer, UDP, and discovery diagnostics, including last send/scan timestamps. No discovered WLED devices is a valid startup state. A successful UDP send does not acknowledge device receipt. Docker's restart policy restarts exited processes; an unhealthy status alone does not restart a running container.
+`/health/live` reports that the HTTP process is alive. `/health/ready` checks the renderer/coordinator and installation-output loop and backs the Docker healthcheck. `/health/status` exposes renderer, output, per-device errors, and discovery diagnostics. `/api/installation/controllers/status` reports BUSY Bar connections. No selected/discovered devices is a valid startup state; an offline device does not make the whole application unhealthy. A successful UDP send does not acknowledge device receipt. Docker's restart policy restarts exited processes; an unhealthy status alone does not restart a running container.
 
 - **403 / rejected control:** check the client's actual source address against the trusted CIDRs, hostnames against `AllowedHosts`, and use the application's own origin.
-- **No WLED devices:** check UDP 5353 multicast, same-LAN connectivity, Wi-Fi client isolation, and device HTTP reachability.
-- **Discovery works but LEDs do not:** verify realtime UDP is enabled, port 21324, broadcast address, LED count, and active game/effect status. Discovery and realtime output are independent.
-- **One output goes black in realtime mode:** configure BobFX's LED count for the device's entire address space, including all physical outputs. For example, two 30-LED outputs starting at indices 0 and 30 require `WLed__Led__LedCount=60`. A 24/30-pixel frame only reaches the first output; WLED clears the remaining pixels when realtime starts. For diagnosis, use the device's IP as the UDP target and start a Solid effect with a non-black color. Check WLED's Peek preview to see which pixel indices receive colors before investigating wiring.
+- **No WLED devices:** check UDP 5353 multicast, same-LAN connectivity, Wi-Fi client isolation, and HTTP reachability. Use checked manual entry when discovery is unavailable.
+- **Discovery works but LEDs do not:** select the device for BobFX, verify realtime reception is enabled, and inspect `/health/status`. Assign the device to a board for mapped game scenes.
+- **One edge is black or runs backwards:** check physical outputs/LED count in WLED, then each board's zero-based index ranges and direction. Unmapped pixels are intentionally black during board scenes. A reported count shrink suppresses invalid output until you update the mapping. Use Locate and WLED Peek to distinguish mapping from wiring problems.
 - **Unhealthy:** inspect logs and `docker inspect` health output. Confirm the bind IP exists on the host, is permitted by the CIDR, and has an allowed Host header.
 - **No sound:** select **Enable audio** in that browser and check mute/autoplay restrictions. Reenable after a visible playback error to retry.
 - **Restore changes unexpectedly:** use `--locked-mode`; deliberate dependency updates must regenerate and commit locks.

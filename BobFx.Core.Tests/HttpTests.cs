@@ -130,6 +130,7 @@ public sealed class HttpTests
                 ["AllowedHosts"] = "localhost",
                 ["Security:AllowedClientNetworks:0"] = "127.0.0.0/8",
                 ["WLed:Udp:TargetAddress"] = "127.0.0.1",
+                ["Settings:DataPath"] = Path.Combine(Path.GetTempPath(), "bobfx-http-" + Guid.NewGuid().ToString("N")),
             }));
             builder.ConfigureTestServices(services =>
             {
@@ -137,10 +138,15 @@ public sealed class HttpTests
                 services.RemoveAll<IHostedService>();
                 services.AddHostedService(sp => sp.GetRequiredService<DRgbService>());
                 services.AddHostedService(sp => sp.GetRequiredService<RgbAndSoundControlService>());
+                services.AddSingleton<IWLedFrameTransport, NoDeviceTransport>();
+                services.AddHostedService(sp => sp.GetRequiredService<InstallationOutputService>());
                 services.AddSingleton<IStartupFilter, TestClientAddress>();
             });
         }
     }
+
+    private sealed class NoDeviceTransport : IWLedFrameTransport
+    { public Task SendAsync(DeviceSettings device, byte[] pixels, CancellationToken token) => Task.CompletedTask; }
 
     private sealed class TestClientAddress : IStartupFilter
     {

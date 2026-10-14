@@ -7,15 +7,17 @@ services:
     ports:
       - "127.0.0.1:5159:8080"
     environment:
+      Settings__DataPath: /app/data
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_HTTP_PORTS: "8080"
       AllowedHosts: "localhost;127.0.0.1"
-      WLed__Led__LedCount: "24"
-      WLed__Udp__TargetAddress: "192.168.100.255"
-      WLed__Udp__TargetPort: "21324"
-      WLed__Udp__UpdateIntervalMs: "16"
       WLed__Discovery__UpdateIntervalSeconds: "10"
       Countdown__PreDurationSeconds: "5"
       Countdown__DurationSeconds: "60"
       Countdown__DeviationSeconds: "20"
     restart: "no"
+    volumes:
+      - bobfx-data:/app/data
+
+volumes:
+  bobfx-data:

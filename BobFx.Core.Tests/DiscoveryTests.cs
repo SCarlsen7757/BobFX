@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.Configuration;
 using BobFx.Core.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -7,6 +8,27 @@ namespace BobFx.Core.Tests;
 
 public sealed class DiscoveryTests
 {
+    [Fact]
+    public async Task RegisteredEndpointsRefreshOnDiskAndManualProbingSurvivesMdnsFailure()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "bobfx-discovery-" + Guid.NewGuid().ToString("N"));
+        var store = new InstallationSettingsStore(new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Settings:DataPath"] = path }).Build());
+        await store.SaveAsync(new() { Devices = [new("aabbccddeeff", "lamp", "192.168.1.5", 80, 16, 21324)] });
+        var source = new Source { Advertisements = [new("192.168.1.6", 81, "lamp")] };
+        var clients = new Factory(new Handler(request => request.RequestUri!.Host == "192.168.1.5" ? new(HttpStatusCode.NotFound) :
+            new(HttpStatusCode.OK) { Content = new StringContent("""{"brand":"WLED","name":"lamp","ver":"test","mac":"aabbccddeeff","leds":{"count":20},"udpport":21324}""") }));
+        using var service = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, Options.Create(new WLedOptions()), clients, source, store);
+        await service.ScanAsync();
+        Assert.Equal("192.168.1.6", store.Snapshot.Devices.Single().Address);
+        Assert.Equal(20, store.Snapshot.Devices.Single().LedCount);
+        source.BeforeResolve = _ => throw new IOException("mDNS unavailable");
+        await service.ScanAsync();
+        Assert.Single(service.Devices, d => d.IsOnline);
+        var reloaded = new InstallationSettingsStore(new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Settings:DataPath"] = path }).Build());
+        Assert.Equal("192.168.1.6", reloaded.Snapshot.Devices.Single().Address);
+    }
     [Fact]
     public async Task SameMacTracksChangedAddressAndPort()
     {
