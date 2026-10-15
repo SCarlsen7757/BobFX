@@ -259,8 +259,9 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
         // Reuse the same text element across phases, explicitly blanking it when
         // hidden. No old number needs an intervening clear or timeout to disappear.
         elements.Add(new { id = "number", type = "text",
-                display = "front", x = 36, y = 11, align = "center", width = 68,
-                text = number ?? "", font = "tiny", color = "#FFFFFFFF", timeout = DisplayLeaseSeconds, z_index = 1 });
+                display = "front", x = 36, y = screen is BusyBarScreen.Scanner or BusyBarScreen.PlayerEdges or BusyBarScreen.AllEdges ? 8 : 11, align = "center", width = 68,
+                text = number ?? "", font = screen is BusyBarScreen.Scanner or BusyBarScreen.PlayerEdges or BusyBarScreen.AllEdges ? "extra_large" : "tiny",
+                color = "#FFFFFFFF", timeout = DisplayLeaseSeconds, z_index = 1 });
         return new { application_name = "BobFX", priority = 50, elements };
     }
 }

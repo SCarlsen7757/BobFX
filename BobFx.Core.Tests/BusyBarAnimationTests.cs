@@ -75,6 +75,28 @@ public sealed class BusyBarAnimationTests
     }
 
     [Fact]
+    public void RainbowsFillTheScreenAndPreparationNumbersUseTheLargestFont()
+    {
+        foreach (var screen in new[] { BusyBarScreen.Idle, BusyBarScreen.Running, BusyBarScreen.Scanner, BusyBarScreen.PlayerEdges, BusyBarScreen.AllEdges })
+        {
+            var pixels = BusyBarAnimations.Render(screen, false, 0.4, new());
+            var lit = Enumerable.Range(0, 72 * 16).Count(p => pixels.AsSpan(p * 3, 3).ContainsAnyExcept((byte)0));
+            Assert.True(lit > 72 * 16 * 0.9, $"{screen} should fill over 90% of the screen with color.");
+        }
+        var visibleBrand = BusyBarAnimations.Render(BusyBarScreen.Running, false, 0, new());
+        var hiddenBrand = BusyBarAnimations.Render(BusyBarScreen.Running, false, 1, new());
+        Assert.Contains((byte)255, visibleBrand);
+        Assert.DoesNotContain((byte)255, hiddenBrand); // Rainbow remains while the white logo fades away.
+        foreach (var elapsed in new[] { 0d, 3d, 4d })
+        {
+            var number = JsonSerializer.SerializeToElement(BusyBarService.BuildDisplay(false, GamePhase.PreCountdown, elapsed, 5, TimeSpan.FromSeconds(123), new())).GetProperty("elements")[1];
+            Assert.Equal("extra_large", number.GetProperty("font").GetString());
+            Assert.Equal(8, number.GetProperty("y").GetInt32());
+            Assert.Equal(((int)(5 - elapsed)).ToString(), number.GetProperty("text").GetString());
+        }
+    }
+
+    [Fact]
     public void ScreensFollowPreparationGoAndEndingBoundaries()
     {
         var a = new AnimationSettings();

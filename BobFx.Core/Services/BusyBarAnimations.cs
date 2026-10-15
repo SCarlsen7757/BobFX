@@ -29,7 +29,7 @@ internal static class BusyBarAnimations
         var seconds = screen switch
         {
             BusyBarScreen.Idle or BusyBarScreen.Running => 2d,
-            BusyBarScreen.Scanner => 1d,
+            BusyBarScreen.Scanner or BusyBarScreen.PlayerEdges or BusyBarScreen.AllEdges => 2d,
             BusyBarScreen.Flash => timing.FlashSeconds,
             // One complete lap loops without a discontinuity, regardless of configured speed.
             BusyBarScreen.Dot => 1 / timing.DotLapsPerSecond,
@@ -52,15 +52,23 @@ internal static class BusyBarAnimations
             var offset = (y * 72 + x) * 3;
             pixels[offset] = b; pixels[offset + 1] = g; pixels[offset + 2] = r;
         }
-        void Rainbow(int x, int y)
+        void Rainbow(int x, int y, double brightness = 1)
         {
-            var position = x * Math.PI / 36 - elapsed * Math.PI;
-            byte Channel(double offset) => (byte)(127.5 + 127.5 * Math.Sin(position + offset));
+            var position = x * Math.PI / 36 + y * Math.PI / 16 - elapsed * Math.PI;
+            byte Channel(double offset) => (byte)((127.5 + 127.5 * Math.Sin(position + offset)) * brightness);
             Pixel(x, y, Channel(0), Channel(2.094), Channel(4.189));
         }
-        void Text(string text, int y, bool rainbow = false, int scale = 1)
+        void Blend(int x, int y, double opacity, bool shadow)
+        {
+            if (x is < 0 or >= 72 || y is < 0 or >= 16) return;
+            var offset = (y * 72 + x) * 3;
+            for (var channel = 0; channel < 3; channel++)
+                pixels[offset + channel] = (byte)(pixels[offset + channel] * (1 - opacity) + (shadow ? 0 : 255 * opacity));
+        }
+        void Text(string text, int y, int scale = 1, double opacity = 1)
         {
             var left = (72 - (text.Length * 6 - 1) * scale) / 2;
+            var points = new List<(int X, int Y)>();
             for (var c = 0; c < text.Length; c++)
                 for (var row = 0; row < 5; row++)
                     for (var col = 0; col < 5; col++)
@@ -69,10 +77,18 @@ internal static class BusyBarAnimations
                                 for (var dx = 0; dx < scale; dx++)
                                 {
                                     var x = left + (c * 6 + col) * scale + dx;
-                                    if (rainbow) Rainbow(x, y + row * scale + dy);
-                                    else Pixel(x, y + row * scale + dy, 255, 255, 255);
+                                    points.Add((x, y + row * scale + dy));
                                 }
+            foreach (var (x, py) in points)
+            {
+                Blend(x - 1, py, opacity * 0.65, true); Blend(x + 1, py, opacity * 0.65, true);
+                Blend(x, py - 1, opacity * 0.65, true); Blend(x, py + 1, opacity * 0.65, true);
+            }
+            foreach (var (x, py) in points) Blend(x, py, opacity, false);
         }
+        if (screen is not (BusyBarScreen.Flash or BusyBarScreen.Dot or BusyBarScreen.Go))
+            for (var y = 0; y < 16; y++)
+                for (var x = 0; x < 72; x++) Rainbow(x, y, screen is BusyBarScreen.Scanner or BusyBarScreen.PlayerEdges or BusyBarScreen.AllEdges ? 0.5 : 0.8);
         if (screen == BusyBarScreen.Flash)
         {
             if ((int)(elapsed / timing.FlashSeconds * 6) % 2 == 0)
@@ -101,14 +117,14 @@ internal static class BusyBarAnimations
             }
             if (screen == BusyBarScreen.AllEdges)
                 for (var y = 0; y < 16; y++) { Pixel(0, y, 0, 80, 255); Pixel(71, y, 0, 80, 255); }
-            Text("PRECOUNT", 2);
+            // Leave the full center height available for the large live preparation number.
         }
         else
         {
-            for (var x = 0; x < 72; x++) { Rainbow(x, 0); Rainbow(71 - x, 15); }
-            Text(screen == BusyBarScreen.Idle ? "BOB FX" : "COUNT", 2, rainbow: true);
+            var opacity = (1 + Math.Cos(elapsed * Math.PI)) / 2;
+            Text("BOB FX", screen == BusyBarScreen.Idle || showTimer ? 2 : 3,
+                scale: screen == BusyBarScreen.Running && !showTimer ? 2 : 1, opacity: opacity);
             if (screen == BusyBarScreen.Idle) Text("IDLE", 9);
-            else if (!showTimer) Text("BOB FX", 9, rainbow: true);
         }
         return pixels;
     }
