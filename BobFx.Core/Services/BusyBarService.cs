@@ -95,21 +95,25 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
     }
     internal async Task DisplayAsync(BusyBarSettings bar, HttpClient client, string origin, BusyBarModeGate mode, CancellationToken token)
     {
-        GamePhase? previous = null;
+        string? previous = null;
+        using var cadence = new PeriodicTimer(TimeSpan.FromSeconds(1d / 30), clock);
         while (!token.IsCancellationRequested)
         {
             try
             {
                 var scene = control.GetSceneFrame();
                 var phase = scene.Phase;
-                if (previous != phase)
+                var screen = phase == GamePhase.Running && scene.Elapsed < 0.75 ? "GO"
+                    : phase == GamePhase.PreCountdown ? scene.Elapsed < scene.Preparation * 0.6 ? "SCANNER" : scene.Elapsed < scene.Preparation * 0.8 ? "PLAYER EDGES" : "ALL EDGES"
+                    : phase == GamePhase.Ending && scene.Elapsed < settings.Read().Animation.FlashSeconds ? "FLASH" : phase.ToString();
+                if (previous != screen)
                 {
                     var cleared = await mode.InAppsAsync(async () =>
                     {
                         using var response = await client.DeleteAsync(origin + "/display/draw?application_name=BobFX", token);
                         response.EnsureSuccessStatusCode();
                     }, token);
-                    if (cleared) previous = phase;
+                    if (cleared) previous = screen;
                 }
                 var sent = await mode.InAppsAsync(async () =>
                 {
@@ -119,7 +123,8 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                     response.EnsureSuccessStatusCode();
                 }, token);
                 if (!sent) previous = null;
-                await Task.Delay(TimeSpan.FromMilliseconds(100), clock, token);
+                // PeriodicTimer coalesces missed ticks: slow requests never queue stale frames.
+                await cadence.WaitForNextTickAsync(token);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
             catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
@@ -179,17 +184,41 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
         object Rectangle(string id, int x, int y, int width, int height, string color) => new
         { id, type = "rectangle", display = "front", x, y, width, height, fill = "solid", fill_colors = new[] { color }, border_width = 0, timeout = 2 };
         elements.Add(Rectangle("background", 0, 0, 72, 16, "#000000FF"));
-        if (showTimer && phase == GamePhase.Running)
+        void Text(string id, string text, int y, string color) => elements.Add(new
+        { id, type = "text", display = "front", x = 36, y, align = "center", width = 68,
+            text, font = "tiny", color, timeout = 2 });
+        string Rainbow(double position)
         {
+            int Channel(double offset) => (int)(127.5 + 127.5 * Math.Sin(position + offset));
+            return $"#{Channel(0):X2}{Channel(2.094):X2}{Channel(4.189):X2}FF";
+        }
+        void Border()
+        {
+            for (var i = 0; i < 12; i++)
+            {
+                var color = Rainbow(i * 0.52 - elapsed * 2);
+                elements.Add(Rectangle("top" + i, i * 6, 0, 6, 1, color));
+                elements.Add(Rectangle("bottom" + i, i * 6, 15, 6, 1, color));
+            }
+        }
+        if (phase == GamePhase.Running && elapsed < 0.75)
+        {
+            elements.Add(Rectangle("go", 0, 0, 72, 16, "#00FF00FF"));
+            Text("go-label", "GO!", 8, "#000000FF");
+        }
+        else if (phase == GamePhase.Running)
+        {
+            Border();
+            Text("phase", "COUNT", 4, "#FFFFFFFF");
             var seconds = Math.Max(0, (int)Math.Ceiling(remaining.TotalSeconds));
-            elements.Add(new { id = "timer", type = "text", display = "front", x = 36, y = 8, align = "center", width = 72,
-                text = $"{seconds / 60}:{seconds % 60:00}", font = "normal", color = "#00FF00FF", timeout = 2 });
+            Text(showTimer ? "timer" : "brand", showTimer ? $"{seconds / 60}:{seconds % 60:00}" : "BOB FX", 11, Rainbow(elapsed * 2));
         }
         else if (phase == GamePhase.Ending)
         {
             if (elapsed < animation.FlashSeconds)
             {
-                if ((int)(elapsed / animation.FlashSeconds * 6) % 2 == 0) elements.Add(Rectangle("flash", 0, 0, 72, 16, "#FF0000FF"));
+                elements.Add(Rectangle("flash", 0, 0, 72, 16,
+                    (int)(elapsed / animation.FlashSeconds * 6) % 2 == 0 ? "#FF0000FF" : "#000000FF"));
             }
             else
             {
@@ -208,16 +237,16 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                 elements.Add(Rectangle("top", 0, 0, 72, 2, "#0000FFFF")); elements.Add(Rectangle("bottom", 0, 14, 72, 2, "#0000FFFF"));
                 if (progress >= 0.8) { elements.Add(Rectangle("left", 0, 0, 2, 16, "#0000FFFF")); elements.Add(Rectangle("right", 70, 0, 2, 16, "#0000FFFF")); }
             }
+            elements.Add(Rectangle("label-background", 8, 2, 56, 12, "#000000FF"));
+            Text("phase", "PRECOUNT", 4, "#00CCFFFF");
+            Text("preparation-count", Math.Max(1, (int)Math.Ceiling(preparation - elapsed)).ToString(System.Globalization.CultureInfo.InvariantCulture), 11, "#FFFFFFFF");
         }
-        else if (phase == GamePhase.Running && elapsed < 0.75) elements.Add(Rectangle("go", 0, 0, 72, 16, "#00FF00FF"));
         else
-            for (var i = 0; i < 12; i++)
-            {
-                var wave = (Math.Sin(i * 0.5 - elapsed * 3) + 1) / 2;
-                var pulse = Math.Pow(Math.Max(0, Math.Cos(i * 0.2 - elapsed * 4)), 12);
-                var r = (int)(255 * pulse); var g = (int)(255 * Math.Min(1, 0.15 + 0.6 * wave + 0.25 * pulse)); var b = (int)(255 * Math.Min(1, 0.25 + 0.6 * (1 - wave) + 0.15 * pulse));
-                elements.Add(Rectangle("wave" + i, i * 6, 0, 6, 16, $"#{r:X2}{g:X2}{b:X2}FF"));
-            }
+        {
+            Border();
+            Text("brand", "BOB FX", 4, Rainbow(elapsed * 2));
+            Text("phase", "IDLE", 11, "#FFFFFFFF");
+        }
         return new { application_name = "BobFX", priority = 50, elements };
     }
 }

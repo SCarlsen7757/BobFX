@@ -108,6 +108,8 @@ public sealed class InstallationTests
         Assert.DoesNotContain("timer", colors); Assert.DoesNotContain("2:03", colors);
         var timer = JsonSerializer.Serialize(BusyBarService.BuildDisplay(true, GamePhase.Running, 5, 5, TimeSpan.FromSeconds(123), new()));
         Assert.Contains("2:03", timer);
+        Assert.Contains("COUNT", colors);
+        Assert.Contains("BOB FX", colors);
         // State.updates(2) -> StateUpdate.input(11) -> InputEvent.button_event(1).
         Assert.Equal(new[] { 2 }, BusyBarInputDecoder.Presses([0x12, 6, 0x5a, 4, 0x0a, 2, 0x08, 2]));
         Assert.Equal(new[] { 1 }, BusyBarInputDecoder.Presses([0x12, 6, 0x5a, 4, 0x0a, 2, 0x08, 1]));
@@ -115,6 +117,22 @@ public sealed class InstallationTests
         Assert.Empty(BusyBarInputDecoder.Presses([0x12, 6, 0x5a, 4, 0x0a, 2, 0x08, 99]));
         Assert.Empty(BusyBarInputDecoder.Presses([0x12, 4, 0x5a, 2, 0x0a, 0])); // Default OK/PRESS.
         Assert.Throws<InvalidDataException>(() => BusyBarInputDecoder.Presses([0x12, 99]));
+    }
+    [Fact]
+    public void BusyBarPreparationAlwaysShowsSecondsAndIdleIsBranded()
+    {
+        foreach (var showTimer in new[] { false, true })
+        {
+            var display = JsonSerializer.SerializeToElement(BusyBarService.BuildDisplay(showTimer, GamePhase.PreCountdown, 1.2, 5, TimeSpan.FromSeconds(123), new()));
+            var text = display.GetProperty("elements").EnumerateArray().Where(e => e.TryGetProperty("text", out _)).Select(e => e.GetProperty("text").GetString()).ToArray();
+            Assert.Contains("PRECOUNT", text);
+            Assert.Contains("4", text);
+            Assert.DoesNotContain("2:03", text);
+        }
+        var idle = JsonSerializer.Serialize(BusyBarService.BuildDisplay(false, GamePhase.Idle, 2, 5, TimeSpan.Zero, new()));
+        Assert.Contains("BOB FX", idle); Assert.Contains("IDLE", idle);
+        var go = JsonSerializer.Serialize(BusyBarService.BuildDisplay(true, GamePhase.Running, 0.2, 5, TimeSpan.FromSeconds(123), new()));
+        Assert.Contains("GO!", go); Assert.DoesNotContain("2:03", go);
     }
     [Fact]
     public async Task LocateOwnsOutputAndRejectsGameManualAndOtherLocate()
