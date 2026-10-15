@@ -35,6 +35,8 @@ builder.Services.AddHttpClient("wled", client => { client.Timeout = TimeSpan.Fro
 builder.Services.AddSingleton<WLedRegistryService>();
 builder.Services.AddHttpClient("busybar", client => { client.Timeout = TimeSpan.FromSeconds(2); client.MaxResponseContentBufferSize = 64 * 1024; })
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false });
+builder.Services.AddHttpClient("busybar-assets", client => { client.Timeout = TimeSpan.FromSeconds(30); client.MaxResponseContentBufferSize = 64 * 1024; })
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false });
 builder.Services.AddSingleton<BusyBarService>();
 builder.Services.AddSingleton<IBusyBarStatusSource, BusyBarStatusSource>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BusyBarService>());

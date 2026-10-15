@@ -67,10 +67,16 @@ public sealed class BusyBarModeTests
             await Eventually(() => source.Connected);
             await Task.Delay(150);
             Assert.Empty(clients.DisplayRequests);
+            Assert.Empty(clients.AssetRequests);
             // Buttons outside APPS must leave the native device's controls alone.
             source.Messages.Writer.TryWrite([0x12, 6, 0x5a, 4, 0x0a, 2, 8, 2]);
             source.Messages.Writer.TryWrite(Selector(3));
             await Eventually(() => clients.DisplayRequests.Contains(HttpMethod.Post));
+            Assert.Equal(8, clients.AssetRequests.Count);
+            var posts = clients.DisplayRequests.Count(m => m == HttpMethod.Post);
+            await Task.Delay(350);
+            Assert.InRange(clients.DisplayRequests.Count(m => m == HttpMethod.Post) - posts, 0, 1);
+            Assert.Equal(8, clients.AssetRequests.Count); // Animation frames never trigger uploads.
             Assert.Equal(GamePhase.Idle, control.Phase);
             Assert.Equal(BusyBarSelector.Apps, service.Statuses[bar.Id].Selector);
             source.Messages.Writer.TryWrite(Selector(1));
@@ -78,8 +84,10 @@ public sealed class BusyBarModeTests
             var paused = clients.DisplayRequests.Count;
             await Task.Delay(200);
             Assert.Equal(paused, clients.DisplayRequests.Count);
+            Assert.Equal(8, clients.AssetRequests.Count);
             source.Messages.Writer.TryWrite(Selector(3));
             await Eventually(() => clients.DisplayRequests.Count > paused);
+            Assert.Equal(8, clients.AssetRequests.Count); // Re-enter APPS using the preloaded files.
             if (remoteEnabled)
             {
                 source.Messages.Writer.TryWrite([0x12, 6, 0x5a, 4, 0x0a, 2, 8, 2]);
@@ -112,16 +120,35 @@ public sealed class BusyBarModeTests
     private sealed class Clients : IHttpClientFactory
     {
         public ConcurrentQueue<HttpMethod> DisplayRequests { get; } = new();
-        public HttpClient CreateClient(string name) => new(new Handler(DisplayRequests));
+        public ConcurrentQueue<string> AssetRequests { get; } = new();
+        public HttpClient CreateClient(string name) => new(new Handler(DisplayRequests, AssetRequests));
     }
-    private sealed class Handler(ConcurrentQueue<HttpMethod> displayRequests) : HttpMessageHandler
+    private sealed class Handler(ConcurrentQueue<HttpMethod> displayRequests, ConcurrentQueue<string> assetRequests) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             var version = request.RequestUri!.AbsolutePath == "/api/version";
-            if (!version) displayRequests.Enqueue(request.Method);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            { Content = new StringContent(version ? """{"api_semver":"27.5.0"}""" : "{}", System.Text.Encoding.UTF8, "application/json") });
+            if (request.RequestUri.AbsolutePath == "/api/assets/upload")
+            {
+                var bytes = await request.Content!.ReadAsByteArrayAsync(token);
+                Assert.Equal("application/octet-stream", request.Content.Headers.ContentType!.MediaType);
+                Assert.Equal("bicycle0", System.Text.Encoding.ASCII.GetString(bytes[..8]));
+                assetRequests.Enqueue(request.RequestUri.Query);
+            }
+            else if (!version)
+            {
+                if (request.Method == HttpMethod.Post)
+                {
+                    using var json = System.Text.Json.JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
+                    var elements = json.RootElement.GetProperty("elements");
+                    Assert.InRange(elements.GetArrayLength(), 1, 2);
+                    Assert.Equal("animation", elements[0].GetProperty("type").GetString());
+                    Assert.Contains(assetRequests, q => q.EndsWith(elements[0].GetProperty("path").GetString()!, StringComparison.Ordinal));
+                }
+                displayRequests.Enqueue(request.Method);
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StringContent(version ? """{"api_semver":"27.5.0"}""" : "{}", System.Text.Encoding.UTF8, "application/json") };
         }
     }
 }

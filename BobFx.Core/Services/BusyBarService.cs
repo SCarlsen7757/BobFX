@@ -75,8 +75,8 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                 var origin = $"http://{bar.Address}:{bar.Port}/api";
                 var version = await client.GetFromJsonAsync<JsonElement>(origin + "/version", token);
                 var api = version.TryGetProperty("api_semver", out var property) ? property.GetString() : null;
-                var supported = Version.TryParse(api, out var parsed) && parsed.Major == 27;
-                statuses[bar.Id] = new(supported ? "Waiting for selector; move to APPS to allow output" : "Selector API unsupported; output paused", api, supported);
+                var supported = Version.TryParse(api, out var parsed) && parsed.Major == 27 && parsed.Minor == 5;
+                statuses[bar.Id] = new(supported ? "Waiting for selector; move to APPS to allow output" : "Native playback requires firmware 1.2.3 / API 27.5; output paused", api, supported);
                 using var session = CancellationTokenSource.CreateLinkedTokenSource(token);
                 var mode = new BusyBarModeGate();
                 // Always monitor the selector, even when START/BACK controls are disabled.
@@ -95,40 +95,81 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
     }
     internal async Task DisplayAsync(BusyBarSettings bar, HttpClient client, string origin, BusyBarModeGate mode, CancellationToken token)
     {
-        string? previous = null;
-        using var cadence = new PeriodicTimer(TimeSpan.FromSeconds(1d / 30), clock);
+        BusyBarScreen? previous = null;
+        AnimationSettings? timing = null;
+        Dictionary<BusyBarScreen, BusyBarAnimation> assets = [];
+        var uploaded = new HashSet<string>();
+        string? previousNumber = null;
+        long? lastSent = null;
+        using var uploadClient = clients.CreateClient("busybar-assets");
+        uploadClient.Timeout = TimeSpan.FromSeconds(30);
+        if (client.DefaultRequestHeaders.TryGetValues("X-API-Token", out var password))
+            uploadClient.DefaultRequestHeaders.Add("X-API-Token", password);
+        using var cadence = new PeriodicTimer(TimeSpan.FromMilliseconds(100), clock);
         while (!token.IsCancellationRequested)
         {
             try
             {
-                var scene = control.GetSceneFrame();
-                var phase = scene.Phase;
-                var screen = phase == GamePhase.Running && scene.Elapsed < 0.75 ? "GO"
-                    : phase == GamePhase.PreCountdown ? scene.Elapsed < scene.Preparation * 0.6 ? "SCANNER" : scene.Elapsed < scene.Preparation * 0.8 ? "PLAYER EDGES" : "ALL EDGES"
-                    : phase == GamePhase.Ending && scene.Elapsed < settings.Read().Animation.FlashSeconds ? "FLASH" : phase.ToString();
-                if (previous != screen)
+                if (mode.Selector != BusyBarSelector.Apps)
                 {
-                    var cleared = await mode.InAppsAsync(async () =>
+                    previous = null; lastSent = null;
+                    await cadence.WaitForNextTickAsync(token);
+                    continue;
+                }
+                var updated = settings.Read().Animation;
+                if (timing != updated)
+                {
+                    assets = BusyBarAnimations.Create(bar.ShowTimer, updated);
+                    timing = updated; previous = null;
+                }
+                // Preload the complete small set before sampling the scene. Game transitions
+                // then need only a playback command, never an animation-sized upload.
+                foreach (var asset in assets.Values.Where(a => !uploaded.Contains(a.Name)))
+                {
+                    var sentAsset = await mode.InAppsAsync(async () =>
                     {
-                        using var response = await client.DeleteAsync(origin + "/display/draw?application_name=BobFX", token);
+                        using var content = new ByteArrayContent(asset.Data);
+                        content.Headers.ContentType = new("application/octet-stream");
+                        using var response = await uploadClient.PostAsync(origin + "/assets/upload?application_name=BobFX&file=" + asset.Name, content, token);
                         response.EnsureSuccessStatusCode();
                     }, token);
-                    if (cleared) previous = screen;
+                    if (!sentAsset) break;
+                    uploaded.Add(asset.Name);
                 }
-                var sent = await mode.InAppsAsync(async () =>
+                if (assets.Values.Any(a => !uploaded.Contains(a.Name)))
                 {
-                    var payload = BuildDisplay(bar.ShowTimer, phase, scene.Elapsed, scene.Preparation,
-                        countdown.Remaining, settings.Read().Animation);
-                    using var response = await client.PostAsJsonAsync(origin + "/display/draw", payload, token);
-                    response.EnsureSuccessStatusCode();
-                }, token);
-                if (!sent) previous = null;
-                // PeriodicTimer coalesces missed ticks: slow requests never queue stale frames.
+                    previous = null; lastSent = null;
+                    await cadence.WaitForNextTickAsync(token);
+                    continue;
+                }
+                var scene = control.GetSceneFrame();
+                var screen = BusyBarAnimations.Screen(scene.Phase, scene.Elapsed, scene.Preparation, timing);
+                var number = DisplayNumber(bar.ShowTimer, scene.Phase, scene.Elapsed, scene.Preparation, countdown.Remaining);
+                // Refresh a short lease once a second. await_previous_end preserves native
+                // playback while renewing ownership; no pixel frames are sent here.
+                if (screen != previous || number != previousNumber || lastSent is null ||
+                    (screen != BusyBarScreen.Flash && clock.GetElapsedTime(lastSent.Value).TotalSeconds >= 1))
+                {
+                    var sent = await mode.InAppsAsync(async () =>
+                    {
+                        if (screen != previous)
+                        {
+                            using var clear = await client.DeleteAsync(origin + "/display/draw?application_name=BobFX", token);
+                            clear.EnsureSuccessStatusCode();
+                        }
+                        using var response = await client.PostAsJsonAsync(origin + "/display/draw", NativeDisplay(assets[screen].Name, screen, number, timing.FlashSeconds), token);
+                        response.EnsureSuccessStatusCode();
+                    }, token);
+                    if (sent) { previous = screen; previousNumber = number; lastSent = clock.GetTimestamp(); }
+                    else { previous = null; lastSent = null; }
+                }
                 await cadence.WaitForNextTickAsync(token);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
             catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
             {
+                previous = null; lastSent = null;
+                uploaded.Clear(); // A reboot may have lost app assets; repair them before retrying.
                 statuses[bar.Id] = statuses.GetValueOrDefault(bar.Id, new("Disconnected")) with { State = "Display update failed; retrying" };
                 try { await Task.Delay(TimeSpan.FromSeconds(5), clock, token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
@@ -180,77 +221,39 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
     }
     public static object BuildDisplay(bool showTimer, GamePhase phase, double elapsed, double preparation, TimeSpan remaining, AnimationSettings animation)
     {
-        var elements = new List<object>();
-        object Rectangle(string id, int x, int y, int width, int height, string color) => new
-        { id, type = "rectangle", display = "front", x, y, width, height, fill = "solid", fill_colors = new[] { color }, border_width = 0, timeout = 2 };
-        elements.Add(Rectangle("background", 0, 0, 72, 16, "#000000FF"));
-        void Text(string id, string text, int y, string color) => elements.Add(new
-        { id, type = "text", display = "front", x = 36, y, align = "center", width = 68,
-            text, font = "tiny", color, timeout = 2 });
-        string Rainbow(double position)
+        var screen = BusyBarAnimations.Screen(phase, elapsed, preparation, animation);
+        var asset = BusyBarAnimations.Create(showTimer, animation)[screen];
+        return NativeDisplay(asset.Name, screen, DisplayNumber(showTimer, phase, elapsed, preparation, remaining), animation.FlashSeconds);
+    }
+    private static string? DisplayNumber(bool showTimer, GamePhase phase, double elapsed, double preparation, TimeSpan remaining)
+    {
+        if (phase == GamePhase.PreCountdown)
+            return Math.Max(1, (int)Math.Ceiling(preparation - elapsed)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (showTimer && phase == GamePhase.Running && elapsed >= 0.75)
         {
-            int Channel(double offset) => (int)(127.5 + 127.5 * Math.Sin(position + offset));
-            return $"#{Channel(0):X2}{Channel(2.094):X2}{Channel(4.189):X2}FF";
-        }
-        void Border()
-        {
-            for (var i = 0; i < 12; i++)
-            {
-                var color = Rainbow(i * 0.52 - elapsed * 2);
-                elements.Add(Rectangle("top" + i, i * 6, 0, 6, 1, color));
-                elements.Add(Rectangle("bottom" + i, i * 6, 15, 6, 1, color));
-            }
-        }
-        if (phase == GamePhase.Running && elapsed < 0.75)
-        {
-            elements.Add(Rectangle("go", 0, 0, 72, 16, "#00FF00FF"));
-            Text("go-label", "GO!", 8, "#000000FF");
-        }
-        else if (phase == GamePhase.Running)
-        {
-            Border();
-            Text("phase", "COUNT", 4, "#FFFFFFFF");
             var seconds = Math.Max(0, (int)Math.Ceiling(remaining.TotalSeconds));
-            Text(showTimer ? "timer" : "brand", showTimer ? $"{seconds / 60}:{seconds % 60:00}" : "BOB FX", 11, Rainbow(elapsed * 2));
+            return $"{seconds / 60}:{seconds % 60:00}";
         }
-        else if (phase == GamePhase.Ending)
+        return null;
+    }
+    private static object NativeDisplay(string asset, BusyBarScreen screen, string? number, double flashSeconds)
+    {
+        var elements = new List<object>
         {
-            if (elapsed < animation.FlashSeconds)
-            {
-                elements.Add(Rectangle("flash", 0, 0, 72, 16,
-                    (int)(elapsed / animation.FlashSeconds * 6) % 2 == 0 ? "#FF0000FF" : "#000000FF"));
-            }
-            else
-            {
-                var p = (int)((elapsed - animation.FlashSeconds) * animation.DotLapsPerSecond * 172) % 172;
-                var x = p < 72 ? p : p < 86 ? 71 : p < 158 ? 157 - p : 0;
-                var y = p < 72 ? 0 : p < 86 ? p - 71 : p < 158 ? 15 : 172 - p;
-                elements.Add(Rectangle("dot", x, y, 1, 1, "#FF0000FF"));
-            }
-        }
-        else if (phase == GamePhase.PreCountdown)
-        {
-            var progress = preparation > 0 ? elapsed / preparation : 1;
-            if (progress < 0.6) elements.Add(Rectangle("scanner", Math.Clamp((int)(progress / 0.6 * 68), 0, 68), 0, 4, 16, "#0000FFFF"));
-            else
-            {
-                elements.Add(Rectangle("top", 0, 0, 72, 2, "#0000FFFF")); elements.Add(Rectangle("bottom", 0, 14, 72, 2, "#0000FFFF"));
-                if (progress >= 0.8) { elements.Add(Rectangle("left", 0, 0, 2, 16, "#0000FFFF")); elements.Add(Rectangle("right", 70, 0, 2, 16, "#0000FFFF")); }
-            }
-            elements.Add(Rectangle("label-background", 8, 2, 56, 12, "#000000FF"));
-            Text("phase", "PRECOUNT", 4, "#00CCFFFF");
-            Text("preparation-count", Math.Max(1, (int)Math.Ceiling(preparation - elapsed)).ToString(System.Globalization.CultureInfo.InvariantCulture), 11, "#FFFFFFFF");
-        }
-        else
-        {
-            Border();
-            Text("brand", "BOB FX", 4, Rainbow(elapsed * 2));
-            Text("phase", "IDLE", 11, "#FFFFFFFF");
-        }
+            new { id = "scene", type = "animation", display = "front", x = 0, y = 0,
+                path = asset, section = "default", loop = screen != BusyBarScreen.Flash,
+                // A finite flash plays exactly once. Queuing it at each heartbeat would
+                // restart it at the end and could produce a fourth red flash.
+                await_previous_end = screen != BusyBarScreen.Flash,
+                timeout = screen == BusyBarScreen.Flash ? (int)Math.Ceiling(flashSeconds) + 1 : 3, z_index = 0 }
+        };
+        if (number is not null)
+            elements.Add(new { id = screen == BusyBarScreen.Running ? "timer" : "preparation-count", type = "text",
+                display = "front", x = 36, y = 11, align = "center", width = 68,
+                text = number, font = "tiny", color = "#FFFFFFFF", timeout = 3, z_index = 1 });
         return new { application_name = "BobFX", priority = 50, elements };
     }
 }
-
 /// <summary>Reads only the input subset of BSB_State.State (official busylib schema).
 /// Unknown protobuf fields are skipped, never interpreted as game commands.</summary>
 public static class BusyBarInputDecoder
