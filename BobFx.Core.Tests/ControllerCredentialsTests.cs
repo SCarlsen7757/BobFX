@@ -84,7 +84,7 @@ public sealed class ControllerCredentialsTests
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), TimeProvider.System);
         var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), TimeProvider.System);
         using var control = new RgbAndSoundControlService(countdown, rgb, new SoundService(NullLogger<SoundService>.Instance), TimeProvider.System, NullLogger<RgbAndSoundControlService>.Instance);
-        using var service = new BusyBarService(settings, control, countdown, clients, config, TimeProvider.System, credentials);
+        using var service = new BusyBarService(settings, control, countdown, clients, config, TimeProvider.System, credentials, new WaitingStatusSource());
         await service.StartAsync(CancellationToken.None);
         try
         {
@@ -100,6 +100,14 @@ public sealed class ControllerCredentialsTests
     {
         public System.Collections.Concurrent.ConcurrentQueue<string> Passwords { get; } = new();
         public HttpClient CreateClient(string name) => new(new ReconnectHandler(Passwords));
+    }
+    private sealed class WaitingStatusSource : IBusyBarStatusSource
+    {
+        public async IAsyncEnumerable<byte[]> ReadAsync(BusyBarSettings bar, string password, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            yield break;
+        }
     }
     private sealed class ReconnectHandler(System.Collections.Concurrent.ConcurrentQueue<string> passwords) : HttpMessageHandler
     {

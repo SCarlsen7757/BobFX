@@ -10,13 +10,14 @@
 <h1>Remote controllers</h1>
 <p>Enter your BUSY Bar's local Wi-Fi API password here. BobFX saves it privately with its application data; no Docker secret or manually created file is needed.</p>
 <p>Color animations are the default. Showing the timer reveals the remaining game time. Remote input uses START to start and BACK to stop; API 27.x input support is checked at connection.</p>
+<p>BobFX only updates the display and handles game buttons in APPS mode. After connecting, move the selector away from APPS and back so its position can be detected.</p>
 <p role="status">@message</p>
 @foreach (var bar in controllers)
 {
     <div>
         <button disabled="@(saving || testing)" @onclick="() => Edit(bar)">@bar.Name · @bar.Address · @(bar.Enabled ? "Enabled" : "Disabled")</button>
         <button disabled="@(saving || testing)" @onclick="() => Remove(bar.Id)">Remove</button>
-        @if (BusyBars.Statuses.TryGetValue(bar.Id, out var status)) { <span>@status.State · API @status.ApiVersion</span> }
+        @if (BusyBars.Statuses.TryGetValue(bar.Id, out var status)) { <span>Selector: @status.Selector.ToString().ToUpperInvariant() · @status.State · API @status.ApiVersion</span> }
     </div>
 }
 <button disabled="@(saving || testing)" @onclick="New">Add BUSY Bar</button>

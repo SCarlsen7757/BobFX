@@ -1,17 +1,17 @@
 using System.Collections.Concurrent;
 using System.Net.Http.Json;
-using System.Net.WebSockets;
-using System.Text;
 using System.Text.Json;
 
 namespace BobFx.Core.Services;
 
-public sealed record BusyBarStatus(string State, string? ApiVersion = null, bool InputSupported = false);
+public sealed record BusyBarStatus(string State, string? ApiVersion = null, bool InputSupported = false, BusyBarSelector Selector = BusyBarSelector.Unknown);
 
 public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSoundControlService control,
-    CountdownService countdown, IHttpClientFactory clients, IConfiguration configuration, TimeProvider clock, ControllerCredentials credentials) : BackgroundService
+    CountdownService countdown, IHttpClientFactory clients, IConfiguration configuration, TimeProvider clock, ControllerCredentials credentials,
+    IBusyBarStatusSource? statusSource = null) : BackgroundService
 {
     private readonly ConcurrentDictionary<string, BusyBarStatus> statuses = new();
+    private readonly IBusyBarStatusSource source = statusSource ?? new BusyBarStatusSource();
     public IReadOnlyDictionary<string, BusyBarStatus> Statuses => new Dictionary<string, BusyBarStatus>(statuses);
     public async Task<string> TestConnectionAsync(BusyBarSettings bar, string? password = null, CancellationToken token = default)
     {
@@ -76,11 +76,12 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                 var version = await client.GetFromJsonAsync<JsonElement>(origin + "/version", token);
                 var api = version.TryGetProperty("api_semver", out var property) ? property.GetString() : null;
                 var supported = Version.TryParse(api, out var parsed) && parsed.Major == 27;
-                statuses[bar.Id] = new(supported || !bar.RemoteEnabled ? "Connected" : "Display connected; input API unsupported", api, supported);
+                statuses[bar.Id] = new(supported ? "Waiting for selector; move to APPS to allow output" : "Selector API unsupported; output paused", api, supported);
                 using var session = CancellationTokenSource.CreateLinkedTokenSource(token);
-                // Input failure does not stop display updates. Both tasks belong to this worker.
-                await Task.WhenAll(DisplayAsync(bar, client, origin, session.Token),
-                    bar.RemoteEnabled && supported ? InputAsync(bar, secret, session.Token) : Task.CompletedTask);
+                var mode = new BusyBarModeGate();
+                // Always monitor the selector, even when START/BACK controls are disabled.
+                await Task.WhenAll(DisplayAsync(bar, client, origin, mode, session.Token),
+                    supported ? InputAsync(bar, secret, mode, session.Token) : Task.CompletedTask);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
             catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
@@ -92,7 +93,7 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
             }
         }
     }
-    private async Task DisplayAsync(BusyBarSettings bar, HttpClient client, string origin, CancellationToken token)
+    internal async Task DisplayAsync(BusyBarSettings bar, HttpClient client, string origin, BusyBarModeGate mode, CancellationToken token)
     {
         GamePhase? previous = null;
         while (!token.IsCancellationRequested)
@@ -103,14 +104,21 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                 var phase = scene.Phase;
                 if (previous != phase)
                 {
-                    using var cleared = await client.DeleteAsync(origin + "/display/draw?application_name=BobFX", token);
-                    cleared.EnsureSuccessStatusCode();
-                    previous = phase;
+                    var cleared = await mode.InAppsAsync(async () =>
+                    {
+                        using var response = await client.DeleteAsync(origin + "/display/draw?application_name=BobFX", token);
+                        response.EnsureSuccessStatusCode();
+                    }, token);
+                    if (cleared) previous = phase;
                 }
-                var payload = BuildDisplay(bar.ShowTimer, phase, scene.Elapsed, scene.Preparation,
-                    countdown.Remaining, settings.Read().Animation);
-                using var response = await client.PostAsJsonAsync(origin + "/display/draw", payload, token);
-                response.EnsureSuccessStatusCode();
+                var sent = await mode.InAppsAsync(async () =>
+                {
+                    var payload = BuildDisplay(bar.ShowTimer, phase, scene.Elapsed, scene.Preparation,
+                        countdown.Remaining, settings.Read().Animation);
+                    using var response = await client.PostAsJsonAsync(origin + "/display/draw", payload, token);
+                    response.EnsureSuccessStatusCode();
+                }, token);
+                if (!sent) previous = null;
                 await Task.Delay(TimeSpan.FromMilliseconds(100), clock, token);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
@@ -122,38 +130,26 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
             }
         }
     }
-    private async Task InputAsync(BusyBarSettings bar, string secret, CancellationToken token)
+    private async Task InputAsync(BusyBarSettings bar, string secret, BusyBarModeGate mode, CancellationToken token)
     {
         while (!token.IsCancellationRequested)
         {
             try
             {
-                using var ws = new ClientWebSocket();
-                ws.Options.Proxy = null;
-                // Official local status stream authenticates with this query parameter.
-                var uri = new Uri($"ws://{bar.Address}:{bar.Port}/api/status/ws?x-api-token={Uri.EscapeDataString(secret)}");
-                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-                deadline.CancelAfter(TimeSpan.FromSeconds(3));
-                await ws.ConnectAsync(uri, deadline.Token);
-                await ws.SendAsync(Encoding.UTF8.GetBytes("{\"enable\":true}"), WebSocketMessageType.Text, true, token);
-                statuses[bar.Id] = statuses[bar.Id] with { State = "Connected; START starts, BACK stops" };
-                var buffer = new byte[8192];
+                statuses[bar.Id] = statuses[bar.Id] with { State = "Waiting for selector; move away from APPS and back", Selector = BusyBarSelector.Unknown };
                 long? lastPress = null;
-                while (ws.State == WebSocketState.Open && !token.IsCancellationRequested)
+                await foreach (var message in source.ReadAsync(bar, secret, token))
                 {
-                    using var message = new MemoryStream();
-                    WebSocketReceiveResult received;
-                    do
+                    foreach (var input in BusyBarInputDecoder.Events(message))
                     {
-                        received = await ws.ReceiveAsync(buffer, token);
-                        if (received.MessageType == WebSocketMessageType.Close) break;
-                        if (message.Length + received.Count > 4 * 1024 * 1024) throw new InvalidDataException("Status frame too large.");
-                        message.Write(buffer, 0, received.Count);
-                    } while (!received.EndOfMessage);
-                    if (received.MessageType == WebSocketMessageType.Close) break;
-                    if (received.MessageType != WebSocketMessageType.Binary) continue;
-                    foreach (var button in BusyBarInputDecoder.Presses(message.ToArray()))
-                    {
+                        if (input.Selector is { } selector)
+                        {
+                            await mode.SetAsync(selector, token);
+                            statuses[bar.Id] = statuses[bar.Id] with { Selector = selector, State = selector == BusyBarSelector.Apps
+                                ? "APPS mode; BobFX output enabled" : "Output paused outside APPS mode" };
+                            continue;
+                        }
+                        if (!bar.RemoteEnabled || input.Button is not { } button || mode.Selector != BusyBarSelector.Apps) continue;
                         if (lastPress is { } last && clock.GetElapsedTime(last).TotalMilliseconds < 300) continue;
                         lastPress = clock.GetTimestamp();
                         try
@@ -167,7 +163,12 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
             catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
-            { statuses[bar.Id] = statuses.GetValueOrDefault(bar.Id, new("Disconnected")) with { State = "Display active; input stream unavailable" }; }
+            { statuses[bar.Id] = statuses.GetValueOrDefault(bar.Id, new("Disconnected")) with { State = "Selector stream unavailable; output paused" }; }
+            finally
+            {
+                await mode.SetAsync(BusyBarSelector.Unknown);
+                statuses[bar.Id] = statuses.GetValueOrDefault(bar.Id, new("Disconnected")) with { Selector = BusyBarSelector.Unknown, State = "Selector unknown; output paused until APPS is observed" };
+            }
             try { await Task.Delay(TimeSpan.FromSeconds(5), clock, token); }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
         }
@@ -225,19 +226,29 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
 /// Unknown protobuf fields are skipped, never interpreted as game commands.</summary>
 public static class BusyBarInputDecoder
 {
-    public static IReadOnlyList<int> Presses(byte[] message)
+    public static IReadOnlyList<int> Presses(byte[] message) => Events(message).Where(e => e.Button.HasValue).Select(e => e.Button!.Value).ToArray();
+    public static IReadOnlyList<BusyBarInputEvent> Events(byte[] message)
     {
-        var presses = new List<int>();
+        var events = new List<BusyBarInputEvent>();
         foreach (var update in Fields(message).Where(f => f.Number == 2 && f.Wire == 2))
             foreach (var input in Fields(update.Data).Where(f => f.Number == 11 && f.Wire == 2))
-                foreach (var button in Fields(input.Data).Where(f => f.Number == 1 && f.Wire == 2))
+            {
+                // InputEvent is a protobuf oneof: the last recognized member wins.
+                var selected = Fields(input.Data).LastOrDefault(f => f.Wire == 2 && f.Number is 1 or 2 or 3);
+                if (selected?.Number == 2)
                 {
-                    var fields = Fields(button.Data);
+                    var position = Fields(selected.Data).LastOrDefault(f => f.Number == 1 && f.Wire == 0)?.Value ?? 0;
+                    events.Add(new(null, position <= 4 ? (BusyBarSelector)position : BusyBarSelector.Unknown));
+                }
+                else if (selected?.Number == 1)
+                {
+                    var fields = Fields(selected.Data);
                     var key = fields.LastOrDefault(f => f.Number == 1 && f.Wire == 0)?.Value ?? 0;
                     var action = fields.LastOrDefault(f => f.Number == 2 && f.Wire == 0)?.Value ?? 0;
-                    if (action == 0 && key is 1 or 2) presses.Add((int)key);
+                    if (action == 0 && key is 1 or 2) events.Add(new((int)key, null));
                 }
-        return presses;
+            }
+        return events;
     }
     private sealed record Field(int Number, int Wire, ulong Value, byte[] Data);
     private static List<Field> Fields(byte[] message)
@@ -268,3 +279,4 @@ public static class BusyBarInputDecoder
         return result;
     }
 }
+public sealed record BusyBarInputEvent(int? Button, BusyBarSelector? Selector);
