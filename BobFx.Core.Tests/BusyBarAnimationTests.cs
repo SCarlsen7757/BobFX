@@ -60,9 +60,14 @@ public sealed class BusyBarAnimationTests
         var two = JsonSerializer.Serialize(BusyBarService.BuildDisplay(false, GamePhase.Running, 5, 5, TimeSpan.FromSeconds(456), new()));
         Assert.Equal(one, two);
         var display = JsonSerializer.Deserialize<JsonElement>(one).GetProperty("elements");
-        Assert.Equal(1, display.GetArrayLength());
+        Assert.Equal(2, display.GetArrayLength());
         Assert.True(display[0].GetProperty("await_previous_end").GetBoolean());
-        Assert.Equal(3, display[0].GetProperty("timeout").GetInt32());
+        Assert.Equal(15, display[0].GetProperty("timeout").GetInt32());
+        Assert.Equal("number", display[1].GetProperty("id").GetString());
+        Assert.Equal("", display[1].GetProperty("text").GetString());
+        var visible = JsonSerializer.SerializeToElement(BusyBarService.BuildDisplay(true, GamePhase.Running, 5, 5, TimeSpan.FromSeconds(123), new())).GetProperty("elements");
+        Assert.Equal(display[1].GetProperty("id").GetString(), visible[1].GetProperty("id").GetString());
+        Assert.Equal("2:03", visible[1].GetProperty("text").GetString());
         var flash = JsonSerializer.SerializeToElement(BusyBarService.BuildDisplay(false, GamePhase.Ending, 0, 5, TimeSpan.Zero, new() { FlashSeconds = 4 })).GetProperty("elements")[0];
         Assert.False(flash.GetProperty("loop").GetBoolean());
         Assert.False(flash.GetProperty("await_previous_end").GetBoolean());

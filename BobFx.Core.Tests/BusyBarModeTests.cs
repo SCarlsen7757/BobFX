@@ -45,9 +45,10 @@ public sealed class BusyBarModeTests
         Assert.Equal(1, sent);
     }
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ServiceMonitorsSelectorWithoutRemoteControlsAndPausesOnLeaveOrStreamLoss(bool remoteEnabled)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task ServiceMonitorsSelectorWithoutRemoteControlsAndPausesOnLeaveOrStreamLoss(bool remoteEnabled, bool failedHeartbeat)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         { ["Settings:DataPath"] = Path.Combine(Path.GetTempPath(), "bobfx-mode-" + Guid.NewGuid().ToString("N")) }).Build();
@@ -77,6 +78,13 @@ public sealed class BusyBarModeTests
             await Task.Delay(350);
             Assert.InRange(clients.DisplayRequests.Count(m => m == HttpMethod.Post) - posts, 0, 1);
             Assert.Equal(8, clients.AssetRequests.Count); // Animation frames never trigger uploads.
+            if (failedHeartbeat)
+            {
+                Interlocked.Exchange(ref clients.FailNextDisplay, 1);
+                var beforeFailure = clients.DisplayRequests.Count;
+                await Eventually(() => clients.DisplayRequests.Count >= beforeFailure + 2);
+                Assert.Equal(8, clients.AssetRequests.Count); // A failed heartbeat must not re-upload assets.
+            }
             Assert.Equal(GamePhase.Idle, control.Phase);
             Assert.Equal(BusyBarSelector.Apps, service.Statuses[bar.Id].Selector);
             source.Messages.Writer.TryWrite(Selector(1));
@@ -90,14 +98,22 @@ public sealed class BusyBarModeTests
             Assert.Equal(8, clients.AssetRequests.Count); // Re-enter APPS using the preloaded files.
             if (remoteEnabled)
             {
+                var beforeStart = clients.DisplayRequests.Count;
                 source.Messages.Writer.TryWrite([0x12, 6, 0x5a, 4, 0x0a, 2, 8, 2]);
                 await Eventually(() => control.Phase == GamePhase.PreCountdown);
+                await Eventually(() => clients.DisplayRequests.Count > beforeStart);
+                Assert.NotEmpty(clients.NumberTexts.Last());
+                var beforeStop = clients.DisplayRequests.Count;
+                await control.StopGameAsync();
+                await Eventually(() => clients.DisplayRequests.Count > beforeStop);
+                Assert.Equal("", clients.NumberTexts.Last()); // PRECOUNT is blanked in the same draw.
             }
             source.Messages.Writer.Complete();
             await Eventually(() => service.Statuses[bar.Id].Selector == BusyBarSelector.Unknown);
             var disconnected = clients.DisplayRequests.Count;
             await Task.Delay(200);
             Assert.Equal(disconnected, clients.DisplayRequests.Count);
+            Assert.DoesNotContain(HttpMethod.Delete, clients.DisplayRequests); // No gap exposing the clock.
         }
         finally { await service.StopAsync(CancellationToken.None); }
     }
@@ -121,9 +137,11 @@ public sealed class BusyBarModeTests
     {
         public ConcurrentQueue<HttpMethod> DisplayRequests { get; } = new();
         public ConcurrentQueue<string> AssetRequests { get; } = new();
-        public HttpClient CreateClient(string name) => new(new Handler(DisplayRequests, AssetRequests));
+        public ConcurrentQueue<string> NumberTexts { get; } = new();
+        public int FailNextDisplay;
+        public HttpClient CreateClient(string name) => new(new Handler(this));
     }
-    private sealed class Handler(ConcurrentQueue<HttpMethod> displayRequests, ConcurrentQueue<string> assetRequests) : HttpMessageHandler
+    private sealed class Handler(Clients owner) : HttpMessageHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
@@ -133,7 +151,7 @@ public sealed class BusyBarModeTests
                 var bytes = await request.Content!.ReadAsByteArrayAsync(token);
                 Assert.Equal("application/octet-stream", request.Content.Headers.ContentType!.MediaType);
                 Assert.Equal("bicycle0", System.Text.Encoding.ASCII.GetString(bytes[..8]));
-                assetRequests.Enqueue(request.RequestUri.Query);
+                owner.AssetRequests.Enqueue(request.RequestUri.Query);
             }
             else if (!version)
             {
@@ -141,11 +159,17 @@ public sealed class BusyBarModeTests
                 {
                     using var json = System.Text.Json.JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
                     var elements = json.RootElement.GetProperty("elements");
-                    Assert.InRange(elements.GetArrayLength(), 1, 2);
+                    Assert.Equal(2, elements.GetArrayLength());
                     Assert.Equal("animation", elements[0].GetProperty("type").GetString());
-                    Assert.Contains(assetRequests, q => q.EndsWith(elements[0].GetProperty("path").GetString()!, StringComparison.Ordinal));
+                    Assert.Contains(owner.AssetRequests, q => q.EndsWith(elements[0].GetProperty("path").GetString()!, StringComparison.Ordinal));
+                    var finiteFlash = !elements[0].GetProperty("loop").GetBoolean();
+                    if (!finiteFlash) Assert.Equal(15, elements[0].GetProperty("timeout").GetInt32());
+                    Assert.Equal("number", elements[1].GetProperty("id").GetString());
+                    owner.NumberTexts.Enqueue(elements[1].GetProperty("text").GetString()!);
                 }
-                displayRequests.Enqueue(request.Method);
+                owner.DisplayRequests.Enqueue(request.Method);
+                if (request.Method == HttpMethod.Post && Interlocked.Exchange(ref owner.FailNextDisplay, 0) == 1)
+                    return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
             }
             return new HttpResponseMessage(HttpStatusCode.OK)
             { Content = new StringContent(version ? """{"api_semver":"27.5.0"}""" : "{}", System.Text.Encoding.UTF8, "application/json") };

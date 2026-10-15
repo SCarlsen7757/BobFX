@@ -10,6 +10,7 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
     CountdownService countdown, IHttpClientFactory clients, IConfiguration configuration, TimeProvider clock, ControllerCredentials credentials,
     IBusyBarStatusSource? statusSource = null) : BackgroundService
 {
+    internal const int DisplayLeaseSeconds = 15;
     private readonly ConcurrentDictionary<string, BusyBarStatus> statuses = new();
     private readonly IBusyBarStatusSource source = statusSource ?? new BusyBarStatusSource();
     public IReadOnlyDictionary<string, BusyBarStatus> Statuses => new Dictionary<string, BusyBarStatus>(statuses);
@@ -101,6 +102,7 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
         var uploaded = new HashSet<string>();
         string? previousNumber = null;
         long? lastSent = null;
+        var failures = 0;
         using var uploadClient = clients.CreateClient("busybar-assets");
         uploadClient.Timeout = TimeSpan.FromSeconds(30);
         if (client.DefaultRequestHeaders.TryGetValues("X-API-Token", out var password))
@@ -145,22 +147,25 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                 var scene = control.GetSceneFrame();
                 var screen = BusyBarAnimations.Screen(scene.Phase, scene.Elapsed, scene.Preparation, timing);
                 var number = DisplayNumber(bar.ShowTimer, scene.Phase, scene.Elapsed, scene.Preparation, countdown.Remaining);
-                // Refresh a short lease once a second. await_previous_end preserves native
+                // Refresh with enough lease headroom for transient Wi-Fi delays. await_previous_end preserves native
                 // playback while renewing ownership; no pixel frames are sent here.
                 if (screen != previous || number != previousNumber || lastSent is null ||
                     (screen != BusyBarScreen.Flash && clock.GetElapsedTime(lastSent.Value).TotalSeconds >= 1))
                 {
                     var sent = await mode.InAppsAsync(async () =>
                     {
-                        if (screen != previous)
-                        {
-                            using var clear = await client.DeleteAsync(origin + "/display/draw?application_name=BobFX", token);
-                            clear.EnsureSuccessStatusCode();
-                        }
+                        // Keep the scene alive while replacing its source. Clearing all
+                        // elements first closes the firmware canvas and exposes its clock.
                         using var response = await client.PostAsJsonAsync(origin + "/display/draw", NativeDisplay(assets[screen].Name, screen, number, timing.FlashSeconds), token);
                         response.EnsureSuccessStatusCode();
                     }, token);
-                    if (sent) { previous = screen; previousNumber = number; lastSent = clock.GetTimestamp(); }
+                    if (sent)
+                    {
+                        previous = screen; previousNumber = number; lastSent = clock.GetTimestamp();
+                        failures = 0;
+                        if (statuses.TryGetValue(bar.Id, out var status) && status.State == "Display update failed; retrying")
+                            statuses.TryUpdate(bar.Id, status with { State = "APPS mode; BobFX output enabled" }, status);
+                    }
                     else { previous = null; lastSent = null; }
                 }
                 await cadence.WaitForNextTickAsync(token);
@@ -168,10 +173,14 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
             catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
             catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
             {
-                previous = null; lastSent = null;
-                uploaded.Clear(); // A reboot may have lost app assets; repair them before retrying.
+                lastSent = null;
+                // A missing/invalid asset may follow a reboot. Network timeouts and 5xx
+                // responses do not justify re-uploading every file or dropping the scene.
+                if (ex is HttpRequestException { StatusCode: System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.NotFound })
+                    uploaded.Clear();
                 statuses[bar.Id] = statuses.GetValueOrDefault(bar.Id, new("Disconnected")) with { State = "Display update failed; retrying" };
-                try { await Task.Delay(TimeSpan.FromSeconds(5), clock, token); }
+                var retryMilliseconds = 250 * (1 << Math.Min(failures++, 3));
+                try { await Task.Delay(TimeSpan.FromMilliseconds(retryMilliseconds), clock, token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
             }
         }
@@ -245,12 +254,13 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                 // A finite flash plays exactly once. Queuing it at each heartbeat would
                 // restart it at the end and could produce a fourth red flash.
                 await_previous_end = screen != BusyBarScreen.Flash,
-                timeout = screen == BusyBarScreen.Flash ? (int)Math.Ceiling(flashSeconds) + 1 : 3, z_index = 0 }
+                timeout = screen == BusyBarScreen.Flash ? (int)Math.Ceiling(flashSeconds) + 1 : DisplayLeaseSeconds, z_index = 0 }
         };
-        if (number is not null)
-            elements.Add(new { id = screen == BusyBarScreen.Running ? "timer" : "preparation-count", type = "text",
+        // Reuse the same text element across phases, explicitly blanking it when
+        // hidden. No old number needs an intervening clear or timeout to disappear.
+        elements.Add(new { id = "number", type = "text",
                 display = "front", x = 36, y = 11, align = "center", width = 68,
-                text = number, font = "tiny", color = "#FFFFFFFF", timeout = 3, z_index = 1 });
+                text = number ?? "", font = "tiny", color = "#FFFFFFFF", timeout = DisplayLeaseSeconds, z_index = 1 });
         return new { application_name = "BobFX", priority = 50, elements };
     }
 }
