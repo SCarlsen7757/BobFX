@@ -1,4 +1,5 @@
-# Optional overlay: add one secret mapping per configured BUSY Bar.
+# Legacy optional overlay. Normal setup enters device passwords on the BobFX web page.
+# Existing deployments can still add one secret mapping per configured BUSY Bar.
 # docker compose --env-file .env -f compose.prod.yaml -f compose.busybar.yaml up -d
 services:
   bobfx:

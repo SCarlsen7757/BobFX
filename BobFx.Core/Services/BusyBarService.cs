@@ -9,12 +9,25 @@ namespace BobFx.Core.Services;
 public sealed record BusyBarStatus(string State, string? ApiVersion = null, bool InputSupported = false);
 
 public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSoundControlService control,
-    CountdownService countdown, IHttpClientFactory clients, IConfiguration configuration, TimeProvider clock) : BackgroundService
+    CountdownService countdown, IHttpClientFactory clients, IConfiguration configuration, TimeProvider clock, ControllerCredentials credentials) : BackgroundService
 {
     private readonly ConcurrentDictionary<string, BusyBarStatus> statuses = new();
     public IReadOnlyDictionary<string, BusyBarStatus> Statuses => new Dictionary<string, BusyBarStatus>(statuses);
+    public async Task<string> TestConnectionAsync(BusyBarSettings bar, string? password = null, CancellationToken token = default)
+    {
+        InstallationSettingsStore.Validate(new InstallationSettings { Controllers = [bar] });
+        var secret = string.IsNullOrEmpty(password) ? LoadSecret(bar) : password;
+        ControllerCredentials.ValidatePassword(secret);
+        using var client = clients.CreateClient("busybar");
+        client.DefaultRequestHeaders.Add("X-API-Token", secret);
+        var version = await client.GetFromJsonAsync<JsonElement>($"http://{bar.Address}:{bar.Port}/api/version", token);
+        if (!version.TryGetProperty("api_semver", out var value) || string.IsNullOrWhiteSpace(value.GetString()))
+            throw new InvalidDataException("Device did not return a BUSY Bar API version.");
+        return value.GetString()!;
+    }
     private string LoadSecret(BusyBarSettings bar)
     {
+        if (credentials.HasPassword(bar.Id)) return credentials.Read(bar.Id);
         var root = configuration["BusyBar:SecretsPath"] ?? "/run/secrets";
         var value = File.ReadAllText(Path.Combine(root, bar.SecretName)).Trim();
         if (value.Length is < 1 or > 256 || value.Contains('\r') || value.Contains('\n')) throw new InvalidDataException("Invalid secret.");
@@ -22,14 +35,14 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
     }
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var workers = new Dictionary<string, (BusyBarSettings Settings, CancellationTokenSource Stop, Task Task)>();
+        var workers = new Dictionary<string, (BusyBarSettings Settings, long Revision, CancellationTokenSource Stop, Task Task)>();
         try
         {
             while (!stoppingToken.IsCancellationRequested)
             {
                 var enabled = settings.Read().Controllers.Where(c => c.Enabled).ToDictionary(c => c.Id);
                 foreach (var (id, worker) in workers.ToArray())
-                    if (!enabled.TryGetValue(id, out var updated) || updated != worker.Settings)
+                    if (!enabled.TryGetValue(id, out var updated) || updated != worker.Settings || worker.Revision != credentials.Revision(id))
                     {
                         await worker.Stop.CancelAsync(); await worker.Task; worker.Stop.Dispose(); workers.Remove(id); statuses.TryRemove(id, out _);
                     }
@@ -37,7 +50,7 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                     if (!workers.ContainsKey(id))
                     {
                         var stop = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                        workers[id] = (bar, stop, RunAsync(bar, stop.Token));
+                        workers[id] = (bar, credentials.Revision(id), stop, RunAsync(bar, stop.Token));
                     }
                 await Task.Delay(TimeSpan.FromSeconds(1), clock, stoppingToken);
             }
@@ -73,7 +86,7 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
             catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
             {
                 // Never expose exception URLs or authentication headers to logs/UI.
-                statuses[bar.Id] = new("Connection failed; check address, API access and Docker secret");
+                statuses[bar.Id] = new("Connection failed; check address, API access and saved device password");
                 try { await Task.Delay(TimeSpan.FromSeconds(5), clock, token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
             }

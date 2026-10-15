@@ -75,7 +75,7 @@ Configuration uses normal ASP.NET Core precedence: appsettings, environment-spec
 | Environment key | Default / constraint |
 | --- | --- |
 | `Settings__DataPath` | Executable directory `/data`; production Compose sets `/app/data` |
-| `BusyBar__SecretsPath` | `/run/secrets`; controller settings store secret filenames only |
+| `BusyBar__SecretsPath` | Optional legacy Docker-secret fallback; normally enter the password on the Remote controllers page |
 | `WLed__Discovery__UpdateIntervalSeconds` | 60; 5–3600 seconds |
 | `Countdown__PreDurationSeconds` | 5; 0–60 seconds |
 | `Countdown__DurationSeconds` | 600; 1–86400 seconds |

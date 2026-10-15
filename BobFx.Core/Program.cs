@@ -8,6 +8,7 @@ builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole(options => options.SingleLine = true);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<InstallationSettingsStore>();
+builder.Services.AddSingleton<ControllerCredentials>();
 builder.Services.AddOptions<WLedOptions>().BindConfiguration("WLed")
     .Validate(options => options.IsValid(), "WLED requires 1–490 LEDs, IPv4 target, valid port, 10–500ms UDP interval and 5–3600s discovery interval.").ValidateOnStart();
 builder.Services.AddOptions<CountdownOptions>().BindConfiguration("Countdown")

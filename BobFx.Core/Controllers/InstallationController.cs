@@ -7,7 +7,7 @@ namespace BobFx.Core.Controllers;
 [ApiController]
 [Route("api/installation")]
 public sealed class InstallationController(InstallationSettingsStore settings, RgbAndSoundControlService control,
-    InstallationOutputService output, WLedRegistryService registry) : ControllerBase
+    InstallationOutputService output, WLedRegistryService registry, ControllerCredentials credentials) : ControllerBase
 {
     [HttpGet]
     public InstallationSettings Get() => settings.Snapshot;
@@ -20,6 +20,15 @@ public sealed class InstallationController(InstallationSettingsStore settings, R
     public Task<IActionResult> Locate(string mac, CancellationToken token) => Execute(() => output.LocateAsync(mac, token));
     [HttpPost("idle-sync/apply")]
     public Task<IActionResult> Sync(CancellationToken token) => Execute(() => control.ConfigureAsync(() => output.ApplyIdleSyncAsync(token)));
+    [HttpGet("controllers/{id}/password")]
+    public IActionResult PasswordStatus(string id) => settings.Snapshot.Controllers.Any(c => c.Id == id)
+        ? Ok(new { hasPassword = credentials.HasPassword(id) }) : NotFound();
+    [HttpPut("controllers/{id}/password")]
+    public Task<IActionResult> SetPassword(string id, ControllerPasswordRequest request, CancellationToken token) => Execute(() => control.ConfigureAsync(async () =>
+    {
+        if (!settings.Snapshot.Controllers.Any(c => c.Id == id)) throw new ArgumentException("Save the controller before setting its password.");
+        await credentials.SetAsync(id, request.Password, token);
+    }));
     private async Task<IActionResult> Execute(Func<Task> action)
     {
         try { await action(); return Ok(); }
@@ -32,3 +41,4 @@ public sealed class InstallationController(InstallationSettingsStore settings, R
     }
 }
 public sealed record ManualDeviceRequest(string Address, int Port = 80);
+public sealed record ControllerPasswordRequest(string Password);

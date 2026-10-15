@@ -3,44 +3,49 @@
 @inject InstallationSettingsStore Store
 @inject RgbAndSoundControlService Control
 @inject BusyBarService BusyBars
+@inject ControllerCredentials Credentials
 @implements IAsyncDisposable
 
 <PageTitle>Remote controllers</PageTitle>
 <h1>Remote controllers</h1>
-<p>BUSY Bars use local Wi-Fi API access. Mount each password as a Docker secret; enter its filename here, never the password.</p>
+<p>Enter your BUSY Bar's local Wi-Fi API password here. BobFX saves it privately with its application data; no Docker secret or manually created file is needed.</p>
 <p>Color animations are the default. Showing the timer reveals the remaining game time. Remote input uses START to start and BACK to stop; API 27.x input support is checked at connection.</p>
 <p role="status">@message</p>
 @foreach (var bar in controllers)
 {
     <div>
-        <button @onclick="() => Edit(bar)">@bar.Name · @bar.Address · @(bar.Enabled ? "Enabled" : "Disabled")</button>
-        <button @onclick="() => Remove(bar.Id)">Remove</button>
+        <button disabled="@(saving || testing)" @onclick="() => Edit(bar)">@bar.Name · @bar.Address · @(bar.Enabled ? "Enabled" : "Disabled")</button>
+        <button disabled="@(saving || testing)" @onclick="() => Remove(bar.Id)">Remove</button>
         @if (BusyBars.Statuses.TryGetValue(bar.Id, out var status)) { <span>@status.State · API @status.ApiVersion</span> }
     </div>
 }
-<button @onclick="New">Add BUSY Bar</button>
+<button disabled="@(saving || testing)" @onclick="New">Add BUSY Bar</button>
 @if (id is not null)
 {
-    <fieldset><legend>BUSY Bar settings</legend>
+    <fieldset disabled="@(saving || testing)"><legend>BUSY Bar settings</legend>
         <label for="controller-name">Name</label><input id="controller-name" @bind="name" />
         <label for="controller-address">Private IPv4 address</label><input id="controller-address" @bind="address" />
         <label for="controller-port">HTTP port</label><input id="controller-port" type="number" min="1" max="65535" @bind="port" />
-        <label for="controller-secret">Docker secret filename</label><input id="controller-secret" @bind="secretName" />
+        <label for="controller-password">Device API password</label><input id="controller-password" type="password" autocomplete="new-password" maxlength="256" @bind="password" />
+        <p>@(pendingPasswords.ContainsKey(id) ? "Password ready to save." : Credentials.HasPassword(id) ? "Password saved. Leave blank to keep it, or enter a replacement." : "Enter the password configured on the BUSY Bar. Existing Docker secret configurations remain supported.")</p>
         <label><input type="checkbox" @bind="enabled" /> Enable integration</label>
         <label><input type="checkbox" @bind="showTimer" /> Show remaining game timer</label>
         <label><input type="checkbox" @bind="remoteEnabled" /> Enable START/BACK game controls</label>
         <button @onclick="() => Apply()">Apply controller settings</button>
+        <button disabled="@testing" @onclick="TestConnection">@(testing ? "Testing…" : "Test connection")</button>
     </fieldset>
 }
-<button @onclick="Save">Save controllers</button>
-<button @onclick="Reload">Reload saved controllers</button>
+<button disabled="@(saving || testing)" @onclick="Save">Save controllers</button>
+<button disabled="@(saving || testing)" @onclick="Reload">Reload saved controllers</button>
 
 @code {
     private List<BusyBarSettings> controllers = [];
     private string? id, message;
     private string name = "", address = "", secretName = "busybar_token";
+    private string password = "";
+    private readonly Dictionary<string, string> pendingPasswords = new();
     private int port = 80;
-    private bool enabled, showTimer, remoteEnabled;
+    private bool enabled, showTimer, remoteEnabled, testing, saving;
     private readonly CancellationTokenSource lifetime = new();
     private Task? refresh;
     protected override void OnInitialized() { Reload(); refresh = RefreshAsync(); }
@@ -51,24 +56,60 @@
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
     }
     public async ValueTask DisposeAsync()
-    { await lifetime.CancelAsync(); if (refresh is not null) await refresh; lifetime.Dispose(); }
-    private void Reload() { controllers = Store.Snapshot.Controllers; id = null; }
+    { password = ""; pendingPasswords.Clear(); await lifetime.CancelAsync(); if (refresh is not null) await refresh; lifetime.Dispose(); }
+    private void Reload() { controllers = Store.Snapshot.Controllers; id = null; password = ""; pendingPasswords.Clear(); }
     private void New() => Edit(new BusyBarSettings());
     private void Edit(BusyBarSettings bar)
-    { id = bar.Id; name = bar.Name; address = bar.Address; port = bar.Port; secretName = bar.SecretName; enabled = bar.Enabled; showTimer = bar.ShowTimer; remoteEnabled = bar.RemoteEnabled; }
-    private void Remove(string controllerId) { controllers.RemoveAll(c => c.Id == controllerId); if (id == controllerId) id = null; }
+    { id = bar.Id; name = bar.Name; address = bar.Address; port = bar.Port; secretName = bar.SecretName; enabled = bar.Enabled; showTimer = bar.ShowTimer; remoteEnabled = bar.RemoteEnabled; password = ""; }
+    private void Remove(string controllerId) { controllers.RemoveAll(c => c.Id == controllerId); pendingPasswords.Remove(controllerId); if (id == controllerId) { id = null; password = ""; } }
     private bool Apply()
     {
         if (id is null) return true;
         var bar = new BusyBarSettings { Id = id, Name = name, Address = address, Port = port, SecretName = secretName, Enabled = enabled, ShowTimer = showTimer, RemoteEnabled = remoteEnabled };
         var updated = controllers.Where(c => c.Id != id).Append(bar).ToList();
-        try { InstallationSettingsStore.Validate(Store.Snapshot with { Controllers = updated }); controllers = updated; message = "Controller settings applied. Save to keep them."; return true; }
+        try
+        {
+            InstallationSettingsStore.Validate(Store.Snapshot with { Controllers = updated });
+            if (password.Length > 0) { ControllerCredentials.ValidatePassword(password); pendingPasswords[id] = password; password = ""; }
+            controllers = updated; message = "Controller settings applied. Save to keep them."; return true;
+        }
         catch (ArgumentException ex) { message = ex.Message; return false; }
     }
     private async Task Save()
     {
         if (!Apply()) return;
-        try { await Control.ConfigureAsync(() => Store.UpdateAsync(s => s with { Controllers = controllers })); message = "Controllers saved. Enabled devices will connect automatically."; }
+        var savedControllers = controllers.ToList();
+        var savedPasswords = pendingPasswords.ToArray();
+        saving = true;
+        try
+        {
+            await Control.ConfigureAsync(async () =>
+            {
+                await Store.UpdateAsync(s => s with { Controllers = savedControllers });
+                foreach (var (controllerId, value) in savedPasswords)
+                {
+                    await Credentials.SetAsync(controllerId, value);
+                    pendingPasswords.Remove(controllerId);
+                }
+            });
+            message = "Controllers saved. Enabled devices will connect automatically.";
+        }
         catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { message = ex.Message; }
+        finally { saving = false; }
+    }
+    private async Task TestConnection()
+    {
+        if (!Apply() || id is null) return;
+        var bar = controllers.First(c => c.Id == id);
+        pendingPasswords.TryGetValue(id, out var value);
+        testing = true;
+        try
+        {
+            var version = await BusyBars.TestConnectionAsync(bar, value, lifetime.Token);
+            if (!lifetime.IsCancellationRequested) message = $"Connection successful. BUSY Bar API {version}. Save controllers to keep your settings.";
+        }
+        catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
+        { if (!lifetime.IsCancellationRequested) message = "Connection failed. Check the address, local API access and device password."; }
+        finally { testing = false; }
     }
 }

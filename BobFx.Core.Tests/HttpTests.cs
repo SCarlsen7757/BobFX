@@ -16,6 +16,26 @@ namespace BobFx.Core.Tests;
 
 public sealed class HttpTests
 {
+    [Fact]
+    public async Task ControllerPasswordCanBeWrittenOverLocalHttpButNeverReadBack()
+    {
+        await using var app = new TestApp();
+        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        var settings = new InstallationSettings { Controllers = [new BusyBarSettings { Id = "remote", Address = "192.168.1.30" }] };
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", settings)).StatusCode);
+        var password = Guid.NewGuid().ToString("N");
+        var endpoint = "/api/installation/controllers/remote/password";
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync(endpoint, new { password })).StatusCode);
+        Assert.Equal("{\"hasPassword\":true}", await client.GetStringAsync(endpoint));
+        Assert.DoesNotContain(password, await client.GetStringAsync("/api/installation"));
+        Assert.DoesNotContain(password, await client.GetStringAsync("/controllers"));
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync(endpoint, new { password = "bad\r\nheader" })).StatusCode);
+        using var foreign = new HttpRequestMessage(HttpMethod.Put, endpoint) { Content = JsonContent.Create(new { password = "replacement" }) };
+        foreign.Headers.Add("Origin", "http://foreign.example");
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(foreign)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start-with-pre", new { preDurationSeconds = 30, durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PutAsJsonAsync(endpoint, new { password = "replacement" })).StatusCode);
+    }
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

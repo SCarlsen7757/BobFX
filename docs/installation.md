@@ -26,15 +26,13 @@ WLED native sync does not automatically relay incoming realtime pixels. BobFX re
 
 ## BUSY Bar
 
-Enable local Wi-Fi HTTP API access in the device's USB web interface and set its API password. Save that password in a file outside the repository. Use the optional overlay:
+Enable local Wi-Fi HTTP API access on the BUSY Bar and set its local device password. Open **Remote controllers** in BobFX, add the device's private address and HTTP port, and enter that password in **Device API password**. Use **Test connection** to verify it without enabling display control, then **Save controllers**. No cloud API token, manually created password file, or Docker overlay is needed.
 
-```sh
-export BUSYBAR_TOKEN_FILE=/absolute/path/to/busybar-password.txt
-docker compose --env-file .env -f compose.prod.yaml -f compose.busybar.yaml config --quiet
-docker compose --env-file .env -f compose.prod.yaml -f compose.busybar.yaml up -d
-```
+This also works when running BobFX directly with `dotnet run --project BobFx.Core --launch-profile http`. Browse to the normal local HTTP address and configure the controller through the same page. Native execution saves application data beside the executable unless `Settings__DataPath` is set. In Docker, the existing `/app/data` volume handles persistence automatically.
 
-Open **Remote controllers** and add the device's private address, HTTP port, and mounted secret filename (`busybar_token` for the supplied overlay). Each controller has independent enable, timer-display and remote-control switches. Add additional Docker secret definitions/mappings for additional bars; there is no single-controller limit. The secret name is persisted, never its contents. Linux secret files must be readable by container UID 1654; use suitable host file permissions and protect the deployment directory.
+The password field is write-only: saved passwords are never filled back into the page or included in installation-settings exports. Leave it blank to keep the current password; enter a new password to replace it. Enabled integrations reconnect when credentials change. Passwords are protected using ASP.NET Data Protection in the application's `credentials` directory, with its key ring stored alongside them. On Linux these directories are restricted to the service user. Back up and protect the entire data directory: the key ring is required to decrypt saved passwords and is not protected from someone with access to the whole volume. Existing Docker secret deployments remain supported as a fallback; a password saved from the web page takes precedence.
+
+Each controller has independent enable, timer-display and remote-control switches; multiple bars are supported. Local HTTP testing is supported without HTTPS enforcement. As with other BobFX controls, use the trusted LAN: HTTP does not encrypt the password in transit.
 
 Colors are the default: the RGB front display mirrors scanner/preparation, green GO, playing waves, and red ending flash/dot phases. Timer mode displays the remaining game time while running, including minute counts above 59. Neither mode displays time of day. The rear monochrome screen is left to the device. Display elements expire after two seconds without updates.
 
@@ -48,7 +46,7 @@ Production/development Compose mounts a named `bobfx-data` volume at `/app/data`
 
 `settings.json` uses schema version 1. Saves write and flush a temporary file then atomically replace the previous file; rejected settings leave the saved file unchanged. Corrupt/unsupported files fail startup clearly, so restore a compatible backup rather than silently losing configuration. Snapshot copies prevent callers from changing live settings without a save.
 
-Back up through `GET /api/installation` or copy `/app/data/settings.json` out of the container. Restore through `PUT /api/installation` while output is idle, which validates before saving. Back up before upgrades; rollback requires a settings backup supported by the older application. BUSY Bar password files must be backed up separately.
+Back up configuration through `GET /api/installation` or copy `/app/data/settings.json` out of the container. Restore through `PUT /api/installation` while output is idle, which validates before saving. Configuration exports exclude passwords. To preserve saved credentials too, back up the entire data directory including `credentials` and its `keys` subdirectory; otherwise re-enter passwords through the web page after restoring. Back up before upgrades; rollback requires a settings backup supported by the older application.
 
 Backend operations, subject to existing host/CIDR/origin restrictions:
 
@@ -59,6 +57,8 @@ Backend operations, subject to existing host/CIDR/origin restrictions:
 | Locate a registered device | `POST /api/installation/devices/{mac}/locate` |
 | Apply saved native idle sync | `POST /api/installation/idle-sync/apply` |
 | Output/controller diagnostics | `GET /api/installation/status`, `GET /api/installation/controllers/status` |
+| Save/replace a controller password | `PUT /api/installation/controllers/{id}/password` with `{ "password": "your-device-password" }` |
+| Check whether a password is saved | `GET /api/installation/controllers/{id}/password` returns only `hasPassword` |
 
 Settings contain `version`, `devices`, ordered `boards`, `idleSync`, `animation` and `controllers`. GET returns the complete shape for editing/import/export. Each board's `edges` array is top/right/bottom/left before rotation. Device entries include MAC, name, address, HTTP port, reported LED count/UDP port and selected flag. JSON keys use camel case. Save conflicts return 409; invalid settings return 400; unreachable manual devices return 502. Saving via the API and applying native idle configuration are separate operations.
 
