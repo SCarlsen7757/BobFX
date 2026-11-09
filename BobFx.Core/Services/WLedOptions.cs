@@ -16,5 +16,5 @@ public sealed class WLedOptions
         public int TargetPort { get; set; } = 21324;
         public int UpdateIntervalMs { get; set; } = 16;
     }
-    public sealed class DiscoveryOptions { public int UpdateIntervalSeconds { get; set; } = 60; }
+    public sealed class DiscoveryOptions { public int UpdateIntervalSeconds { get; set; } = 30; }
 }

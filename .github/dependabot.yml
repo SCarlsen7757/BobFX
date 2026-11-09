@@ -1,6 +1,15 @@
 version: 2
 updates:
   - package-ecosystem: npm
+    directory: /frontend
+    labels: [chore, dependencies, web]
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
     directory: /e2e
     labels: [chore, dependencies, web]
     # Match the Node 24 runtime used by CI; newer major types can expose unavailable APIs.
@@ -24,6 +33,10 @@ updates:
     open-pull-requests-limit: 5
   - package-ecosystem: github-actions
     directory: /
+    groups:
+      # init and analyze must run the same version, so they update together.
+      codeql-action:
+        patterns: ["github/codeql-action/*"]
     labels: [chore, dependencies, infra]
     schedule:
       interval: weekly

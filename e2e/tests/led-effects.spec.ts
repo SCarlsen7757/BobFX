@@ -3,7 +3,7 @@ import { test, expect } from './fixtures';
 
 async function openEffects(page: Page) {
   await page.goto('/drgb');
-  // Prerendered HTML is visible before the Blazor event handlers connect.
+  // Wait for the application-level session and live preview subscription.
   await expect(page.getByRole('button', { name: 'Enable audio', exact: true })).toBeEnabled();
   await expect(page.locator('.led-pixel')).toHaveCount(30);
 }
@@ -34,12 +34,11 @@ test('navigation during a WLED scan keeps the circuit usable', async ({ page }) 
   await page.goto('/wled');
   await expect(page.getByRole('button', { name: 'Enable audio', exact: true })).toBeEnabled();
   for (let visit = 0; visit < 3; visit++) {
-    // The startup discovery worker may hold the shared scan gate; retry until this page owns a scan.
-    await expect.poll(async () => {
-      const scan = page.getByRole('button', { name: 'Scan', exact: true });
-      if (await scan.count()) await scan.click();
-      return page.getByRole('button', { name: 'Scanning…', exact: true }).count();
-    }, { timeout: 10000 }).toBe(1);
+    const scan = page.getByRole('button', { name: 'Scan', exact: true });
+    await scan.click();
+    // A scan without devices can finish before this assertion; either state shows the scan ran.
+    await expect(page.locator('.device-toolbar [role="status"]')).toHaveText(/^(Scanning…|Scan complete\.)$/);
+    await expect(scan).toBeEnabled();
     await page.getByRole('link', { name: 'Game', exact: true }).click();
     await expect(page.getByRole('button', { name: /Start Countdown/ })).toBeEnabled();
     await page.getByRole('link', { name: 'WLED devices', exact: true }).click();
@@ -91,7 +90,7 @@ test('every registered effect can render its controls and start and stop', async
       await expectOutput(request, effect.type, true);
       await page.getByRole('button', { name: 'Stop', exact: true }).click();
       await expectOutput(request, 'Off', false);
-      await expect(page.locator('#blazor-error-ui')).toBeHidden();
+      await expect(page.getByTestId('connection-status')).toBeHidden();
     });
   }
 });
@@ -110,15 +109,16 @@ test('invalid effect input shows feedback and preserves the active output', asyn
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
-test('manual controls respect game ownership and recover after keyboard pre-countdown Stop', async ({ page, request }) => {
+test('manual controls respect game ownership and recover after keyboard pre-countdown Stop', async ({ page, request, expectedApiErrors }) => {
   await openEffects(page);
   expect((await request.post('/api/countdown/start-with-pre')).ok()).toBeTruthy();
+  expectedApiErrors.add('409 /api/drgb/start');
   await page.getByRole('button', { name: 'Start', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('game owns the lights');
   await page.getByRole('link', { name: 'Game', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Stop pre-countdown' })).toBeVisible();
   page.once('dialog', dialog => dialog.accept());
-  // Exercise keyboard operation; the pre-countdown container has a perpetual pulse animation.
+  // Exercise keyboard operation as well as the touch controls covered by the game tests.
   await page.getByRole('button', { name: 'Stop pre-countdown' }).press('Enter');
   await expect(page.getByRole('button', { name: /Start Countdown/ })).toBeVisible();
   await page.getByRole('link', { name: 'LED effects', exact: true }).click();

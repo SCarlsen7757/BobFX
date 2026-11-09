@@ -1,4 +1,4 @@
-using BobFx.Core.Components;
+using BobFx.Core.Hubs;
 using BobFx.Core.Services;
 using BobFx.Core.Services.Effects;
 using Microsoft.Extensions.Options;
@@ -7,6 +7,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole(options => options.SingleLine = true);
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<InstallationSettingsStore>();
+builder.Services.AddSingleton<ControllerCredentials>();
 builder.Services.AddOptions<WLedOptions>().BindConfiguration("WLed")
     .Validate(options => options.IsValid(), "WLED requires 1–490 LEDs, IPv4 target, valid port, 10–500ms UDP interval and 5–3600s discovery interval.").ValidateOnStart();
 builder.Services.AddOptions<CountdownOptions>().BindConfiguration("Countdown")
@@ -17,18 +19,29 @@ builder.Services.AddSingleton<IRgbEffectFactory, RgbEffectFactory>();
 builder.Services.AddSingleton<CountdownService>();
 builder.Services.AddSingleton<DRgbService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DRgbService>());
-builder.Services.AddSingleton<UdpClientService>();
 builder.Services.AddSingleton<SoundService>();
 builder.Services.AddSingleton<RgbAndSoundControlService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RgbAndSoundControlService>());
-builder.Services.AddSingleton<WLedBroadcastService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<WLedBroadcastService>());
+builder.Services.AddSingleton<InstallationOutputService>();
+builder.Services.AddSingleton<IWLedFrameTransport, WLedFrameTransport>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<InstallationOutputService>());
 builder.Services.AddSingleton<WLedDiscoveryService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<WLedDiscoveryService>());
-builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<UiStateService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<UiStateService>());
+builder.Services.AddProblemDetails();
 builder.Services.AddControllers();
-builder.Services.AddHttpClient("wled", client => client.Timeout = TimeSpan.FromSeconds(2))
+builder.Services.AddHttpClient("wled", client => { client.Timeout = TimeSpan.FromSeconds(2); client.MaxResponseContentBufferSize = 64 * 1024; })
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false });
+builder.Services.AddSingleton<WLedRegistryService>();
+builder.Services.AddHttpClient("busybar", client => { client.Timeout = TimeSpan.FromSeconds(2); client.MaxResponseContentBufferSize = 64 * 1024; })
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false });
+builder.Services.AddHttpClient("busybar-assets", client => { client.Timeout = TimeSpan.FromSeconds(30); client.MaxResponseContentBufferSize = 64 * 1024; })
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false });
+builder.Services.AddSingleton<BusyBarService>();
+builder.Services.AddSingleton<IBusyBarStatusSource, BusyBarStatusSource>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<BusyBarService>());
 
 var app = builder.Build();
 if (!app.Environment.IsDevelopment())
@@ -38,7 +51,7 @@ if (!app.Environment.IsDevelopment())
         throw new InvalidOperationException("Production requires explicit AllowedHosts; wildcard hosts are forbidden.");
 }
 
-if (!app.Environment.IsDevelopment()) app.UseExceptionHandler("/Error", createScopeForErrors: true);
+if (!app.Environment.IsDevelopment()) app.UseExceptionHandler();
 app.Use(async (context, next) =>
 {
     if (!app.Environment.IsDevelopment() &&
@@ -55,19 +68,34 @@ app.Use(async (context, next) =>
     context.Response.Headers["X-Frame-Options"] = "DENY";
     await next();
 });
-app.UseAntiforgery();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = context =>
+    {
+        if (context.File.Name.Contains('-') && context.Context.Request.Path.StartsWithSegments("/ui/assets"))
+            context.Context.Response.Headers.CacheControl = "public,max-age=31536000,immutable";
+    }
+});
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
-app.MapGet("/health/ready", (RgbAndSoundControlService control, DRgbService rgb, WLedBroadcastService broadcast) =>
-    control.IsReady && rgb.IsReady && rgb.LastError is null && (!rgb.IsUdpActive || broadcast.LastError is null) ? Results.Ok(new { status = "ready" }) : Results.StatusCode(StatusCodes.Status503ServiceUnavailable));
-app.MapGet("/health/status", (RgbAndSoundControlService control, DRgbService rgb, WLedBroadcastService broadcast, WLedDiscoveryService discovery) => Results.Ok(new
+app.MapGet("/health/ready", (RgbAndSoundControlService control, DRgbService rgb, InstallationOutputService output) =>
+    control.IsReady && rgb.IsReady && output.IsReady && rgb.LastError is null && output.LastError is null ? Results.Ok(new { status = "ready" }) : Results.StatusCode(StatusCodes.Status503ServiceUnavailable));
+app.MapGet("/health/status", (RgbAndSoundControlService control, DRgbService rgb, InstallationOutputService output, WLedDiscoveryService discovery) => Results.Ok(new
 {
     phase = control.Phase.ToString(),
     renderer = new { ready = rgb.IsReady, error = rgb.LastError },
-    udp = new { active = rgb.IsUdpActive, lastSendUtc = broadcast.LastSendUtc, error = broadcast.LastError },
+    udp = new { active = rgb.IsUdpActive, lastSendUtc = output.LastSendUtc, error = output.LastError, devices = output.Errors },
     discovery = new { lastScanUtc = discovery.LastScanUtc, error = discovery.LastError, devices = discovery.Devices.Count }
 }));
-app.MapStaticAssets();
+app.MapGet("/api/installation/status", (InstallationOutputService output) => Results.Ok(new { output.LastSendUtc, output.Errors }));
+app.MapGet("/api/installation/controllers/status", (BusyBarService busy) => Results.Ok(busy.Statuses));
 app.MapControllers();
-app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
+app.MapHub<UiHub>("/hubs/ui");
+foreach (var route in new[] { "/", "/game/fullscreen", "/countdown", "/drgb", "/wled", "/layout", "/controllers" })
+    app.MapGet(route, async (HttpContext context) =>
+    {
+        context.Response.Headers.CacheControl = "no-cache";
+        context.Response.ContentType = "text/html; charset=utf-8";
+        await context.Response.SendFileAsync(Path.Combine(app.Environment.WebRootPath, "ui", "index.html"));
+    });
 app.Run();
 public partial class Program;
