@@ -3,12 +3,13 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
+using System.Threading.Channels;
 using Zeroconf;
 namespace BobFx.Core.Services;
 
 public record WLedDevice(IPAddress Address, int Port, string Name, string HostName, string Mac, string Version, DateTime LastSeen, bool IsOnline, Models.WLED.Info? Info);
 
-public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, IOptions<WLedOptions> options, IHttpClientFactory httpFactory, IWLedDiscoverySource? source = null) : BackgroundService
+public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, IOptions<WLedOptions> options, IHttpClientFactory httpFactory, IWLedDiscoverySource? source = null, InstallationSettingsStore? settings = null) : BackgroundService
 {
     private string? lastError;
     private long lastScanUtcTicks;
@@ -19,6 +20,10 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
     private readonly Lock mutation = new();
     private long generation;
     private readonly SemaphoreSlim scanGate = new(1, 1);
+    private int scanning;
+    public bool IsScanning => Volatile.Read(ref scanning) != 0;
+    private readonly Channel<bool> requestedScans = Channel.CreateBounded<bool>(1);
+    public void RequestScan() { if (!IsScanning) requestedScans.Writer.TryWrite(true); }
     private readonly TimeSpan interval = TimeSpan.FromSeconds(options.Value.Discovery.UpdateIntervalSeconds);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private const int MaxDevices = 256;
@@ -26,6 +31,18 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
     public event Action<IReadOnlyList<WLedDevice>>? DevicesUpdated;
     public IReadOnlyList<WLedDevice> Devices => devices.Values.OrderBy(d => d.Name).ThenBy(d => d.Address.ToString()).ToArray();
     public void Clear() { lock (mutation) { generation++; devices.Clear(); } Notify(); }
+    public bool RemoveOffline(string mac)
+    {
+        lock (mutation)
+        {
+            if (!devices.TryGetValue(mac, out var device)) return false;
+            if (device.IsOnline) throw new InvalidOperationException("Only offline devices can be removed.");
+            generation++;
+            devices.TryRemove(mac, out _);
+        }
+        Notify();
+        return true;
+    }
     public void Remove(IPAddress address)
     {
         lock (mutation)
@@ -38,6 +55,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
     public async Task ScanAsync(CancellationToken cancellationToken = default)
     {
         if (!await scanGate.WaitAsync(0, cancellationToken)) return;
+        Volatile.Write(ref scanning, 1);
         var scanGeneration = Volatile.Read(ref generation);
         Volatile.Write(ref lastScanUtcTicks, DateTimeOffset.UtcNow.UtcTicks);
         try
@@ -45,7 +63,14 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
             IReadOnlyList<WLedAdvertisement> hosts;
             try { hosts = await discoverySource.ResolveAsync(cancellationToken); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception) { Volatile.Write(ref lastError, "mDNS resolution failed"); AgeDevices(scanGeneration); Notify(); throw; }
+            catch (Exception)
+            {
+                Volatile.Write(ref lastError, "mDNS resolution failed");
+                if (settings is null || settings.Read().Devices.Count == 0) { AgeDevices(scanGeneration); Notify(); throw; }
+                hosts = [];
+            }
+            if (settings is not null)
+                hosts = hosts.Concat(settings.Snapshot.Devices.Select(d => new WLedAdvertisement(d.Address, d.HttpPort, d.Name))).DistinctBy(h => (h.Address, h.Port)).ToArray();
             using var http = httpFactory.CreateClient("wled");
             await Parallel.ForEachAsync(hosts.Take(MaxDevices), new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
                 async (host, token) =>
@@ -83,12 +108,26 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                     { logger.LogDebug(ex, "WLED enrichment failed for {Address}", address); }
                 });
             AgeDevices(scanGeneration);
+            if (settings is not null)
+            {
+                var online = Devices.Where(d => d.IsOnline && d.Info?.Leds?.Count is > 0 and <= 65535 && d.Info.Udpport is > 0 and <= 65535).ToDictionary(d => d.Mac);
+                DeviceSettings Refresh(DeviceSettings saved, InstallationSettings s)
+                {
+                    if (!online.TryGetValue(saved.Mac, out var found)) return saved;
+                    var count = found.Info!.Leds.Count;
+                    if (s.Boards.Any(b => b.DeviceMac == saved.Mac && b.Edges.Any(e => (long)e.Start + e.Count > count))) count = saved.LedCount;
+                    return saved with { Address = found.Address.ToString(), HttpPort = found.Port, LedCount = count, UdpPort = found.Info.Udpport };
+                }
+                var snapshot = settings.Read();
+                if (snapshot.Devices.Any(d => Refresh(d, snapshot) != d))
+                    await settings.UpdateAsync(s => s with { Devices = s.Devices.Select(d => Refresh(d, s)).ToList() }, cancellationToken);
+            }
             Volatile.Write(ref lastError, null);
             Notify();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex) { Volatile.Write(ref lastError, "WLED discovery scan failed"); logger.LogWarning(ex, "WLED discovery failed"); throw; }
-        finally { scanGate.Release(); }
+        finally { Volatile.Write(ref scanning, 0); scanGate.Release(); }
     }
     private void AgeDevices(long scanGeneration)
     {
@@ -140,8 +179,15 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
         try
         {
             await TryScanAsync(stoppingToken);
-            using var timer = new PeriodicTimer(interval);
-            while (await timer.WaitForNextTickAsync(stoppingToken)) await TryScanAsync(stoppingToken);
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                using var wait = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                wait.CancelAfter(interval);
+                try { await requestedScans.Reader.ReadAsync(wait.Token); }
+                catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) { }
+                stoppingToken.ThrowIfCancellationRequested();
+                await TryScanAsync(stoppingToken);
+            }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { /* Host shutdown cancels discovery and its interval timer. */ }
     }

@@ -1,26 +1,32 @@
 # BobFX
 
-BobFX provides light and sound effects for **Bob**, a board game related to Carrom. A shared game countdown drives RGB effects on multiple WLED devices. The application uses ASP.NET Core / Blazor Server on .NET 10 LTS; browsers control one shared game, and the server broadcasts WLED realtime RGB frames over UDP.
+BobFX provides light and sound effects for **Bob**, a board game related to Carrom. A shared game countdown drives RGB effects on selected WLED devices, with persistent board mappings and optional BUSY Bar display/start/stop integration. The application uses ASP.NET Core on .NET 10 LTS with a Vue/TypeScript frontend and a SignalR realtime connection; browsers control one shared game, and the server sends WLED realtime RGB frames over UDP to selected devices.
 
-When realtime output stops, WLED's realtime lease expires and the devices resume their configured idle playlist. This release preserves that behavior; a new idle experience is separate work.
+When realtime output stops, WLED's realtime lease expires and the devices resume their configured idle playlist. Board layout also supports native WLED idle synchronization and configurable game scenes.
 
 ## Run locally
 
-Install the exact .NET SDK selected by [global.json](global.json), then run. SDK roll-forward is disabled to keep implicit Blazor dependencies consistent with the package locks and the Docker build. Update the SDK, Docker SDK image, and affected package locks together. Browser audio unit tests additionally use Node.js 22 or later, without npm dependencies:
+Install Node.js 24 and the exact .NET SDK selected by [global.json](global.json), then run. SDK roll-forward is disabled. Update the SDK, Docker SDK image, and affected package locks together. The .NET build installs locked frontend dependencies and builds the Vue assets automatically:
 
 ```sh
 dotnet restore BobFx.slnx --locked-mode
 dotnet build BobFx.slnx --configuration Release --no-restore
 dotnet test BobFx.slnx --configuration Release --no-build
-node --test BobFx.Core.Tests/BrowserAudio.test.mjs
+npm --prefix frontend test
 dotnet run --project BobFx.Core --launch-profile http
 ```
 
-Open http://localhost:5159. Game state exists in memory; restarting resets it. No database or frontend npm build is required. Navigation and WLED discovery are available in production. Manual effect controls are rejected while a game is active or ending; stop the game first.
+Open http://localhost:5159. Running game state exists in memory; restarting resets it. Device registrations, board layouts, animation settings and controller credentials persist in the configured data directory. No database is required. Node is needed for builds, but the production runtime remains .NET only. Navigation and WLED discovery are available in production. Manual effect controls are rejected while a game is active or ending; stop the game first.
+
+The neon-sunset Game page is sized for portrait and landscape tablets, with large Start/Stop controls. Select **Full screen** to open `/game/fullscreen` without the navigation bar; **Exit full screen** restores navigation. Supported browsers also enter native fullscreen after the tap. The dedicated URL works without native fullscreen support and can be bookmarked or reloaded. Changing views preserves the shared game and the browser's audio opt-in; reloading still resets audio. Remaining game time stays hidden during play.
+
+Configure selected WLED devices, board mappings, idle sync and BUSY Bar controllers through the web interface. See [installation and controller setup](docs/installation.md).
+
+For frontend hot reload, run the backend on port 5159 and `npm --prefix frontend run dev`, then open the Vite URL. The animated background respects system reduced-motion settings. See [frontend architecture](docs/frontend-architecture.md) for API, realtime, and build details.
 
 ## Browser regression tests
 
-Playwright tests in [e2e](e2e) drive the real Blazor Server UI using TypeScript and Chromium. They exercise every registered LED effect, Strobe's two color controls, invalid input, game ownership, keyboard pre-countdown Stop, navigation, and full reload. Tests fail on browser console errors, JavaScript exceptions, or a visible **Connection interrupted** banner. Focused .NET tests also simulate disconnected JavaScript interop during audio cleanup.
+Playwright tests in [e2e](e2e) drive the published Vue frontend using TypeScript and Chromium, with additional game and installation tests in iPad WebKit emulation. They exercise every registered LED effect, Strobe's two color controls, invalid input, game ownership, keyboard pre-countdown Stop, navigation, and full reload. Game tests cover portrait/landscape tablet sizing, fullscreen entry/exit, audio continuity, and browsers without native fullscreen. Tests check realtime synchronization across screens, offline recovery, system reduced motion, and WebGL fallback. Unexpected HTTP errors, JavaScript errors, and a lingering connection banner fail the tests. Installation tests cover board mapping/order/rotation, overlap validation, controller password preservation, configuration ownership and the Game page during Locate. Frontend unit tests cover audio cleanup and state revision ordering.
 
 From the repository root, restore .NET packages, then install and run the browser tests:
 
@@ -28,13 +34,13 @@ From the repository root, restore .NET packages, then install and run the browse
 dotnet restore BobFx.slnx --locked-mode
 cd e2e
 npm ci
-npx playwright install chromium
+npx playwright install chromium webkit
 npm test
 ```
 
-`npm test` publishes and starts a dedicated Production app on `http://127.0.0.1:5187`, waits for readiness, runs the tests sequentially against the shared game state, then stops the app. Keep that port free. UDP output targets loopback, so these tests do not send lighting commands to LAN devices. Discovery still runs, but no test requires a physical device. These tests use actual Blazor/SignalR event handling rather than mocked HTTP responses.
+`npm test` publishes and starts a dedicated Production app on `http://127.0.0.1:5187`, waits for readiness, runs the tests sequentially against the shared game state, then stops the app. Keep that port free. The suite uses a disposable settings directory and private-address fixture devices (192.168.1.20/21); Locate sends UDP to its fixture address. Discovery still runs, but no test requires a physical device. These tests use actual HTTP commands and SignalR updates rather than mocked HTTP responses.
 
-Use `npm run test:ui` for the interactive test runner, `npm run test:headed` to watch Chromium, and `npm run report` to inspect the HTML report. Failed tests retain screenshots, video, browser console output, and Playwright traces under `e2e/test-results`. CI installs Chromium with its Linux dependencies and uploads reports/traces; browser failures block the release quality gate. Physical WLED output and network discovery still need hardware testing.
+Use `npm run test:ui` for the interactive test runner, `npm run test:headed` to watch Chromium, and `npm run report` to inspect the HTML report. Failed tests retain screenshots, video, browser console output, and Playwright traces under `e2e/test-results`. CI installs Chromium and WebKit with their Linux dependencies and uploads reports/traces; browser failures block the release quality gate. Real WLED and BUSY Bar hardware results and remaining physical acceptance checks are recorded in [installation documentation](docs/installation.md#deployment-acceptance).
 
 ## Development in Docker
 
@@ -46,10 +52,10 @@ This development file publishes HTTP on loopback only. The Visual Studio overrid
 
 ## Production on a Linux LAN host
 
-Use a Linux Docker Engine host on the **same LAN/subnet as the WLED devices**. Production uses host networking for UDP broadcast and mDNS and binds HTTP to an explicitly selected host address. Enable WLED realtime UDP reception on port 21324, configure LED counts, and configure the playlist each device should resume when realtime ends.
+Use a Linux Docker Engine host on the **same LAN/subnet as the WLED devices**. Production uses host networking for WLED UDP output and mDNS and binds HTTP to an explicitly selected host address. Enable WLED realtime UDP reception on port 21324, configure LED counts, and configure the playlist each device should resume when realtime ends.
 
 1. Copy `.env.example` to `.env`.
-2. Set `BOBFX_IMAGE_DIGEST` to the full `sha256:...` digest from a published GitHub release. Replace the sample host IP, trusted client CIDR, hostnames, and subnet broadcast address.
+2. Set `BOBFX_IMAGE_DIGEST` to the full `sha256:...` digest from a published GitHub release. Replace the sample host IP, trusted client CIDR, hostnames, and trusted network settings.
 3. Validate and launch the **standalone** production file:
 
 ```sh
@@ -62,7 +68,7 @@ docker compose --env-file .env -f compose.prod.yaml logs --tail 100 bobfx
 
 Open `http://<BOBFX_BIND_ADDRESS>:5159` from an allowed operator device. Required variables have no permissive defaults. The trusted CIDR must include the bind address so the container's HTTP health probe is allowed; the example assumes operators and server share one trusted subnet. For finer controls, configure additional indexed `Security__AllowedClientNetworks__N` entries in Compose.
 
-The service runs as UID 1654, drops Linux capabilities, denies privilege escalation, uses a read-only filesystem with bounded temporary storage, limits CPU/memory/processes, and rotates logs. No application state is persisted. Temporary ASP.NET Data Protection keys change on recreation, so reload open browser tabs after an upgrade.
+The service runs as UID 1654, drops Linux capabilities, denies privilege escalation, uses a read-only filesystem with bounded temporary storage, limits CPU/memory/processes, and rotates logs. Installation settings and protected controller credentials persist in the `bobfx-data` volume; running games do not. Back up this volume before upgrades. Controller credential keys are persisted in the data volume; include them in backups.
 
 This is a **trusted-LAN deployment**, without per-user login. Anyone in an allowed client network can control the shared game. WLED UDP and device HTTP traffic are unauthenticated and unencrypted. Keep WLED and BobFX off the public internet; firewall HTTP 5159 to operator clients. Network access needs outbound UDP 21324 to devices, multicast mDNS UDP 5353, and outbound HTTP to discovered WLED devices. Wi-Fi client isolation or VLAN boundaries can block discovery and output. Host networking has no Docker port mapping.
 
@@ -75,28 +81,29 @@ Configuration uses normal ASP.NET Core precedence: appsettings, environment-spec
 | Environment key | Default / constraint |
 | --- | --- |
 | `WLed__Led__LedCount` | 30; 1–490 LEDs per realtime frame |
-| `WLed__Udp__TargetAddress` | 255.255.255.255; IPv4 broadcast or unicast address |
-| `WLed__Udp__TargetPort` | 21324; 1–65535 |
-| `WLed__Udp__UpdateIntervalMs` | 16; 10–500 ms |
-| `WLed__Discovery__UpdateIntervalSeconds` | 60; 5–3600 seconds |
+| `WLed__Udp__TargetAddress` | Legacy transport/test setting; production sends to selected registered devices |
+| `WLed__Udp__TargetPort` | Legacy transport/test setting; registered devices use their reported UDP port |
+| `WLed__Udp__UpdateIntervalMs` | Legacy transport/test setting; installation frame rate is configured in Board layout |
+| `WLed__Discovery__UpdateIntervalSeconds` | 30; 5–3600 seconds |
 | `Countdown__PreDurationSeconds` | 5; 0–60 seconds |
 | `Countdown__DurationSeconds` | 600; 1–86400 seconds |
 | `Countdown__DeviationSeconds` | 120; nonnegative and below duration |
 | `AllowedHosts` | Explicit semicolon-separated names/IPs required in Production |
 | `Security__AllowedClientNetworks__0` | Explicit trusted CIDR required in Production |
 | `ASPNETCORE_URLS` | Production Compose sets the required LAN bind address |
+| `Settings__DataPath` | Persistent installation/credential directory; Compose uses `/app/data` |
 | `Logging__LogLevel__Default` | Information |
 
-The production `.env` file exposes short deployment names such as `WLED_LED_COUNT`, then Compose maps them to the hierarchical application keys above. Outside Compose, use the hierarchical keys directly.
+Production Compose configures the bind address, allowed clients and persistent data path. WLED devices, LED counts, board mappings, idle sync and controllers are configured through the web interface. Outside Compose, use hierarchical application keys directly.
 
 Breaking migration changes:
 
 - Upgrade developer/runtime tooling from .NET 9 to .NET 10 and restore from checked-in package locks.
 - Replace legacy flat application configuration (`WLED_*`, `PRE_COUNTDOWN_*`, `COUNTDOWN_*`) with the table's hierarchical keys. The former Compose `*_TIME_SECONDS` keys never matched application `*_DURATION_SECONDS` keys.
 - Replace the ignored `CountdownConfiguration` JSON section with `Countdown`.
-- Replace implicit production/development Compose merging with explicit `-f compose.prod.yaml`. Production requires an image digest, bind address, allowed hosts, trusted CIDR, and broadcast address.
+- Replace implicit production/development Compose merging with explicit `-f compose.prod.yaml`. Production requires an image digest, bind address, allowed hosts, trusted CIDR, and persistent data volume.
 - Effect start/speed endpoints now require JSON bodies instead of query parameters. Game start endpoints accept an optional JSON body; omitted settings use configured defaults. Invalid input returns Problem Details with HTTP 400; output ownership conflicts return HTTP 409. Browser calls must use the application's own origin; trusted CLI callers can omit Origin. No wildcard/public production configuration is supported.
-- Browser audio defaults muted. Each browser must select **Enable audio**; **Mute audio** disables only that browser. Reloading a tab resets this opt-in. Enabled clients hear the existing game-over sound; playback errors appear beside the control.
+- Browser audio defaults muted. Tap the speaker icon in the header to enable audio; tap it again to mute that browser. Reloading a tab resets this opt-in. Enabled clients hear the existing game-over sound; playback errors appear below the icon.
 
 Example commands from a trusted LAN client, while no game owns the output:
 
@@ -118,10 +125,10 @@ Replace `bobfx.local` with a configured allowed hostname or the host LAN IP.
 
 - **403 / rejected control:** check the client's actual source address against the trusted CIDRs, hostnames against `AllowedHosts`, and use the application's own origin.
 - **No WLED devices:** check UDP 5353 multicast, same-LAN connectivity, Wi-Fi client isolation, and device HTTP reachability.
-- **Discovery works but LEDs do not:** verify realtime UDP is enabled, port 21324, broadcast address, LED count, and active game/effect status. Discovery and realtime output are independent.
-- **One output goes black in realtime mode:** configure BobFX's LED count for the device's entire address space, including all physical outputs. For example, two 30-LED outputs starting at indices 0 and 30 require `WLed__Led__LedCount=60`. A 24/30-pixel frame only reaches the first output; WLED clears the remaining pixels when realtime starts. For diagnosis, use the device's IP as the UDP target and start a Solid effect with a non-black color. Check WLED's Peek preview to see which pixel indices receive colors before investigating wiring.
+- **Discovery works but LEDs do not:** verify realtime UDP is enabled, the device is selected in BobFX, its reported UDP port and LED count are correct, and its board mapping is valid. Discovery and realtime output are independent.
+- **One output goes black in realtime mode:** verify every physical WLED output has the correct start/count in WLED, scan again to refresh its reported LED count, and map all four edges in Board layout. Use Locate and WLED Peek to check which indices receive frames.
 - **Unhealthy:** inspect logs and `docker inspect` health output. Confirm the bind IP exists on the host, is permitted by the CIDR, and has an allowed Host header.
-- **No sound:** select **Enable audio** in that browser and check mute/autoplay restrictions. Reenable after a visible playback error to retry.
+- **No sound:** tap the speaker icon in that browser and check mute/autoplay restrictions. Reenable after a visible playback error to retry.
 - **Restore changes unexpectedly:** use `--locked-mode`; deliberate dependency updates must regenerate and commit locks.
 
 ## Quality, releases, and issue tracking

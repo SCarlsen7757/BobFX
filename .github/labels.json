@@ -82,7 +82,7 @@
   {
     "name": "web",
     "color": "1d76db",
-    "description": "Blazor UI, forms, styles, and browser interactions"
+    "description": "Frontend UI, forms, styles, and browser interactions"
   },
   {
     "name": "wontfix",

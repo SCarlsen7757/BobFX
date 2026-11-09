@@ -1,4 +1,11 @@
 # syntax=docker/dockerfile:1
+FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS frontend
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
 FROM mcr.microsoft.com/dotnet/sdk:10.0.401-noble@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317 AS build
 ARG BUILD_CONFIGURATION=Release
 ARG VERSION=0.0.0-local
@@ -8,12 +15,14 @@ COPY BobFx.Core/BobFx.Core.csproj BobFx.Core/
 COPY BobFx.Core/packages.lock.json BobFx.Core/
 RUN dotnet restore BobFx.Core/BobFx.Core.csproj --locked-mode
 COPY BobFx.Core/ BobFx.Core/
-RUN dotnet publish BobFx.Core/BobFx.Core.csproj --no-restore -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false /p:Version=$VERSION
+COPY --from=frontend /BobFx.Core/wwwroot/ui/ BobFx.Core/wwwroot/ui/
+RUN dotnet publish BobFx.Core/BobFx.Core.csproj --no-restore -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false /p:Version=$VERSION /p:SkipFrontendBuild=true
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble@sha256:222759b391a1aaf241166672c8f99b2d4ada452e7b5319f3c6e8f265a37b5ad4 AS base
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+RUN mkdir -p /app/data && chown $APP_UID:$APP_UID /app/data
 ENV ASPNETCORE_HTTP_PORTS=8080 BOBFX_HEALTH_URL=http://127.0.0.1:8080/health/ready
 EXPOSE 8080
 USER $APP_UID

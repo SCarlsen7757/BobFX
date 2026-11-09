@@ -24,27 +24,29 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            e2e/package-lock.json
       - name: Restore locked dependencies
         run: dotnet restore BobFx.slnx --locked-mode
       - name: Build with analyzers
         run: dotnet build BobFx.slnx --configuration Release --no-restore --warnaserror
       - name: Test
         run: dotnet test BobFx.slnx --configuration Release --no-build --logger trx
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: e2e/package-lock.json
       - name: Install browser test dependencies
         working-directory: e2e
         run: npm ci
       - name: Typecheck browser tests
         working-directory: e2e
         run: npm run typecheck
-      - name: Install Chromium
+      - name: Install Chromium and WebKit
         working-directory: e2e
-        run: npx playwright install --with-deps chromium
-      - name: Test published Blazor app in Chromium
+        run: npx playwright install --with-deps chromium webkit
+      - name: Test published Vue app in Chromium and iPad WebKit
         working-directory: e2e
         run: npm test
       - name: Upload browser test report and failure traces
@@ -56,8 +58,9 @@ jobs:
             e2e/playwright-report/
             e2e/test-results/
           retention-days: 14
-      - name: Test browser audio activation and cleanup
-        run: node --test BobFx.Core.Tests/BrowserAudio.test.mjs
+      - name: Test frontend state ordering and browser audio
+        working-directory: frontend
+        run: npm test
       - name: Test release policy and label categories
         run: |
           python3 -m pip install PyYAML==6.0.3
