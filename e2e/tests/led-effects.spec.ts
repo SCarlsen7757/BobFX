@@ -36,7 +36,8 @@ test('navigation during a WLED scan keeps the circuit usable', async ({ page }) 
   for (let visit = 0; visit < 3; visit++) {
     const scan = page.getByRole('button', { name: 'Scan', exact: true });
     await scan.click();
-    await expect(page.locator('.device-toolbar [role="status"]')).toHaveText('Scanning…');
+    // A scan without devices can finish before this assertion; either state shows the scan ran.
+    await expect(page.locator('.device-toolbar [role="status"]')).toHaveText(/^(Scanning…|Scan complete\.)$/);
     await expect(scan).toBeEnabled();
     await page.getByRole('link', { name: 'Game', exact: true }).click();
     await expect(page.getByRole('button', { name: /Start Countdown/ })).toBeEnabled();
