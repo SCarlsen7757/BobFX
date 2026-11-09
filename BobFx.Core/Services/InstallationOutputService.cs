@@ -69,9 +69,8 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
                     var phase = scene.Phase;
                     var elapsed = scene.Elapsed;
                     var manual = phase == GamePhase.Idle ? rgb.GetSnapshot() : null;
-                    foreach (var saved in snapshot.Devices.Where(d => d.Selected).Where(d => !KnownOffline(d)))
+                    foreach (var d in snapshot.Devices.Where(saved => saved.Selected).Where(saved => !KnownOffline(saved)).Select(Resolve))
                     {
-                        var d = Resolve(saved);
                         try
                         {
                             var board = snapshot.Boards.FirstOrDefault(b => b.DeviceMac == d.Mac);
