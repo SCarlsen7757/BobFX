@@ -127,7 +127,9 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
     }
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
-        await locateStop.CancelAsync();
+        // The host may dispose its services before it stops them; a disposed source was already cancelled.
+        try { await locateStop.CancelAsync(); }
+        catch (ObjectDisposedException) { logger.LogDebug("Locate cancellation source was already disposed"); }
         if (locateTask is { } task)
             try { await task; }
             catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { logger.LogDebug("Locate completed before shutdown with a cancellation or device failure"); }
