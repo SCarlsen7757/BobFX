@@ -18,7 +18,14 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    {
+      name: 'ipad-webkit',
+      testMatch: /(?:game-display|installation)\.spec\.ts/,
+      use: { ...devices['iPad (gen 7)'] },
+    },
+  ],
   webServer: {
     command: 'node run-app.mjs',
     url: `${baseURL}/health/ready`,

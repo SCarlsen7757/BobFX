@@ -16,6 +16,26 @@ namespace BobFx.Core.Tests;
 
 public sealed class HttpTests
 {
+    [Fact]
+    public async Task ControllerPasswordCanBeWrittenOverLocalHttpButNeverReadBack()
+    {
+        await using var app = new TestApp();
+        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        var settings = new InstallationSettings { Controllers = [new BusyBarSettings { Id = "remote", Address = "192.168.1.30" }] };
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", settings)).StatusCode);
+        var password = Guid.NewGuid().ToString("N");
+        var endpoint = "/api/installation/controllers/remote/password";
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync(endpoint, new { password })).StatusCode);
+        Assert.Equal("{\"hasPassword\":true}", await client.GetStringAsync(endpoint));
+        Assert.DoesNotContain(password, await client.GetStringAsync("/api/installation"));
+        Assert.DoesNotContain(password, await client.GetStringAsync("/controllers"));
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync(endpoint, new { password = "bad\r\nheader" })).StatusCode);
+        using var foreign = new HttpRequestMessage(HttpMethod.Put, endpoint) { Content = JsonContent.Create(new { password = "replacement" }) };
+        foreign.Headers.Add("Origin", "http://foreign.example");
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(foreign)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start-with-pre", new { preDurationSeconds = 30, durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PutAsJsonAsync(endpoint, new { password = "replacement" })).StatusCode);
+    }
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -110,14 +130,58 @@ public sealed class HttpTests
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
         var effects = await client.GetFromJsonAsync<JsonElement>("/api/drgb/effects");
         Assert.True(effects.GetArrayLength() >= 10);
-        foreach (var path in new[] { "/", "/countdown", "/drgb", "/wled", "/app.css", "/js/sounds.js", "/js/dialog.js", "/sounds/game_over/game-over-yeah.mp3" })
+        foreach (var path in new[] { "/", "/game/fullscreen", "/countdown", "/drgb", "/wled", "/ui/index.html", "/api/ui/state", "/api/wled/devices", "/sounds/game_over/game-over-yeah.mp3" })
         {
             var response = await client.GetAsync(path);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
         var html = await client.GetStringAsync("/");
-        Assert.DoesNotContain("lib/bootstrap/", html);
-        Assert.Contains("Enable audio", html);
+        Assert.DoesNotContain("blazor", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/ui/assets/", html);
+        Assert.Contains("id=\"app\"", html);
+        foreach (var path in new[] { "/api/missing", "/hubs/missing", "/health/missing", "/ui/assets/missing.js", "/_framework/blazor.web.js" })
+            Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(path)).StatusCode);
+    }
+
+    [Fact]
+    public async Task AdvancedEffectParametersValidateAtomicallyAndReachRenderer()
+    {
+        await using var app = new TestApp();
+        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start",
+            new { effect = "Solid", colors = new[] { "#123456" } })).StatusCode);
+        var pixel = app.Services.GetRequiredService<DRgbService>().GetSnapshot()[0];
+        Assert.Equal(0x12 / 255f, pixel.X); Assert.Equal(0x34 / 255f, pixel.Y); Assert.Equal(0x56 / 255f, pixel.Z);
+        foreach (var invalid in new object[] {
+            new { effect = "Solid", colors = new[] { "#000000" } },
+            new { effect = "Strobe", colors = Array.Empty<string>() },
+            new { effect = "Solid", colors = new[] { "#xxxxxx" } },
+            new { effect = "FadeIn", fadeDurationSeconds = 0 },
+            new { effect = "Breathing", breathDurationSeconds = 61 },
+            new { effect = "Breathing", minBrightnessPercent = 80, maxBrightnessPercent = 20 },
+        })
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/drgb/start", invalid)).StatusCode);
+            Assert.Equal("Solid", (await client.GetFromJsonAsync<JsonElement>("/api/drgb/status")).GetProperty("currentEffect").GetString());
+        }
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", new {
+            effect = "Breathing", colors = new[] { "#ff00ff" }, breathDurationSeconds = 4, minBrightnessPercent = 15, maxBrightnessPercent = 75
+        })).StatusCode);
+    }
+
+    [Fact]
+    public async Task UiSnapshotsHaveStableVersionsAndReflectGameTransitions()
+    {
+        await using var app = new TestApp();
+        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        var first = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state")).GetProperty("game");
+        var same = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state")).GetProperty("game");
+        Assert.Equal(first.GetProperty("revision").GetInt64(), same.GetProperty("revision").GetInt64());
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start-with-pre", new { preDurationSeconds = 30 })).StatusCode);
+        var changed = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state")).GetProperty("game");
+        Assert.Equal(first.GetProperty("serverInstanceId").GetString(), changed.GetProperty("serverInstanceId").GetString());
+        Assert.True(changed.GetProperty("revision").GetInt64() > first.GetProperty("revision").GetInt64());
+        Assert.Equal("PreCountdown", changed.GetProperty("value").GetProperty("phase").GetString());
     }
 
     private sealed class TestApp : WebApplicationFactory<Program>
@@ -130,6 +194,7 @@ public sealed class HttpTests
                 ["AllowedHosts"] = "localhost",
                 ["Security:AllowedClientNetworks:0"] = "127.0.0.0/8",
                 ["WLed:Udp:TargetAddress"] = "127.0.0.1",
+                ["Settings:DataPath"] = Path.Combine(Path.GetTempPath(), "bobfx-http-" + Guid.NewGuid().ToString("N")),
             }));
             builder.ConfigureTestServices(services =>
             {
@@ -137,10 +202,15 @@ public sealed class HttpTests
                 services.RemoveAll<IHostedService>();
                 services.AddHostedService(sp => sp.GetRequiredService<DRgbService>());
                 services.AddHostedService(sp => sp.GetRequiredService<RgbAndSoundControlService>());
+                services.AddSingleton<IWLedFrameTransport, NoDeviceTransport>();
+                services.AddHostedService(sp => sp.GetRequiredService<InstallationOutputService>());
                 services.AddSingleton<IStartupFilter, TestClientAddress>();
             });
         }
     }
+
+    private sealed class NoDeviceTransport : IWLedFrameTransport
+    { public Task SendAsync(DeviceSettings device, byte[] pixels, CancellationToken token) => Task.CompletedTask; }
 
     private sealed class TestClientAddress : IStartupFilter
     {

@@ -5,7 +5,7 @@ public enum GamePhase { Idle, PreCountdown, Running, Ending }
 /// <summary>Serializes game and manual commands and owns streaming transitions.</summary>
 public sealed class RgbAndSoundControlService(
     CountdownService countdown, DRgbService rgb, SoundService sounds, TimeProvider clock,
-    ILogger<RgbAndSoundControlService> logger) : BackgroundService
+    ILogger<RgbAndSoundControlService> logger, InstallationSettingsStore? settings = null) : BackgroundService
 {
     private readonly SemaphoreSlim commands = new(1, 1);
     private int phase;
@@ -13,17 +13,54 @@ public sealed class RgbAndSoundControlService(
     public bool IsReady => Volatile.Read(ref ready) != 0;
     private int shuttingDown;
     private long phaseStarted;
+    private sealed record SceneState(GamePhase Phase, long Started, double Preparation);
+    private SceneState scene = new(GamePhase.Idle, 0, 5);
     private bool switchedToRunning;
+    private int locating;
+    public bool IsLocating => Volatile.Read(ref locating) != 0;
+    public double PhaseElapsedSeconds => clock.GetElapsedTime(phaseStarted).TotalSeconds;
+    public double PreparationSeconds { get; private set; } = 5;
+    public (GamePhase Phase, double Elapsed, double Preparation) GetSceneFrame()
+    {
+        var value = Volatile.Read(ref scene);
+        return (value.Phase, clock.GetElapsedTime(value.Started).TotalSeconds, value.Preparation);
+    }
+    public async Task ConfigureAsync(Func<Task> action)
+    {
+        await commands.WaitAsync();
+        try { EnsureManual(); if (rgb.IsUdpActive) throw new InvalidOperationException("Stop manual output before configuring devices."); await action(); }
+        finally { commands.Release(); }
+    }
+    public async Task LocateAsync(Func<Task> action)
+    {
+        await commands.WaitAsync();
+        try
+        {
+            EnsureManual();
+            if (rgb.IsUdpActive) throw new InvalidOperationException("Stop manual output before locating a board.");
+            Volatile.Write(ref locating, 1);
+        }
+        finally { commands.Release(); }
+        try { await action(); }
+        finally { Volatile.Write(ref locating, 0); }
+    }
     public GamePhase Phase => (GamePhase)Volatile.Read(ref phase);
-    private void SetPhase(GamePhase value) { Volatile.Write(ref phase, (int)value); phaseStarted = clock.GetTimestamp(); }
+    private void SetPhase(GamePhase value)
+    {
+        phaseStarted = clock.GetTimestamp();
+        Volatile.Write(ref scene, new(value, phaseStarted, PreparationSeconds));
+        Volatile.Write(ref phase, (int)value);
+    }
     public async Task StartGameAsync(bool withPreCountdown = true, TimeSpan? preDuration = null, TimeSpan? duration = null, TimeSpan? deviation = null)
     {
         await commands.WaitAsync();
         try
         {
             EnsureAvailable();
+            if (IsLocating) throw new InvalidOperationException("A board is being located.");
             if (Phase is GamePhase.PreCountdown or GamePhase.Running) throw new InvalidOperationException("A game is already active.");
             countdown.Start(withPreCountdown, preDuration, duration, deviation);
+            PreparationSeconds = countdown.IsPreCountdownRunning ? countdown.PreCountdownRemaining.TotalSeconds : 0;
             switchedToRunning = false;
             rgb.IsUdpActive = true;
             if (countdown.IsPreCountdownRunning)
@@ -80,6 +117,7 @@ public sealed class RgbAndSoundControlService(
     private void EnsureManual()
     {
         EnsureAvailable();
+        if (IsLocating) throw new InvalidOperationException("A board is being located.");
         if (Phase != GamePhase.Idle) throw new InvalidOperationException("The game owns the lights until its ending sequence completes.");
     }
     private async Task EnterRunningAsync()
@@ -117,7 +155,7 @@ public sealed class RgbAndSoundControlService(
                         await rgb.StartEffectAsync(b => b.WithEffect(RgbEffect.Twinkle).WithColor("#a2ff00"));
                         switchedToRunning = true;
                     }
-                    else if (Phase == GamePhase.Ending && clock.GetElapsedTime(phaseStarted) >= TimeSpan.FromSeconds(5)) EnterIdle();
+                    else if (Phase == GamePhase.Ending && clock.GetElapsedTime(phaseStarted) >= TimeSpan.FromSeconds(settings is null ? 5 : settings.Read().Animation.FlashSeconds + settings.Read().Animation.DotSeconds)) EnterIdle();
                 }
                 finally { commands.Release(); }
             }

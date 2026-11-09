@@ -5,19 +5,38 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
-    <!-- Docker restores before copying Razor files; include the Blazor assets dependency in both restores. -->
-    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
     <AnalysisLevel>latest</AnalysisLevel>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
     <DockerfileContext>..</DockerfileContext>
     <DockerComposeProjectPath>..\docker-compose.dcproj</DockerComposeProjectPath>
-    <!-- Generate static web assets during build for all configurations -->
-    <GenerateStaticWebAssetsPropsFile>true</GenerateStaticWebAssetsPropsFile>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.23.0" PrivateAssets="all" />
     <PackageReference Include="Zeroconf" Version="3.7.16" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Remove="wwwroot/ui/**/*" />
+    <FrontendSource Include="../frontend/src/**/*;../frontend/public/**/*;../frontend/index.html;../frontend/vite.config.ts;../frontend/tsconfig.json;../frontend/package.json;../frontend/package-lock.json" />
+  </ItemGroup>
+  <Target Name="InstallFrontend" Inputs="../frontend/package-lock.json" Outputs="../frontend/node_modules/.package-lock.json" Condition="'$(SkipFrontendBuild)' != 'true'">
+    <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="../frontend" />
+  </Target>
+  <Target Name="BuildFrontend" BeforeTargets="PrepareForBuild" DependsOnTargets="InstallFrontend" Inputs="@(FrontendSource)" Outputs="wwwroot/ui/index.html" Condition="'$(SkipFrontendBuild)' != 'true'">
+    <Exec Command="npm run build" WorkingDirectory="../frontend" />
+  </Target>
+  <Target Name="PublishFrontend" AfterTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <_FrontendPublishFiles Include="wwwroot/ui/**/*" />
+      <!-- The Web SDK may discover newly generated files during the build. -->
+      <ResolvedFileToPublish Remove="@(_FrontendPublishFiles);@(_FrontendPublishFiles->'%(FullPath)')" />
+      <ResolvedFileToPublish Include="@(_FrontendPublishFiles)">
+        <RelativePath>%(_FrontendPublishFiles.Identity)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 
 </Project>
