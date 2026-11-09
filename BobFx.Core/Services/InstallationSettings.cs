@@ -58,9 +58,9 @@ public sealed class InstallationSettingsStore
     public string DirectoryPath { get; }
     public InstallationSettingsStore(IConfiguration configuration)
     {
-        DirectoryPath = Path.GetFullPath(configuration["Settings:DataPath"] ?? Path.Combine(AppContext.BaseDirectory, "data"));
+        DirectoryPath = Path.GetFullPath(configuration["Settings:DataPath"] ?? Path.Join(AppContext.BaseDirectory, "data"));
         Directory.CreateDirectory(DirectoryPath);
-        var path = Path.Combine(DirectoryPath, "settings.json");
+        var path = Path.Join(DirectoryPath, "settings.json");
         current = File.Exists(path) ? JsonSerializer.Deserialize<InstallationSettings>(File.ReadAllText(path), JsonOptions)
             ?? throw new InvalidDataException("Settings file is empty.") : new();
         Validate(current);
@@ -72,7 +72,7 @@ public sealed class InstallationSettingsStore
     public async Task UpdateAsync(Func<InstallationSettings, InstallationSettings> update, CancellationToken token = default)
     {
         await gate.WaitAsync(token);
-        var temporary = Path.Combine(DirectoryPath, "settings." + Guid.NewGuid().ToString("N") + ".tmp");
+        var temporary = Path.Join(DirectoryPath, "settings." + Guid.NewGuid().ToString("N") + ".tmp");
         try
         {
             var value = Clone(update(Snapshot));
@@ -83,10 +83,17 @@ public sealed class InstallationSettingsStore
                 await stream.FlushAsync(token);
                 stream.Flush(true);
             }
-            File.Move(temporary, Path.Combine(DirectoryPath, "settings.json"), true);
+            File.Move(temporary, Path.Join(DirectoryPath, "settings.json"), true);
             Volatile.Write(ref current, value);
         }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); gate.Release(); }
+        finally
+        {
+            if (File.Exists(temporary))
+            {
+                File.Delete(temporary);
+            }
+            gate.Release();
+        }
     }
     public static void Validate(InstallationSettings value)
     {

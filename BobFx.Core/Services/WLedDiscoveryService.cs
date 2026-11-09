@@ -184,7 +184,8 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                 using var wait = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 wait.CancelAfter(interval);
                 try { await requestedScans.Reader.ReadAsync(wait.Token); }
-                catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) { }
+                catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+                { logger.LogDebug("Discovery interval elapsed; starting the next scan"); }
                 stoppingToken.ThrowIfCancellationRequested();
                 await TryScanAsync(stoppingToken);
             }

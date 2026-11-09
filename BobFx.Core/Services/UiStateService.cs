@@ -136,7 +136,8 @@ public sealed class UiStateService(
                 { logger.LogWarning(ex, "UI update failed; retrying on the next tick"); }
             }
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        { logger.LogDebug("UI state updates stopped because the host is shutting down"); }
         finally { sounds.SoundRequested -= OnSound; }
     }
 }

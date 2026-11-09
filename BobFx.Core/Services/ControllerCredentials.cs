@@ -14,8 +14,8 @@ public sealed class ControllerCredentials
     private readonly ConcurrentDictionary<string, long> revisions = new();
     public ControllerCredentials(InstallationSettingsStore settings)
     {
-        directory = Path.Combine(settings.DirectoryPath, "credentials");
-        var keys = Path.Combine(directory, "keys");
+        directory = Path.Join(settings.DirectoryPath, "credentials");
+        var keys = Path.Join(directory, "keys");
         if (OperatingSystem.IsWindows()) Directory.CreateDirectory(keys);
         else
         {
@@ -24,7 +24,7 @@ public sealed class ControllerCredentials
         }
         provider = DataProtectionProvider.Create(new DirectoryInfo(keys), builder => builder.SetApplicationName("BobFX.ControllerCredentials"));
     }
-    private string PathFor(string id) => Path.Combine(directory, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id))) + ".protected");
+    private string PathFor(string id) => Path.Join(directory, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id))) + ".protected");
     public bool HasPassword(string id) => File.Exists(PathFor(id));
     public long Revision(string id) => revisions.GetValueOrDefault(id);
     public static void ValidatePassword(string password)
@@ -56,6 +56,13 @@ public sealed class ControllerCredentials
             File.Move(temporary, PathFor(id), true);
             revisions.AddOrUpdate(id, 1, (_, revision) => revision + 1);
         }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); gate.Release(); }
+        finally
+        {
+            if (File.Exists(temporary))
+            {
+                File.Delete(temporary);
+            }
+            gate.Release();
+        }
     }
 }

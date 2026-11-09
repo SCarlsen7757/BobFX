@@ -75,7 +75,7 @@ public static class BoardSceneRenderer
                 {
                     var progress = preparationSeconds > 0 ? elapsed / preparationSeconds : 1;
                     var lit = progress < 0.6 ? Math.Abs(x - progress / 0.6 * total) < 0.15
-                        : progress < 0.8 ? edge is 0 or 2 : true;
+                        : !(progress < 0.8) || edge is 0 or 2;
                     if (lit) Set(pixels[p], 0, 0, 1);
                 }
                 else if (phase == GamePhase.Running)

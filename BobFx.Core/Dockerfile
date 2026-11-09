@@ -18,9 +18,9 @@ COPY BobFx.Core/ BobFx.Core/
 COPY --from=frontend /BobFx.Core/wwwroot/ui/ BobFx.Core/wwwroot/ui/
 RUN dotnet publish BobFx.Core/BobFx.Core.csproj --no-restore -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false /p:Version=$VERSION /p:SkipFrontendBuild=true
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble@sha256:222759b391a1aaf241166672c8f99b2d4ada452e7b5319f3c6e8f265a37b5ad4 AS base
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble@sha256:1a48394b6f29d3a32c79d9edecd4abda0ecbe8776d567dbfc4590ed6979c740c AS base
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends --only-upgrade apt libapt-pkg6.0t64 && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 RUN mkdir -p /app/data && chown $APP_UID:$APP_UID /app/data
 ENV ASPNETCORE_HTTP_PORTS=8080 BOBFX_HEALTH_URL=http://127.0.0.1:8080/health/ready

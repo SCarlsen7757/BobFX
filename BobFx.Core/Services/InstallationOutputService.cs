@@ -69,9 +69,8 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
                     var phase = scene.Phase;
                     var elapsed = scene.Elapsed;
                     var manual = phase == GamePhase.Idle ? rgb.GetSnapshot() : null;
-                    foreach (var saved in snapshot.Devices.Where(d => d.Selected))
+                    foreach (var saved in snapshot.Devices.Where(d => d.Selected).Where(d => !KnownOffline(d)))
                     {
-                        if (KnownOffline(saved)) continue;
                         var d = Resolve(saved);
                         try
                         {
@@ -175,7 +174,7 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
             response.EnsureSuccessStatusCode();
             var state = await response.Content.ReadFromJsonAsync<JsonElement>(token);
             if (state.ValueKind != JsonValueKind.Object) throw new JsonException("Invalid WLED state.");
-            foreach (var key in new[] { "on", "bri" }) if (state.TryGetProperty(key, out var value)) idleState[key] = value.Clone();
+            foreach (var key in new[] { "on", "bri" }.Where(k => state.TryGetProperty(k, out _))) idleState[key] = state.GetProperty(key).Clone();
             if (state.TryGetProperty("seg", out var segments) && segments.ValueKind == JsonValueKind.Array)
             {
                 var main = state.TryGetProperty("mainseg", out var id) ? id.GetInt32() : 0;
@@ -183,8 +182,8 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
                 if (segment.ValueKind == JsonValueKind.Object)
                 {
                     var effect = new Dictionary<string, object?>();
-                    foreach (var key in new[] { "fx", "sx", "ix", "pal", "col", "c1", "c2", "c3", "o1", "o2", "o3" })
-                        if (segment.TryGetProperty(key, out var value)) effect[key] = value.Clone();
+                    foreach (var key in new[] { "fx", "sx", "ix", "pal", "col", "c1", "c2", "c3", "o1", "o2", "o3" }.Where(k => segment.TryGetProperty(k, out _)))
+                        effect[key] = segment.GetProperty(key).Clone();
                     idleState["seg"] = effect;
                 }
             }

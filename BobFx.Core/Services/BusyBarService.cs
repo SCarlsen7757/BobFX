@@ -30,7 +30,9 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
     {
         if (credentials.HasPassword(bar.Id)) return credentials.Read(bar.Id);
         var root = configuration["BusyBar:SecretsPath"] ?? "/run/secrets";
-        var value = File.ReadAllText(Path.Combine(root, bar.SecretName)).Trim();
+        // Path.Combine would silently discard the secrets root if SecretName were rooted.
+        if (Path.IsPathRooted(bar.SecretName)) throw new InvalidDataException("Invalid secret.");
+        var value = File.ReadAllText(Path.Join(root, bar.SecretName)).Trim();
         if (value.Length is < 1 or > 256 || value.Contains('\r') || value.Contains('\n')) throw new InvalidDataException("Invalid secret.");
         return value;
     }
@@ -56,7 +58,11 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                 await Task.Delay(TimeSpan.FromSeconds(1), clock, stoppingToken);
             }
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Host shutdown: stop supervising; the finally block below cancels and awaits all workers.
+            return;
+        }
         finally
         {
             foreach (var worker in workers.Values) await worker.Stop.CancelAsync();
