@@ -33,6 +33,10 @@ updates:
     open-pull-requests-limit: 5
   - package-ecosystem: github-actions
     directory: /
+    groups:
+      # init and analyze must run the same version, so they update together.
+      codeql-action:
+        patterns: ["github/codeql-action/*"]
     labels: [chore, dependencies, infra]
     schedule:
       interval: weekly
