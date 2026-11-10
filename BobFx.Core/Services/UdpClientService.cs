@@ -77,7 +77,7 @@ namespace BobFx.Core.Services
                 udpClient?.Close();
                 udpClient?.Dispose();
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
             {
                 logger.LogWarning(ex, "Error disposing UDP client");
             }

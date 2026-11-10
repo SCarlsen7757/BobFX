@@ -63,7 +63,7 @@ namespace BobFx.Core.Services
             {
                 logger.LogInformation("WLED Broadcast Service stopped");
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
             {
                 Volatile.Write(ref lastError, "WLED broadcast loop failed");
                 logger.LogError(ex, "WLED Broadcast Service encountered an error");
@@ -104,7 +104,7 @@ namespace BobFx.Core.Services
                 // Expected during shutdown
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
             {
                 if (Interlocked.Exchange(ref lastError, "UDP send failed") is null)
                     logger.LogWarning(ex, "WLED UDP send failed; retrying once per second");
