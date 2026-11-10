@@ -6,7 +6,7 @@ When realtime output stops, WLED's realtime lease expires and the devices resume
 
 ## Run locally
 
-Install Node.js 24 and the exact .NET SDK selected by [global.json](global.json), then run. SDK roll-forward is disabled. Update the SDK, Docker SDK image, and affected package locks together. The .NET build installs locked frontend dependencies and builds the Vue assets automatically:
+Install Node.js 26 and the exact .NET SDK selected by [global.json](global.json), then run. SDK roll-forward is disabled. Update the SDK, Docker SDK image, and affected package locks together. The .NET build installs locked frontend dependencies and builds the Vue assets automatically:
 
 ```sh
 dotnet restore BobFx.slnx --locked-mode
