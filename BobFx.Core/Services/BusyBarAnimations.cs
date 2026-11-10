@@ -148,7 +148,7 @@ internal static class BusyBarAnimations
         Sky(canvas); Stars(canvas, 0); Mountains(canvas); HorizonLine(canvas, Pink); Grid(canvas, 0); Vignette(canvas);
         Dim(canvas, 0, BusyBarCanvas.Width - 1, 0, BusyBarCanvas.Height - 1, 0.5, 1);
         var number = Math.Max(1, (int)Math.Ceiling(preparation - elapsed - 1e-9)).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var reach = (int)Math.Ceiling(number.Length * 9 * 1.3 / 2) + 3;
+        var reach = (int)Math.Ceiling(number.Length * 9d * 1.3 / 2) + 3;
         Dim(canvas, 36 - reach, 35 + reach, 1, 14, 0.2, 4);
         var phase = Frac(elapsed / 2);
         if (elapsed < preparation * 0.6)
@@ -166,7 +166,7 @@ internal static class BusyBarAnimations
             for (var x = 0; x < BusyBarCanvas.Width; x++)
                 foreach (var (row, direction) in new[] { (0, 1), (15, -1) })
                 {
-                    var pulse = 0.5 + 0.5 * Math.Cos(2 * Math.PI * (x / 12d - direction * 6 * phase));
+                    var pulse = 0.5 + 0.5 * Math.Cos(2 * Math.PI * (x / 12d - direction * 6d * phase));
                     canvas[x, row] = Rgb.Mix(Pink * 0.7, Orange, pulse * pulse);
                 }
         }
@@ -236,7 +236,8 @@ internal static class BusyBarAnimations
             for (var x = 0; x < BusyBarCanvas.Width; x++)
             {
                 // A ring leaving the sun, flattened so it runs along the bar; hot core, cooler as it widens.
-                var distance = Math.Sqrt((x - Centre) * (x - Centre) + (y - Horizon) * (y - Horizon) * 6.25);
+                var dy = (y - Horizon) * 2.5;
+                var distance = Math.Sqrt((x - Centre) * (x - Centre) + dy * dy);
                 var ring = Clamp01(1 - Math.Abs(distance - radius) / 3);
                 canvas.Blend(x, y, Ramp(spread, (0, White), (0.15, SunYellow), (0.5, Orange), (1, Pink)), 0.9 * ring * flare);
                 canvas.Add(x, y, Pink * (0.25 * flare * (y < Horizon ? 1 : 0.4)));

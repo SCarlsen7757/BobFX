@@ -147,7 +147,7 @@ internal static class BusyBarScene
             for (var x = 0; x < Width; x++)
             {
                 // Verticals leave the vanishing point one, three, five... columns apart per row of depth.
-                var cell = (Math.Abs(x - Centre) + 0.5) / (2 * depth) - 0.5;
+                var cell = (Math.Abs(x - Centre) + 0.5) / (2d * depth) - 0.5;
                 var along = 1 - Math.Abs(cell - Math.Round(cell)) * 2 * depth;
                 var coverage = Math.Max(Clamp01(across), 0.7 * Clamp01(along));
                 canvas.Add(x, y, Magenta * (coverage * (0.35 + 0.65 * (depth - 1) / 5)));
