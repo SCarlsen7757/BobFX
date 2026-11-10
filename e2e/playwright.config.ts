@@ -41,7 +41,6 @@ export default defineConfig({
       WLed__Udp__TargetAddress: '127.0.0.1',
       WLed__Led__LedCount: '30',
       WLed__Discovery__UpdateIntervalSeconds: '3600',
-      Countdown__PreDurationSeconds: '30',
       Countdown__DurationSeconds: '60',
       Countdown__DeviationSeconds: '0',
     },

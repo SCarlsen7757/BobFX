@@ -45,10 +45,11 @@ public sealed class BusyBarModeTests
         Assert.Equal(1, sent);
     }
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public async Task ServiceMonitorsSelectorWithoutRemoteControlsAndPausesOnLeaveOrStreamLoss(bool remoteEnabled, bool failedHeartbeat)
+    [InlineData(false, false, "27.14.0")]
+    [InlineData(true, false, "27.14.0")]
+    [InlineData(false, true, "27.14.0")]
+    [InlineData(true, false, "27.5.0")]
+    public async Task ServiceMonitorsSelectorWithoutRemoteControlsAndPausesOnLeaveOrStreamLoss(bool remoteEnabled, bool failedHeartbeat, string api)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         { ["Settings:DataPath"] = Path.Combine(Path.GetTempPath(), "bobfx-mode-" + Guid.NewGuid().ToString("N")) }).Build();
@@ -57,11 +58,11 @@ public sealed class BusyBarModeTests
         var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30", Enabled = true, RemoteEnabled = remoteEnabled };
         await settings.SaveAsync(new() { Controllers = [bar] });
         await credentials.SetAsync(bar.Id, Guid.NewGuid().ToString("N"));
-        var source = new StatusSource(); var clients = new Clients();
+        var source = new StatusSource(); var clients = new Clients { Api = api };
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), TimeProvider.System);
         var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), TimeProvider.System);
         using var control = new RgbAndSoundControlService(countdown, rgb, new SoundService(NullLogger<SoundService>.Instance), TimeProvider.System, NullLogger<RgbAndSoundControlService>.Instance);
-        using var service = new BusyBarService(settings, control, countdown, clients, config, TimeProvider.System, credentials, source);
+        using var service = new BusyBarService(settings, control, clients, config, TimeProvider.System, credentials, source);
         await service.StartAsync(CancellationToken.None);
         try
         {
@@ -73,17 +74,17 @@ public sealed class BusyBarModeTests
             source.Messages.Writer.TryWrite([0x12, 6, 0x5a, 4, 0x0a, 2, 8, 2]);
             source.Messages.Writer.TryWrite(Selector(3));
             await Eventually(() => clients.DisplayRequests.Contains(HttpMethod.Post));
-            Assert.Equal(8, clients.AssetRequests.Count);
+            Assert.Equal(5, clients.AssetRequests.Count);
             var posts = clients.DisplayRequests.Count(m => m == HttpMethod.Post);
             await Task.Delay(350);
             Assert.InRange(clients.DisplayRequests.Count(m => m == HttpMethod.Post) - posts, 0, 1);
-            Assert.Equal(8, clients.AssetRequests.Count); // Animation frames never trigger uploads.
+            Assert.Equal(5, clients.AssetRequests.Count); // Animation frames never trigger uploads.
             if (failedHeartbeat)
             {
                 Interlocked.Exchange(ref clients.FailNextDisplay, 1);
                 var beforeFailure = clients.DisplayRequests.Count;
                 await Eventually(() => clients.DisplayRequests.Count >= beforeFailure + 2);
-                Assert.Equal(8, clients.AssetRequests.Count); // A failed heartbeat must not re-upload assets.
+                Assert.Equal(5, clients.AssetRequests.Count); // A failed heartbeat must not re-upload assets.
             }
             Assert.Equal(GamePhase.Idle, control.Phase);
             Assert.Equal(BusyBarSelector.Apps, service.Statuses[bar.Id].Selector);
@@ -92,21 +93,29 @@ public sealed class BusyBarModeTests
             var paused = clients.DisplayRequests.Count;
             await Task.Delay(200);
             Assert.Equal(paused, clients.DisplayRequests.Count);
-            Assert.Equal(8, clients.AssetRequests.Count);
+            Assert.Equal(5, clients.AssetRequests.Count);
             source.Messages.Writer.TryWrite(Selector(3));
             await Eventually(() => clients.DisplayRequests.Count > paused);
-            Assert.Equal(8, clients.AssetRequests.Count); // Re-enter APPS using the preloaded files.
+            Assert.Equal(5, clients.AssetRequests.Count); // Re-enter APPS using the preloaded files.
             if (remoteEnabled)
             {
                 var beforeStart = clients.DisplayRequests.Count;
                 source.Messages.Writer.TryWrite([0x12, 6, 0x5a, 4, 0x0a, 2, 8, 2]);
                 await Eventually(() => control.Phase == GamePhase.PreCountdown);
                 await Eventually(() => clients.DisplayRequests.Count > beforeStart);
-                Assert.NotEmpty(clients.NumberTexts.Last());
-                var beforeStop = clients.DisplayRequests.Count;
-                await control.StopGameAsync();
-                await Eventually(() => clients.DisplayRequests.Count > beforeStop);
-                Assert.Equal("", clients.NumberTexts.Last()); // PRECOUNT is blanked in the same draw.
+                Assert.Contains("-countdown3-", clients.Paths.Last());
+                // The bar counts down by itself: no command per second while the clip plays.
+                var duringCountdown = clients.DisplayRequests.Count;
+                await Task.Delay(1300);
+                Assert.Equal(duringCountdown, clients.DisplayRequests.Count);
+                // BACK is ignored; pressing the wheel (OK, the protobuf default button) stops the game.
+                source.Messages.Writer.TryWrite([0x12, 6, 0x5a, 4, 0x0a, 2, 8, 1]);
+                await Task.Delay(400);
+                Assert.Equal(GamePhase.PreCountdown, control.Phase);
+                source.Messages.Writer.TryWrite([0x12, 4, 0x5a, 2, 0x0a, 0]);
+                await Eventually(() => control.Phase == GamePhase.Idle);
+                await Eventually(() => clients.DisplayRequests.Count > duringCountdown);
+                Assert.Contains("-idle-", clients.Paths.Last()); // The countdown is replaced in one draw.
             }
             source.Messages.Writer.Complete();
             await Eventually(() => service.Statuses[bar.Id].Selector == BusyBarSelector.Unknown);
@@ -114,6 +123,37 @@ public sealed class BusyBarModeTests
             await Task.Delay(200);
             Assert.Equal(disconnected, clients.DisplayRequests.Count);
             Assert.DoesNotContain(HttpMethod.Delete, clients.DisplayRequests); // No gap exposing the clock.
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+    [Theory]
+    [InlineData("27.9.0")]
+    [InlineData("28.0.0")]
+    public async Task UnreviewedApiVersionsGetNoUploadsDrawsOrInputStream(string api)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["Settings:DataPath"] = Path.Combine(Path.GetTempPath(), "bobfx-mode-" + Guid.NewGuid().ToString("N")) }).Build();
+        var settings = new InstallationSettingsStore(config);
+        var credentials = new ControllerCredentials(settings);
+        var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30", Enabled = true, RemoteEnabled = true };
+        await settings.SaveAsync(new() { Controllers = [bar] });
+        await credentials.SetAsync(bar.Id, Guid.NewGuid().ToString("N"));
+        var source = new StatusSource(); var clients = new Clients { Api = api };
+        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), TimeProvider.System);
+        var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), TimeProvider.System);
+        using var control = new RgbAndSoundControlService(countdown, rgb, new SoundService(NullLogger<SoundService>.Instance), TimeProvider.System, NullLogger<RgbAndSoundControlService>.Instance);
+        using var service = new BusyBarService(settings, control, clients, config, TimeProvider.System, credentials, source);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await Eventually(() => service.Statuses.TryGetValue(bar.Id, out var status) && status.ApiVersion == api);
+            await Task.Delay(150);
+            var paused = service.Statuses[bar.Id];
+            Assert.Contains("output paused", paused.State);
+            Assert.False(paused.InputSupported);
+            Assert.False(source.Connected);
+            Assert.Empty(clients.AssetRequests);
+            Assert.Empty(clients.DisplayRequests);
         }
         finally { await service.StopAsync(CancellationToken.None); }
     }
@@ -137,8 +177,9 @@ public sealed class BusyBarModeTests
     {
         public ConcurrentQueue<HttpMethod> DisplayRequests { get; } = new();
         public ConcurrentQueue<string> AssetRequests { get; } = new();
-        public ConcurrentQueue<string> NumberTexts { get; } = new();
+        public ConcurrentQueue<string> Paths { get; } = new();
         public int FailNextDisplay;
+        public string Api { get; init; } = "27.14.0";
         public HttpClient CreateClient(string name) => new(new Handler(this));
     }
     private sealed class Handler(Clients owner) : HttpMessageHandler
@@ -150,7 +191,7 @@ public sealed class BusyBarModeTests
             {
                 var bytes = await request.Content!.ReadAsByteArrayAsync(token);
                 Assert.Equal("application/octet-stream", request.Content.Headers.ContentType!.MediaType);
-                Assert.Equal("bicycle0", System.Text.Encoding.ASCII.GetString(bytes[..8]));
+                Assert.Equal(owner.Api == "27.5.0" ? "bicycle0" : "bicycle1", System.Text.Encoding.ASCII.GetString(bytes[..8]));
                 owner.AssetRequests.Enqueue(request.RequestUri.Query);
             }
             else if (!version)
@@ -159,20 +200,19 @@ public sealed class BusyBarModeTests
                 {
                     using var json = System.Text.Json.JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
                     var elements = json.RootElement.GetProperty("elements");
-                    Assert.Equal(2, elements.GetArrayLength());
+                    Assert.Equal(1, elements.GetArrayLength());
                     Assert.Equal("animation", elements[0].GetProperty("type").GetString());
                     Assert.Contains(owner.AssetRequests, q => q.EndsWith(elements[0].GetProperty("path").GetString()!, StringComparison.Ordinal));
                     var finiteFlash = !elements[0].GetProperty("loop").GetBoolean();
                     if (!finiteFlash) Assert.Equal(15, elements[0].GetProperty("timeout").GetInt32());
-                    Assert.Equal("number", elements[1].GetProperty("id").GetString());
-                    owner.NumberTexts.Enqueue(elements[1].GetProperty("text").GetString()!);
+                    owner.Paths.Enqueue(elements[0].GetProperty("path").GetString()!);
                 }
                 owner.DisplayRequests.Enqueue(request.Method);
                 if (request.Method == HttpMethod.Post && Interlocked.Exchange(ref owner.FailNextDisplay, 0) == 1)
                     return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
             }
             return new HttpResponseMessage(HttpStatusCode.OK)
-            { Content = new StringContent(version ? """{"api_semver":"27.5.0"}""" : "{}", System.Text.Encoding.UTF8, "application/json") };
+            { Content = new StringContent(version ? $$"""{"api_semver":"{{owner.Api}}"}""" : "{}", System.Text.Encoding.UTF8, "application/json") };
         }
     }
 }

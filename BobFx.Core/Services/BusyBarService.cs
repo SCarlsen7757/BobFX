@@ -7,7 +7,7 @@ namespace BobFx.Core.Services;
 public sealed record BusyBarStatus(string State, string? ApiVersion = null, bool InputSupported = false, BusyBarSelector Selector = BusyBarSelector.Unknown);
 
 public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSoundControlService control,
-    CountdownService countdown, IHttpClientFactory clients, IConfiguration configuration, TimeProvider clock, ControllerCredentials credentials,
+    IHttpClientFactory clients, IConfiguration configuration, TimeProvider clock, ControllerCredentials credentials,
     IBusyBarStatusSource? statusSource = null) : BackgroundService
 {
     internal const int DisplayLeaseSeconds = 15;
@@ -82,13 +82,20 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                 var origin = $"http://{bar.Address}:{bar.Port}/api";
                 var version = await client.GetFromJsonAsync<JsonElement>(origin + "/version", token);
                 var api = version.TryGetProperty("api_semver", out var property) ? property.GetString() : null;
-                var supported = Version.TryParse(api, out var parsed) && parsed.Major == 27 && parsed.Minor == 5;
-                statuses[bar.Id] = new(supported ? "Waiting for selector; move to APPS to allow output" : "Native playback requires firmware 1.2.3 / API 27.5; output paused", api, supported);
+                // The bar accepts an animation file it cannot play and shows an error icon instead,
+                // so only API versions with a reviewed native format get any output.
+                if (BusyBarAnimFile.FormatFor(api) is not { } format)
+                {
+                    statuses[bar.Id] = new("Native playback requires API 27.5 (firmware 1.2.x) or 27.14+ (firmware 1.3+); output paused", api);
+                    // Probe again later: a firmware update can move the bar onto a supported version.
+                    await Task.Delay(TimeSpan.FromSeconds(30), clock, token);
+                    continue;
+                }
+                statuses[bar.Id] = new("Waiting for selector; move to APPS to allow output", api, true);
                 using var session = CancellationTokenSource.CreateLinkedTokenSource(token);
                 var mode = new BusyBarModeGate();
-                // Always monitor the selector, even when START/BACK controls are disabled.
-                await Task.WhenAll(DisplayAsync(bar, client, origin, mode, session.Token),
-                    supported ? InputAsync(bar, secret, mode, session.Token) : Task.CompletedTask);
+                // Always monitor the selector, even when the START and wheel-press controls are disabled.
+                await Task.WhenAll(DisplayAsync(bar, client, origin, format, mode, session.Token), InputAsync(bar, secret, mode, session.Token));
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
             catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
@@ -100,13 +107,14 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
             }
         }
     }
-    internal async Task DisplayAsync(BusyBarSettings bar, HttpClient client, string origin, BusyBarModeGate mode, CancellationToken token)
+    internal async Task DisplayAsync(BusyBarSettings bar, HttpClient client, string origin, BusyBarAnimFormat format, BusyBarModeGate mode, CancellationToken token)
     {
         BusyBarScreen? previous = null;
         AnimationSettings? timing = null;
-        Dictionary<BusyBarScreen, BusyBarAnimation> assets = [];
+        // The countdown clip is as long as the preparation, which is the same for every game.
+        var preparation = (int)CountdownService.PreCountdownDuration.TotalSeconds;
+        IReadOnlyDictionary<BusyBarScreen, BusyBarAnimation> assets = new Dictionary<BusyBarScreen, BusyBarAnimation>();
         var uploaded = new HashSet<string>();
-        string? previousNumber = null;
         long? lastSent = null;
         var failures = 0;
         using var uploadClient = clients.CreateClient("busybar-assets");
@@ -127,7 +135,7 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                 var updated = settings.Read().Animation;
                 if (timing != updated)
                 {
-                    assets = BusyBarAnimations.Create(bar.ShowTimer, updated);
+                    assets = BusyBarAnimations.Create(updated, format, preparation);
                     timing = updated; previous = null;
                 }
                 // Preload the complete small set before sampling the scene. Game transitions
@@ -151,23 +159,24 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                     continue;
                 }
                 var scene = control.GetSceneFrame();
-                var screen = BusyBarAnimations.Screen(scene.Phase, scene.Elapsed, scene.Preparation, timing);
-                var number = DisplayNumber(bar.ShowTimer, scene.Phase, scene.Elapsed, scene.Preparation, countdown.Remaining);
+                var screen = BusyBarAnimations.Screen(scene.Phase, scene.Elapsed, timing);
                 // Refresh with enough lease headroom for transient Wi-Fi delays. await_previous_end preserves native
-                // playback while renewing ownership; no pixel frames are sent here.
-                if (screen != previous || number != previousNumber || lastSent is null ||
-                    (screen != BusyBarScreen.Flash && clock.GetElapsedTime(lastSent.Value).TotalSeconds >= 1))
+                // playback while renewing ownership; no pixel frames are sent here. Play-once screens are
+                // never refreshed: resending them would restart the clip.
+                if (screen != previous || lastSent is null ||
+                    (!BusyBarAnimations.PlaysOnce(screen) && clock.GetElapsedTime(lastSent.Value).TotalSeconds >= 1))
                 {
                     var sent = await mode.InAppsAsync(async () =>
                     {
                         // Keep the scene alive while replacing its source. Clearing all
                         // elements first closes the firmware canvas and exposes its clock.
-                        using var response = await client.PostAsJsonAsync(origin + "/display/draw", NativeDisplay(assets[screen].Name, screen, number, timing.FlashSeconds), token);
+                        using var response = await client.PostAsJsonAsync(origin + "/display/draw", NativeDisplay(assets[screen].Name, screen, timing, preparation,
+                            screen == BusyBarScreen.Countdown ? BusyBarAnimations.CountdownSection(scene.Elapsed, preparation, format) : "default"), token);
                         response.EnsureSuccessStatusCode();
                     }, token);
                     if (sent)
                     {
-                        previous = screen; previousNumber = number; lastSent = clock.GetTimestamp();
+                        previous = screen; lastSent = clock.GetTimestamp();
                         failures = 0;
                         if (statuses.TryGetValue(bar.Id, out var status) && status.State == "Display update failed; retrying")
                             statuses.TryUpdate(bar.Id, status with { State = "APPS mode; BobFX output enabled" }, status);
@@ -216,7 +225,7 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                         try
                         {
                             if (button == 2 && control.Phase == GamePhase.Idle) await control.StartGameAsync();
-                            else if (button == 1) await control.StopGameAsync();
+                            else if (button == 0) await control.StopGameAsync();
                         }
                         catch (InvalidOperationException) { /* Another controller owns this transition. */ }
                     }
@@ -234,41 +243,32 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
             catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
         }
     }
-    public static object BuildDisplay(bool showTimer, GamePhase phase, double elapsed, double preparation, TimeSpan remaining, AnimationSettings animation)
+    internal static object BuildDisplay(GamePhase phase, double elapsed, double preparation, AnimationSettings animation,
+        BusyBarAnimFormat format = BusyBarAnimFormat.Bicycle1)
     {
-        var screen = BusyBarAnimations.Screen(phase, elapsed, preparation, animation);
-        var asset = BusyBarAnimations.Create(showTimer, animation)[screen];
-        return NativeDisplay(asset.Name, screen, DisplayNumber(showTimer, phase, elapsed, preparation, remaining), animation.FlashSeconds);
+        var screen = BusyBarAnimations.Screen(phase, elapsed, animation);
+        var seconds = Math.Max(1, (int)Math.Round(preparation));
+        return NativeDisplay(BusyBarAnimations.Create(animation, format, seconds)[screen].Name, screen, animation, seconds,
+            screen == BusyBarScreen.Countdown ? BusyBarAnimations.CountdownSection(elapsed, seconds, format) : "default");
     }
-    private static string? DisplayNumber(bool showTimer, GamePhase phase, double elapsed, double preparation, TimeSpan remaining)
+    /// <summary>One animation element and nothing else: every pixel, including the preparation seconds,
+    /// comes from a file the bar plays by itself.</summary>
+    private static object NativeDisplay(string asset, BusyBarScreen screen, AnimationSettings animation, int preparation, string section)
     {
-        if (phase == GamePhase.PreCountdown)
-            return Math.Max(1, (int)Math.Ceiling(preparation - elapsed)).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        if (showTimer && phase == GamePhase.Running && elapsed >= 0.75)
+        var once = BusyBarAnimations.PlaysOnce(screen);
+        return new
         {
-            var seconds = Math.Max(0, (int)Math.Ceiling(remaining.TotalSeconds));
-            return $"{seconds / 60}:{seconds % 60:00}";
-        }
-        return null;
-    }
-    private static object NativeDisplay(string asset, BusyBarScreen screen, string? number, double flashSeconds)
-    {
-        var elements = new List<object>
-        {
-            new { id = "scene", type = "animation", display = "front", x = 0, y = 0,
-                path = asset, section = "default", loop = screen != BusyBarScreen.Flash,
-                // A finite flash plays exactly once. Queuing it at each heartbeat would
-                // restart it at the end and could produce a fourth red flash.
-                await_previous_end = screen != BusyBarScreen.Flash,
-                timeout = screen == BusyBarScreen.Flash ? (int)Math.Ceiling(flashSeconds) + 1 : DisplayLeaseSeconds, z_index = 0 }
+            application_name = "BobFX", priority = 50,
+            elements = new object[]
+            {
+                new { id = "scene", type = "animation", display = "front", x = 0, y = 0,
+                    path = asset, section, loop = !once,
+                    // A finite clip plays exactly once. Queuing it behind itself would play it
+                    // again when it ends, for example as a fourth flash.
+                    await_previous_end = !once,
+                    timeout = once ? (int)Math.Ceiling(BusyBarAnimations.Seconds(screen, animation, preparation)) + 1 : DisplayLeaseSeconds, z_index = 0 }
+            }
         };
-        // Reuse the same text element across phases, explicitly blanking it when
-        // hidden. No old number needs an intervening clear or timeout to disappear.
-        elements.Add(new { id = "number", type = "text",
-                display = "front", x = 36, y = screen is BusyBarScreen.Scanner or BusyBarScreen.PlayerEdges or BusyBarScreen.AllEdges ? 8 : 11, align = "center", width = 68,
-                text = number ?? "", font = screen is BusyBarScreen.Scanner or BusyBarScreen.PlayerEdges or BusyBarScreen.AllEdges ? "extra_large" : "tiny",
-                color = "#FFFFFFFF", timeout = DisplayLeaseSeconds, z_index = 1 });
-        return new { application_name = "BobFX", priority = 50, elements };
     }
 }
 /// <summary>Reads only the input subset of BSB_State.State (official busylib schema).
@@ -294,7 +294,9 @@ public static class BusyBarInputDecoder
                     var fields = Fields(selected.Data);
                     var key = fields.LastOrDefault(f => f.Number == 1 && f.Wire == 0)?.Value ?? 0;
                     var action = fields.LastOrDefault(f => f.Number == 2 && f.Wire == 0)?.Value ?? 0;
-                    if (action == 0 && key is 1 or 2) events.Add(new((int)key, null));
+                    // Button: OK 0 (pressing the wheel), BACK 1, START 2. BACK is left to the bar: in APPS it
+                    // closes the screen and returns to the app list, so it cannot double as a game control.
+                    if (action == 0 && key is 0 or 2) events.Add(new((int)key, null));
                 }
             }
         return events;

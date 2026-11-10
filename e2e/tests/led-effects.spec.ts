@@ -18,7 +18,7 @@ async function expectOutput(request: APIRequestContext, effect: string, streamin
 }
 
 test.beforeEach(async ({ request }) => {
-  // Previous tests only cancel pre-countdowns, which return immediately to Idle.
+  // Leave no game from a previous test running.
   expect((await request.post('/api/countdown/stop')).ok()).toBeTruthy();
   expect((await request.post('/api/drgb/stop')).ok()).toBeTruthy();
 });
@@ -51,10 +51,10 @@ test('rapid game transitions never show a previous run ending', async ({ page, r
   await expect(page.getByRole('button', { name: 'Enable audio', exact: true })).toBeEnabled();
   for (let run = 0; run < 3; run++) {
     expect((await request.post('/api/countdown/start', { data: { durationSeconds: 60, deviationSeconds: 0 } })).ok()).toBeTruthy();
-    await expect(page.getByText('BOB!', { exact: true })).toBeVisible();
+    await expect(page.getByText('BOB!', { exact: true })).toBeVisible({ timeout: 10000 }); // After the three-second pre-countdown.
     expect((await request.post('/api/countdown/stop')).ok()).toBeTruthy();
-    expect((await request.post('/api/countdown/start-with-pre', {
-      data: { preDurationSeconds: 30, durationSeconds: 60, deviationSeconds: 0 },
+    expect((await request.post('/api/countdown/start', {
+      data: { durationSeconds: 60, deviationSeconds: 0 },
     })).ok()).toBeTruthy();
     await expect(page.getByRole('button', { name: 'Stop pre-countdown' })).toBeVisible();
     await expect(page.getByText('Game Over!', { exact: true })).toHaveCount(0);
@@ -111,15 +111,15 @@ test('invalid effect input shows feedback and preserves the active output', asyn
 
 test('manual controls respect game ownership and recover after keyboard pre-countdown Stop', async ({ page, request, expectedApiErrors }) => {
   await openEffects(page);
-  expect((await request.post('/api/countdown/start-with-pre')).ok()).toBeTruthy();
+  expect((await request.post('/api/countdown/start')).ok()).toBeTruthy();
   expectedApiErrors.add('409 /api/drgb/start');
   await page.getByRole('button', { name: 'Start', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('game owns the lights');
   await page.getByRole('link', { name: 'Game', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Stop pre-countdown' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Stop (pre-countdown|Countdown)$/ })).toBeVisible();
   page.once('dialog', dialog => dialog.accept());
   // Exercise keyboard operation as well as the touch controls covered by the game tests.
-  await page.getByRole('button', { name: 'Stop pre-countdown' }).press('Enter');
+  await page.getByRole('button', { name: /^Stop (pre-countdown|Countdown)$/ }).press('Enter');
   await expect(page.getByRole('button', { name: /Start Countdown/ })).toBeVisible();
   await page.getByRole('link', { name: 'LED effects', exact: true }).click();
   await page.getByRole('button', { name: 'Start', exact: true }).click();

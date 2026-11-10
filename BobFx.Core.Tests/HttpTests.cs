@@ -33,7 +33,7 @@ public sealed class HttpTests
         using var foreign = new HttpRequestMessage(HttpMethod.Put, endpoint) { Content = JsonContent.Create(new { password = "replacement" }) };
         foreign.Headers.Add("Origin", "http://foreign.example");
         Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(foreign)).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start-with-pre", new { preDurationSeconds = 30, durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await client.PutAsJsonAsync(endpoint, new { password = "replacement" })).StatusCode);
     }
     [Theory]
@@ -114,7 +114,7 @@ public sealed class HttpTests
         Assert.Equal("Solid", (await client.GetFromJsonAsync<JsonElement>("/api/drgb/status")).GetProperty("currentEffect").GetString());
 
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 5, deviationSeconds = 5 })).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start-with-pre", new { preDurationSeconds = 30, durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/drgb/speed", new { speedMs = 100 })).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/countdown/stop", null)).StatusCode);
         var status = await client.GetFromJsonAsync<JsonElement>("/api/countdown/status");
@@ -177,7 +177,7 @@ public sealed class HttpTests
         var first = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state")).GetProperty("game");
         var same = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state")).GetProperty("game");
         Assert.Equal(first.GetProperty("revision").GetInt64(), same.GetProperty("revision").GetInt64());
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start-with-pre", new { preDurationSeconds = 30 })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { })).StatusCode);
         var changed = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state")).GetProperty("game");
         Assert.Equal(first.GetProperty("serverInstanceId").GetString(), changed.GetProperty("serverInstanceId").GetString());
         Assert.True(changed.GetProperty("revision").GetInt64() > first.GetProperty("revision").GetInt64());
