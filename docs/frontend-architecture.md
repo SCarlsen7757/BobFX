@@ -4,7 +4,7 @@ BobFX uses Vue, TypeScript, Vue Router, TanStack Vue Query, and an ASP.NET Core 
 
 ## Development and builds
 
-Install Node 24 and the .NET SDK in global.json. `dotnet build` installs the locked frontend packages when needed and builds Vue into `BobFx.Core/wwwroot/ui` (ignored by Git). `dotnet publish` includes those assets. Docker uses a pinned Node build stage and copies the result into the .NET publish stage.
+Install Node 26 and the .NET SDK in global.json. `dotnet build` installs the locked frontend packages when needed and builds Vue into `BobFx.Core/wwwroot/ui` (ignored by Git). `dotnet publish` includes those assets. Docker uses a pinned Node build stage and copies the result into the .NET publish stage.
 
 For hot reload, start the backend on http://127.0.0.1:5159 and run `npm --prefix frontend run dev`. Open the Vite URL, normally http://127.0.0.1:5173. Vite proxies `/api`, `/hubs`, and sound files while preserving Host/Origin. Production remains same-origin and retains the existing trusted-network restrictions.
 
