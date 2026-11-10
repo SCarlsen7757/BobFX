@@ -18,6 +18,24 @@ public sealed class RgbAndSoundControlService(
     private bool switchedToRunning;
     private int locating;
     public bool IsLocating => Volatile.Read(ref locating) != 0;
+    private int calibrating;
+    public bool IsCalibrating => Volatile.Read(ref calibrating) != 0;
+    public async Task CalibrationCommandAsync(Func<Task> action, bool starting = false, bool stopping = false)
+    {
+        await commands.WaitAsync();
+        try
+        {
+            if (starting)
+            {
+                EnsureManual();
+                if (rgb.IsUdpActive) throw new InvalidOperationException("Stop manual output before calibration.");
+            }
+            else if (!IsCalibrating) throw new InvalidOperationException("Calibration has ended. Start calibration again.");
+            await action();
+            Volatile.Write(ref calibrating, stopping ? 0 : 1);
+        }
+        finally { commands.Release(); }
+    }
     public double PhaseElapsedSeconds => clock.GetElapsedTime(phaseStarted).TotalSeconds;
     public double PreparationSeconds { get; private set; } = CountdownService.PreCountdownDuration.TotalSeconds;
     public (GamePhase Phase, double Elapsed, double Preparation) GetSceneFrame()
@@ -60,6 +78,7 @@ public sealed class RgbAndSoundControlService(
         {
             EnsureAvailable();
             if (IsLocating) throw new InvalidOperationException("A board is being located.");
+            if (IsCalibrating) throw new InvalidOperationException("Board calibration owns the lights.");
             if (Phase is GamePhase.PreCountdown or GamePhase.Running) throw new InvalidOperationException("A game is already active.");
             countdown.Start(withPreCountdown, duration, deviation);
             PreparationSeconds = countdown.IsPreCountdownRunning ? countdown.PreCountdownRemaining.TotalSeconds : 0;
@@ -120,6 +139,7 @@ public sealed class RgbAndSoundControlService(
     {
         EnsureAvailable();
         if (IsLocating) throw new InvalidOperationException("A board is being located.");
+        if (IsCalibrating) throw new InvalidOperationException("Board calibration owns the lights.");
         if (Phase != GamePhase.Idle) throw new InvalidOperationException("The game owns the lights until its ending sequence completes.");
     }
     private async Task EnterRunningAsync()

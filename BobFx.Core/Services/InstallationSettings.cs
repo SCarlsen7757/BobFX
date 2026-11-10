@@ -19,7 +19,7 @@ public sealed record BoardSettings
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public string Name { get; init; } = "Board";
-    public string DeviceMac { get; init; } = "";
+    public string? DeviceMac { get; init; }
     public int Rotation { get; init; }
     // Physical edges clockwise before rotation. Top/bottom in the preview face the players.
     public List<EdgeSettings> Edges { get; init; } = [];
@@ -107,16 +107,21 @@ public sealed class InstallationSettingsStore
             if (!ValidMac(d.Mac) || !devices.TryAdd(d.Mac, d) || !LocalAddress(d.Address) || d.HttpPort is < 1 or > 65535 || d.UdpPort is < 1 or > 65535 || d.LedCount is < 1 or > 65535 || string.IsNullOrWhiteSpace(d.Name))
                 throw new ArgumentException("Devices require unique lowercase MAC identities, a private IPv4 address, valid ports and 1–65535 LEDs.");
         }
-        if (value.Boards.Select(b => b.Id).Distinct().Count() != value.Boards.Count || value.Boards.Select(b => b.DeviceMac).Distinct().Count() != value.Boards.Count)
+        var assigned = value.Boards.Where(b => b.DeviceMac is not null).ToList();
+        if (value.Boards.Select(b => b.Id).Distinct().Count() != value.Boards.Count || assigned.Select(b => b.DeviceMac).Distinct().Count() != assigned.Count)
             throw new ArgumentException("Each board needs a unique ID and WLED device.");
         foreach (var b in value.Boards)
         {
-            if (string.IsNullOrWhiteSpace(b.Id) || string.IsNullOrWhiteSpace(b.Name) || !devices.TryGetValue(b.DeviceMac, out var d) || !d.Selected || b.Rotation is not (0 or 90 or 180 or 270) || b.Edges is null || b.Edges.Count != 4)
-                throw new ArgumentException("Boards require a selected device, four edges and rotation 0/90/180/270.");
+            if (string.IsNullOrWhiteSpace(b.Id) || string.IsNullOrWhiteSpace(b.Name) || b.Rotation is not (0 or 90 or 180 or 270) || b.Edges is null ||
+                (b.Edges.Count != 4 && !(b.DeviceMac is null && b.Edges.Count == 0)))
+                throw new ArgumentException("Boards require a name, rotation 0/90/180/270 and four mapped edges when assigned.");
+            DeviceSettings? d = null;
+            if (b.DeviceMac is not null && (!devices.TryGetValue(b.DeviceMac, out d) || !d.Selected))
+                throw new ArgumentException("Assigned boards require a selected WLED device.");
             var used = new HashSet<int>();
             foreach (var edge in b.Edges)
             {
-                if (edge is null || edge.Start < 0 || edge.Count < 1 || (long)edge.Start + edge.Count > d.LedCount)
+                if (edge is null || edge.Start < 0 || edge.Count < 1 || (long)edge.Start + edge.Count > (d?.LedCount ?? 65535))
                     throw new ArgumentException($"{b.Name}: edge lies outside the device LED count.");
                 for (var i = edge.Start; i < edge.Start + edge.Count; i++)
                     if (!used.Add(i)) throw new ArgumentException($"{b.Name}: edge mappings overlap.");

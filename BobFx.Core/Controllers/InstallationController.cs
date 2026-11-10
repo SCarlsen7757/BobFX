@@ -68,6 +68,16 @@ public sealed class InstallationController(InstallationSettingsStore settings, R
     public Task<IActionResult> AddManual(ManualDeviceRequest request, CancellationToken token) => Execute(() => registry.AddManualAsync(request.Address, request.Port, token));
     [HttpPost("devices/{mac}/locate")]
     public Task<IActionResult> Locate(string mac, CancellationToken token) => Execute(() => output.LocateAsync(mac, token));
+    [HttpPost("calibration")]
+    public async Task<IActionResult> StartCalibration(CalibrationRequest request)
+    {
+        var result = await Execute(() => output.StartCalibrationAsync(request));
+        return result is OkResult ? Ok(output.Calibration) : result;
+    }
+    [HttpPut("calibration/{id}")]
+    public Task<IActionResult> UpdateCalibration(string id, CalibrationRequest request) => Execute(() => output.UpdateCalibrationAsync(id, request));
+    [HttpDelete("calibration/{id}")]
+    public Task<IActionResult> StopCalibration(string id) => Execute(() => output.StopCalibrationAsync(id));
     [HttpPost("idle-sync/apply")]
     public Task<IActionResult> Sync(CancellationToken token) => Execute(() => control.ConfigureAsync(() => output.ApplyIdleSyncAsync(token)));
     [HttpGet("controllers/{id}/password")]

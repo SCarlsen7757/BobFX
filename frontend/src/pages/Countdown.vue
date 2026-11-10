@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useMutation } from '@tanstack/vue-query';
-import { command, connected, useGame } from '../lib/session';
+import { command, connected, useGame, useInstallation } from '../lib/session';
 const { data } = useGame();
+const installation = useInstallation();
 const game = computed(() => data.value?.value);
 const minutes = ref(15), seconds = ref(0), deviation = ref(120);
 const remaining = computed(() => {
@@ -18,7 +19,7 @@ const mutation = useMutation({ mutationFn: async (mode: 'start' | 'stop') => {
     throw new Error('Enter valid limits. Total duration must exceed random deviation.');
   await command(`/api/countdown/${mode}`, { durationSeconds: minutes.value * 60 + seconds.value, deviationSeconds: deviation.value });
 } });
-const busy = computed(() => !connected.value || mutation.isPending.value);
+const busy = computed(() => !connected.value || mutation.isPending.value || !!installation.data.value?.value.calibration);
 </script>
 <template>
   <section class="settings-page">

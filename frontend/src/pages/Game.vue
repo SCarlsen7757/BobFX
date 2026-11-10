@@ -9,9 +9,10 @@ const { data } = useGame();
 const game = computed(() => data.value?.value);
 const installation = useInstallation();
 const locating = computed(() => !!installation.data.value?.value.locating);
+const calibrating = computed(() => !!installation.data.value?.value.calibration);
 const active = computed(() => !!(game.value?.running || game.value?.preCountdownRunning));
 const gameOver = computed(() => game.value?.gameOver && suppressedRun.value !== `${data.value?.serverInstanceId}:${game.value.runId}`);
-const title = computed(() => locating.value ? 'Locating board' : game.value?.preCountdownRunning ? 'Get ready' : game.value?.running ? (game.value.opening ? 'BOB!' : 'Game on!') : gameOver.value ? 'Game Over!' : 'Ready to play');
+const title = computed(() => calibrating.value ? 'Calibrating boards' : locating.value ? 'Locating board' : game.value?.preCountdownRunning ? 'Get ready' : game.value?.running ? (game.value.opening ? 'BOB!' : 'Game on!') : gameOver.value ? 'Game Over!' : 'Ready to play');
 const mutation = useMutation({ mutationFn: async (stop: boolean) => {
   const run = `${data.value?.serverInstanceId}:${game.value?.runId}`;
   await command(`/api/countdown/${stop ? 'stop' : 'start'}`);
@@ -48,7 +49,7 @@ function displayMode() {
           </template>
           <h2 v-else class="stage-title">{{ title }}</h2>
         </div>
-        <button class="game-action" :class="active ? 'stop' : 'start'" :disabled="!connected || locating || mutation.isPending.value" @click="action">
+        <button class="game-action" :class="active ? 'stop' : 'start'" :disabled="!connected || locating || calibrating || mutation.isPending.value" @click="action">
           <svg aria-hidden="true" viewBox="0 0 24 24"><rect v-if="active" x="6" y="6" width="12" height="12" rx="1" /><path v-else d="m8 5 11 7-11 7z" /></svg>
           {{ active ? game?.preCountdownRunning ? 'Stop pre-countdown' : 'Stop Countdown' : 'Start Countdown' }}
         </button>

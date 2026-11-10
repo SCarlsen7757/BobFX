@@ -18,7 +18,7 @@ export interface UiState {
 }
 export interface SavedDevice { mac: string; name: string; address: string; httpPort: number; ledCount: number; udpPort: number; selected: boolean }
 export interface Edge { start: number; count: number; reversed: boolean }
-export interface Board { id: string; name: string; deviceMac: string; rotation: number; edges: Edge[] }
+export interface Board { id: string; name: string; deviceMac: string | null; rotation: number; edges: Edge[] }
 export interface IdleSync { enabled: boolean; masterMac: string | null; followers: string[]; group: number }
 export interface AnimationSettings { framesPerSecond: number; flashSeconds: number; dotSeconds: number; dotLapsPerSecond: number }
 export interface RemoteController { id: string; name: string; address: string; port: number; enabled: boolean; remoteEnabled: boolean; secretName: string }
@@ -27,7 +27,9 @@ export interface RemoteStatus { state: string; apiVersion: string | null; inputS
 export interface InstallationState {
   settings: InstallationSettings; locating: boolean; outputErrors: Record<string, string>;
   controllers: Record<string, RemoteStatus>; passwordsSaved: Record<string, boolean>;
+  calibration: CalibrationSession | null;
 }
+export interface CalibrationSession { sessionId: string; activeBoardId: string; expiresUtc: string }
 export interface EffectDescriptor {
   type: string; info: { requiredColors: number; optionalColors: number; totalColors: number;
     description: string; defaultSpeed: string; colorLabels: string[]; customParameters: Record<string, string> };

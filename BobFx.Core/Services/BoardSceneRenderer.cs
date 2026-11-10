@@ -4,6 +4,31 @@ namespace BobFx.Core.Services;
 
 public static class BoardSceneRenderer
 {
+    public static List<BoardSettings> AssignedBoards(InstallationSettings settings) => settings.Boards
+        .Where(b => b.DeviceMac is not null && settings.Devices.Any(d => d.Mac == b.DeviceMac && d.Selected)).ToList();
+
+    public static byte[] Calibration(BoardSettings board, int count, double elapsed)
+    {
+        var output = new byte[count * 3];
+        (byte R, byte G, byte B)[] colors = [(0, 96, 160), (0, 128, 64), (160, 96, 0), (144, 0, 96)];
+        var perimeter = new List<int>();
+        for (var side = 0; side < 4; side++)
+        {
+            var color = colors[side];
+            foreach (var pixel in EdgePixels(board, side))
+            {
+                if (pixel < 0 || pixel >= count) throw new ArgumentException("LED count changed; update this board's edge mapping.");
+                output[pixel * 3] = color.R; output[pixel * 3 + 1] = color.G; output[pixel * 3 + 2] = color.B;
+                perimeter.Add(pixel);
+            }
+        }
+        if (perimeter.Count > 0)
+        {
+            var marker = perimeter[(int)(elapsed % 4 / 4 * perimeter.Count)];
+            output[marker * 3] = output[marker * 3 + 1] = output[marker * 3 + 2] = 220;
+        }
+        return output;
+    }
     public static int[] EdgePixels(BoardSettings board, int visualEdge)
     {
         var edge = board.Edges[(visualEdge - board.Rotation / 90 + 4) % 4];
@@ -16,9 +41,10 @@ public static class BoardSceneRenderer
     public static List<(string BoardId, int Pixel)> DotPath(IReadOnlyList<BoardSettings> boards)
     {
         var path = new List<(string, int)>();
-        for (var i = 0; i < boards.Count; i++)
+        var assigned = boards.Where(b => b.DeviceMac is not null).ToList();
+        for (var i = 0; i < assigned.Count; i++)
         {
-            var b = boards[i];
+            var b = assigned[i];
             var perimeter = Enumerable.Range(0, 4).SelectMany(e => EdgePixels(b, e)).ToArray();
             var join = EdgePixels(b, i == 0 ? 1 : 3);
             var origin = Array.IndexOf(perimeter, join[join.Length / 2]);
@@ -26,7 +52,7 @@ public static class BoardSceneRenderer
                 path.Add((b.Id, perimeter[(origin + (i % 2 == 0 ? p : -p) + perimeter.Length) % perimeter.Length]));
             // An interior square is entered on its left and must leave on its right.
             // Continue along its perimeter after the full loop to the handoff point.
-            if (i > 0 && i < boards.Count - 1)
+            if (i > 0 && i < assigned.Count - 1)
             {
                 var exit = EdgePixels(b, 1);
                 var destination = Array.IndexOf(perimeter, exit[exit.Length / 2]);
@@ -44,8 +70,10 @@ public static class BoardSceneRenderer
     public static byte[] Render(InstallationSettings settings, BoardSettings board, int count, GamePhase phase, double elapsed, double preparationSeconds)
     {
         var output = new byte[count * 3];
-        var index = settings.Boards.FindIndex(b => b.Id == board.Id);
-        var total = settings.Boards.Count;
+        var boards = AssignedBoards(settings);
+        var index = boards.FindIndex(b => b.Id == board.Id);
+        if (index < 0) return output;
+        var total = boards.Count;
         void Set(int pixel, double r, double g, double b)
         {
             if (pixel < 0 || pixel >= count) return;
@@ -55,7 +83,7 @@ public static class BoardSceneRenderer
         }
         if (phase == GamePhase.Ending && elapsed >= settings.Animation.FlashSeconds)
         {
-            var path = DotPath(settings.Boards);
+            var path = DotPath(boards);
             if (path.Count > 0)
             {
                 var position = (int)((elapsed - settings.Animation.FlashSeconds) * settings.Animation.DotLapsPerSecond * path.Count) % path.Count;

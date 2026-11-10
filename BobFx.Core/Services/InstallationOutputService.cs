@@ -6,6 +6,9 @@ using System.Collections.Concurrent;
 
 namespace BobFx.Core.Services;
 
+public sealed record CalibrationView(string SessionId, string ActiveBoardId, DateTimeOffset ExpiresUtc);
+public sealed record CalibrationRequest(List<BoardSettings> Boards, string ActiveBoardId);
+
 public sealed class InstallationOutputService(InstallationSettingsStore settings, WLedDiscoveryService discovery,
     RgbAndSoundControlService control, DRgbService rgb, IHttpClientFactory httpFactory, TimeProvider clock,
     ILogger<InstallationOutputService> logger, IWLedFrameTransport transport) : BackgroundService
@@ -21,6 +24,96 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
     private readonly CancellationTokenSource locateStop = new();
     private Task? locateTask;
     private int disposed;
+    private int stopping;
+    private readonly SemaphoreSlim calibrationFrames = new(1, 1);
+    private sealed record CalibrationDraft(CalibrationView View, InstallationSettings Settings, long Started);
+    private CalibrationDraft? calibration;
+    public CalibrationView? Calibration => Volatile.Read(ref calibration)?.View;
+
+    private InstallationSettings ValidateCalibration(CalibrationRequest request)
+    {
+        var boards = JsonSerializer.SerializeToElement(request.Boards, InstallationSettingsStore.JsonOptions)
+            .Deserialize<List<BoardSettings>>(InstallationSettingsStore.JsonOptions);
+        var snapshot = settings.Snapshot with { Boards = boards! };
+        InstallationSettingsStore.Validate(snapshot);
+        if (!snapshot.Boards.Any(b => b.Id == request.ActiveBoardId && b.DeviceMac is not null))
+            throw new ArgumentException("Choose an assigned board to calibrate.");
+        return snapshot;
+    }
+    public Task StartCalibrationAsync(CalibrationRequest request) => control.CalibrationCommandAsync(async () =>
+    {
+        if (Volatile.Read(ref stopping) != 0) throw new InvalidOperationException("Installation output is shutting down.");
+        var snapshot = ValidateCalibration(request);
+        await calibrationFrames.WaitAsync();
+        try
+        {
+            Volatile.Write(ref calibration, new(new(Guid.NewGuid().ToString("N"), request.ActiveBoardId,
+                clock.GetUtcNow().AddSeconds(15)), snapshot, clock.GetTimestamp()));
+        }
+        finally { calibrationFrames.Release(); }
+    }, starting: true);
+
+    public Task UpdateCalibrationAsync(string id, CalibrationRequest request) => control.CalibrationCommandAsync(async () =>
+    {
+        var snapshot = ValidateCalibration(request);
+        await calibrationFrames.WaitAsync();
+        try
+        {
+            var current = calibration;
+            if (current?.View.SessionId != id || current.View.ExpiresUtc <= clock.GetUtcNow())
+                throw new InvalidOperationException("Calibration has ended or belongs to another session.");
+            // Keep membership fixed while previewing, so removed devices cannot be left illuminated.
+            if (!snapshot.Boards.Where(b => b.DeviceMac is not null).Select(b => (b.Id, b.DeviceMac)).ToHashSet()
+                .SetEquals(current.Settings.Boards.Where(b => b.DeviceMac is not null).Select(b => (b.Id, b.DeviceMac))))
+                throw new ArgumentException("Stop calibration before changing controller assignments.");
+            Volatile.Write(ref calibration, current with { Settings = snapshot,
+                View = current.View with { ActiveBoardId = request.ActiveBoardId, ExpiresUtc = clock.GetUtcNow().AddSeconds(15) } });
+        }
+        finally { calibrationFrames.Release(); }
+    });
+
+    public Task StopCalibrationAsync(string id, bool expiredOnly = false)
+    {
+        if (Calibration is null) return Task.CompletedTask;
+        return control.CalibrationCommandAsync(async () =>
+        {
+            await calibrationFrames.WaitAsync();
+            try
+            {
+                if (calibration?.View.SessionId != id) throw new InvalidOperationException("Calibration belongs to another session.");
+                if (expiredOnly && calibration.View.ExpiresUtc > clock.GetUtcNow())
+                    throw new InvalidOperationException("Calibration was renewed.");
+                Volatile.Write(ref calibration, null);
+            }
+            finally { calibrationFrames.Release(); }
+        }, stopping: true);
+    }
+
+    private async Task CalibrationFrameAsync(CancellationToken token)
+    {
+        await calibrationFrames.WaitAsync(token);
+        try
+        {
+            var current = calibration;
+            if (current is null || current.View.ExpiresUtc <= clock.GetUtcNow()) return;
+            foreach (var board in BoardSceneRenderer.AssignedBoards(current.Settings))
+            {
+                var device = Resolve(current.Settings.Devices.First(d => d.Mac == board.DeviceMac));
+                try
+                {
+                    if (KnownOffline(device)) throw new ArgumentException("Device is offline.");
+                    var pixels = board.Id == current.View.ActiveBoardId
+                        ? BoardSceneRenderer.Calibration(board, device.LedCount, clock.GetElapsedTime(current.Started).TotalSeconds)
+                        : new byte[device.LedCount * 3];
+                    await SendAsync(device, pixels, token);
+                    errors.TryRemove(device.Mac, out _);
+                }
+                catch (Exception ex) when (ex is SocketException or ArgumentException or IOException)
+                { errors[device.Mac] = ex.Message; }
+            }
+        }
+        finally { calibrationFrames.Release(); }
+    }
     public DeviceSettings Resolve(DeviceSettings saved)
     {
         var found = discovery.Devices.FirstOrDefault(d => d.Mac == saved.Mac && d.IsOnline);
@@ -56,6 +149,15 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
             try
             {
                 var snapshot = settings.Read();
+                if (Calibration is { } preview)
+                {
+                    if (preview.ExpiresUtc <= clock.GetUtcNow())
+                    {
+                        try { await StopCalibrationAsync(preview.SessionId, expiredOnly: true); }
+                        catch (InvalidOperationException) { /* The operator renewed or stopped it first. */ }
+                    }
+                    else await CalibrationFrameAsync(stoppingToken);
+                }
                 var active = rgb.IsUdpActive;
                 if (wasActive && !active)
                 {
@@ -69,15 +171,17 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
                     var phase = scene.Phase;
                     var elapsed = scene.Elapsed;
                     var manual = phase == GamePhase.Idle ? rgb.GetSnapshot() : null;
+                    var sceneSettings = snapshot with { Boards = BoardSceneRenderer.AssignedBoards(snapshot) };
                     foreach (var d in snapshot.Devices.Where(saved => saved.Selected).Where(saved => !KnownOffline(saved)).Select(Resolve))
                     {
                         try
                         {
                             var board = snapshot.Boards.FirstOrDefault(b => b.DeviceMac == d.Mac);
+                            if (phase != GamePhase.Idle && snapshot.Boards.Count > 0 && board is null) continue;
                             if (board is not null && board.Edges.Any(e => (long)e.Start + e.Count > d.LedCount))
                                 throw new ArgumentException("LED count changed; update this board's edge mapping.");
                             var pixels = board is not null && phase != GamePhase.Idle
-                                ? BoardSceneRenderer.Render(snapshot, board, d.LedCount, phase, elapsed, scene.Preparation)
+                                ? BoardSceneRenderer.Render(sceneSettings, board, d.LedCount, phase, elapsed, scene.Preparation)
                                 : BoardSceneRenderer.Resample(manual ?? rgb.GetSnapshot(), d.LedCount);
                             await SendAsync(d, pixels, stoppingToken);
                             errors.TryRemove(d.Mac, out _);
@@ -126,6 +230,7 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
     }
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
+        Volatile.Write(ref stopping, 1);
         // The host may dispose its services before it stops them; a disposed source was already cancelled.
         try { await locateStop.CancelAsync(); }
         catch (ObjectDisposedException) { logger.LogDebug("Locate cancellation source was already disposed"); }
@@ -133,10 +238,12 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
             try { await task; }
             catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { logger.LogDebug("Locate completed before shutdown with a cancellation or device failure"); }
         await base.StopAsync(cancellationToken);
+        if (Calibration is { } preview) await StopCalibrationAsync(preview.SessionId);
     }
     public override void Dispose()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+        Volatile.Write(ref stopping, 1);
         locateStop.Cancel(); locateStop.Dispose(); base.Dispose();
     }
     public async Task ApplyIdleSyncAsync(CancellationToken token = default, bool configure = true)

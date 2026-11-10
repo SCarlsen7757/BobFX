@@ -125,7 +125,7 @@ Replace `bobfx.local` with a configured allowed hostname or the host LAN IP.
 - **403 / rejected control:** check the client's actual source address against the trusted CIDRs, hostnames against `AllowedHosts`, and use the application's own origin.
 - **No WLED devices:** check UDP 5353 multicast, same-LAN connectivity, Wi-Fi client isolation, and device HTTP reachability.
 - **Discovery works but LEDs do not:** verify realtime UDP is enabled, the device is selected in BobFX, its reported UDP port and LED count are correct, and its board mapping is valid. Discovery and realtime output are independent.
-- **One output goes black in realtime mode:** verify every physical WLED output has the correct start/count in WLED, scan again to refresh its reported LED count, and map all four edges in Board layout. Use Locate and WLED Peek to check which indices receive frames.
+- **One output goes black in realtime mode:** verify both physical WLED outputs have the correct start/count in WLED, scan again to refresh the reported LED total, and use Board layout calibration to check the two-strip mapping. Advanced settings provides strip swapping and manual edge ranges. Use Locate and WLED Peek to check which indices receive frames.
 - **Unhealthy:** inspect logs and `docker inspect` health output. Confirm the bind IP exists on the host, is permitted by the CIDR, and has an allowed Host header.
 - **No sound:** tap the speaker icon in that browser and check mute/autoplay restrictions. Reenable after a visible playback error to retry.
 - **Restore changes unexpectedly:** use `--locked-mode`; deliberate dependency updates must regenerate and commit locks.
