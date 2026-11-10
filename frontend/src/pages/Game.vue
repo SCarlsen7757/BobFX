@@ -14,7 +14,7 @@ const gameOver = computed(() => game.value?.gameOver && suppressedRun.value !== 
 const title = computed(() => locating.value ? 'Locating board' : game.value?.preCountdownRunning ? 'Get ready' : game.value?.running ? (game.value.opening ? 'BOB!' : 'Game on!') : gameOver.value ? 'Game Over!' : 'Ready to play');
 const mutation = useMutation({ mutationFn: async (stop: boolean) => {
   const run = `${data.value?.serverInstanceId}:${game.value?.runId}`;
-  await command(`/api/countdown/${stop ? 'stop' : 'start-with-pre'}`);
+  await command(`/api/countdown/${stop ? 'stop' : 'start'}`);
   if (stop) suppressedRun.value = run;
 } });
 function action() {

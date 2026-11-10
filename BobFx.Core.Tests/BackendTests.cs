@@ -55,14 +55,14 @@ public sealed class BackendTests
         var timer = Countdown(clock);
         var endings = 0;
         timer.OnEndOfEvent += () => endings++;
-        timer.Start(true, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.Zero);
+        timer.Start(true, TimeSpan.FromSeconds(10), TimeSpan.Zero);
         clock.Advance(TimeSpan.FromSeconds(2));
         timer.Advance();
-        Assert.Equal(TimeSpan.FromSeconds(3), timer.PreCountdownRemaining);
+        Assert.Equal(TimeSpan.FromSeconds(1), timer.PreCountdownRemaining); // Always three seconds.
         timer.Stop();
         Assert.Equal(0, endings);
-        timer.Start(true, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.Zero);
-        clock.Advance(TimeSpan.FromSeconds(7));
+        timer.Start(true, TimeSpan.FromSeconds(10), TimeSpan.Zero);
+        clock.Advance(TimeSpan.FromSeconds(5));
         timer.Advance();
         Assert.Equal(TimeSpan.FromSeconds(8), timer.Remaining);
         clock.Advance(TimeSpan.FromSeconds(8));
@@ -82,7 +82,7 @@ public sealed class BackendTests
             new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance);
         await control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid).WithColor("#ff0000"));
         Assert.True(rgb.IsUdpActive);
-        await control.StartGameAsync(true, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.Zero);
+        await control.StartGameAsync(TimeSpan.FromSeconds(10), TimeSpan.Zero);
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Rainbow)));
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StopManualEffectAsync());
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.SetManualSpeedAsync(TimeSpan.FromMilliseconds(100)));

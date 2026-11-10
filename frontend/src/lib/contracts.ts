@@ -11,7 +11,7 @@ export interface Device {
   version: string; lastSeen: string; isOnline: boolean; webUrl: string;
 }
 export interface DiscoveryState { scanning: boolean; error: string | null; lastScanUtc: string | null; devices: Device[] }
-export interface Defaults { preDurationSeconds: number; durationSeconds: number; deviationSeconds: number }
+export interface Defaults { durationSeconds: number; deviationSeconds: number }
 export interface UiState {
   game: Versioned<GameState>; effect: Versioned<EffectState>;
   discovery: Versioned<DiscoveryState>; installation: Versioned<InstallationState>; defaults: Defaults;
@@ -21,7 +21,7 @@ export interface Edge { start: number; count: number; reversed: boolean }
 export interface Board { id: string; name: string; deviceMac: string; rotation: number; edges: Edge[] }
 export interface IdleSync { enabled: boolean; masterMac: string | null; followers: string[]; group: number }
 export interface AnimationSettings { framesPerSecond: number; flashSeconds: number; dotSeconds: number; dotLapsPerSecond: number }
-export interface RemoteController { id: string; name: string; address: string; port: number; enabled: boolean; showTimer: boolean; remoteEnabled: boolean; secretName: string }
+export interface RemoteController { id: string; name: string; address: string; port: number; enabled: boolean; remoteEnabled: boolean; secretName: string }
 export interface InstallationSettings { version: number; devices: SavedDevice[]; boards: Board[]; idleSync: IdleSync; animation: AnimationSettings; controllers: RemoteController[] }
 export interface RemoteStatus { state: string; apiVersion: string | null; inputSupported: boolean; selector: number }
 export interface InstallationState {

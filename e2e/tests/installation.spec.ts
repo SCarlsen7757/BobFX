@@ -101,7 +101,7 @@ test('optional controllers save without enabling connections and settings reject
     await page.reload();
     await page.getByRole('button', { name: /Family remote ·/ }).click();
     await expect(page.getByLabel('Enable integration', { exact: true })).not.toBeChecked();
-    await expect(page.getByLabel('Show remaining game timer', { exact: true })).not.toBeChecked();
+    await expect(page.getByLabel('Show remaining game timer', { exact: true })).toHaveCount(0);
     await expect(page.getByLabel('Device API password', { exact: true })).toHaveValue('');
     await expect(page.getByText('Password saved. Leave blank to keep it, or enter a replacement.')).toBeVisible();
     let savedController = (await (await request.get('/api/installation')).json()).controllers.find((c: { name: string }) => c.name === 'Family remote');
@@ -119,7 +119,7 @@ test('optional controllers save without enabling connections and settings reject
     expect((await request.put('/api/installation', { data: { ...configured, devices: [
       { mac: '001122334455', name: 'Locate target', address: '192.168.1.20', httpPort: 80, ledCount: 16, udpPort: 21324, selected: false },
     ] } })).ok()).toBeTruthy();
-    expect((await request.post('/api/countdown/start-with-pre', { data: { preDurationSeconds: 30, durationSeconds: 60, deviationSeconds: 0 } })).ok()).toBeTruthy();
+    expect((await request.post('/api/countdown/start', { data: { durationSeconds: 60, deviationSeconds: 0 } })).ok()).toBeTruthy();
     expect((await request.put('/api/installation', { data: original })).status()).toBe(409);
     expect((await request.post('/api/installation/devices/001122334455/locate')).status()).toBe(409);
   } finally {

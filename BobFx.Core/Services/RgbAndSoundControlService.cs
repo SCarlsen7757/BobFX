@@ -19,7 +19,7 @@ public sealed class RgbAndSoundControlService(
     private int locating;
     public bool IsLocating => Volatile.Read(ref locating) != 0;
     public double PhaseElapsedSeconds => clock.GetElapsedTime(phaseStarted).TotalSeconds;
-    public double PreparationSeconds { get; private set; } = 5;
+    public double PreparationSeconds { get; private set; } = CountdownService.PreCountdownDuration.TotalSeconds;
     public (GamePhase Phase, double Elapsed, double Preparation) GetSceneFrame()
     {
         var value = Volatile.Read(ref scene);
@@ -51,7 +51,9 @@ public sealed class RgbAndSoundControlService(
         Volatile.Write(ref scene, new(value, phaseStarted, PreparationSeconds));
         Volatile.Write(ref phase, (int)value);
     }
-    public async Task StartGameAsync(bool withPreCountdown = true, TimeSpan? preDuration = null, TimeSpan? duration = null, TimeSpan? deviation = null)
+    public Task StartGameAsync(TimeSpan? duration = null, TimeSpan? deviation = null) => StartGameAsync(true, duration, deviation);
+    /// <param name="withPreCountdown">False only in tests that need a game already running.</param>
+    internal async Task StartGameAsync(bool withPreCountdown, TimeSpan? duration = null, TimeSpan? deviation = null)
     {
         await commands.WaitAsync();
         try
@@ -59,7 +61,7 @@ public sealed class RgbAndSoundControlService(
             EnsureAvailable();
             if (IsLocating) throw new InvalidOperationException("A board is being located.");
             if (Phase is GamePhase.PreCountdown or GamePhase.Running) throw new InvalidOperationException("A game is already active.");
-            countdown.Start(withPreCountdown, preDuration, duration, deviation);
+            countdown.Start(withPreCountdown, duration, deviation);
             PreparationSeconds = countdown.IsPreCountdownRunning ? countdown.PreCountdownRemaining.TotalSeconds : 0;
             switchedToRunning = false;
             rgb.IsUdpActive = true;

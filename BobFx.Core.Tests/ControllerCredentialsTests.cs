@@ -49,7 +49,7 @@ public sealed class ControllerCredentialsTests
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), TimeProvider.System);
         var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), TimeProvider.System);
         using var control = new RgbAndSoundControlService(countdown, rgb, new SoundService(NullLogger<SoundService>.Instance), TimeProvider.System, NullLogger<RgbAndSoundControlService>.Instance);
-        using var service = new BusyBarService(settings, control, countdown, clients, config, TimeProvider.System, credentials);
+        using var service = new BusyBarService(settings, control, clients, config, TimeProvider.System, credentials);
         Assert.Equal("27.5.0", await service.TestConnectionAsync(bar));
         Assert.Equal(1, clients.Calls);
         Assert.Equal(GamePhase.Idle, control.Phase);
@@ -84,7 +84,7 @@ public sealed class ControllerCredentialsTests
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), TimeProvider.System);
         var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), TimeProvider.System);
         using var control = new RgbAndSoundControlService(countdown, rgb, new SoundService(NullLogger<SoundService>.Instance), TimeProvider.System, NullLogger<RgbAndSoundControlService>.Instance);
-        using var service = new BusyBarService(settings, control, countdown, clients, config, TimeProvider.System, credentials, new WaitingStatusSource());
+        using var service = new BusyBarService(settings, control, clients, config, TimeProvider.System, credentials, new WaitingStatusSource());
         await service.StartAsync(CancellationToken.None);
         try
         {

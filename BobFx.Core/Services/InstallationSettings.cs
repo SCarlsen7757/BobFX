@@ -45,7 +45,6 @@ public sealed record BusyBarSettings
     public string Address { get; init; } = "";
     public int Port { get; init; } = 80;
     public bool Enabled { get; init; }
-    public bool ShowTimer { get; init; }
     public bool RemoteEnabled { get; init; }
     public string SecretName { get; init; } = "busybar_token";
 }

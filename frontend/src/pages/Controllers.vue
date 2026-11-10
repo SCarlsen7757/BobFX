@@ -20,7 +20,7 @@ function reload() {
 }
 watch(() => installation.data.value, () => { if (!controllers.value) reload(); }, { immediate: true });
 function edit(bar: RemoteController) { editing.value = clone(bar); password.value = ''; }
-function add() { edit({ id: newId(), name: 'BUSY Bar', address: '', port: 80, enabled: false, showTimer: false, remoteEnabled: false, secretName: 'busybar_token' }); }
+function add() { edit({ id: newId(), name: 'BUSY Bar', address: '', port: 80, enabled: false, remoteEnabled: false, secretName: 'busybar_token' }); }
 function remove(id: string) {
   controllers.value = controllers.value?.filter(bar => bar.id !== id);
   delete pendingPasswords[id];
@@ -78,8 +78,7 @@ onUnmounted(() => { password.value = ''; for (const id of Object.keys(pendingPas
       </div>
       <p v-if="installation.data.value?.value.passwordsSaved[editing.id]" class="password-status">{{ passwordHint }}</p>
       <label class="checkbox-label"><input v-model="editing.enabled" type="checkbox" />Enable integration</label>
-      <label class="checkbox-label"><input v-model="editing.showTimer" type="checkbox" />Show remaining game timer</label>
-      <label class="checkbox-label"><input v-model="editing.remoteEnabled" type="checkbox" />Enable START/BACK game controls</label>
+      <label class="checkbox-label"><input v-model="editing.remoteEnabled" type="checkbox" />Enable START and wheel-press game controls</label>
       <div class="button-group"><button @click="apply">Apply controller settings</button><button @click="mutation.mutate('test')">Test connection</button></div>
     </fieldset>
     <div class="button-group"><button class="primary" :disabled="busy || !canConfigure" @click="mutation.mutate('save')">Save controllers</button><button :disabled="busy" @click="reload">Reload saved controllers</button></div>

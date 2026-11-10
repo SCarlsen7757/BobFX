@@ -59,8 +59,10 @@ test('entering and leaving full screen preserves the running game and audio opt-
   await headerAudio.click();
   await expect(page.getByRole('button', { name: 'Mute audio', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Start Countdown', exact: true }).click();
+  // The pre-countdown is always three seconds, so the game starts running while this test works.
   await expect(page.getByRole('button', { name: 'Stop pre-countdown' })).toBeVisible();
-  const initial = await (await request.get('/api/countdown/status')).json();
+  await expect(page.getByRole('timer', { name: 'Seconds until game starts' })).toHaveText(/^[1-3]$/);
+  const initial = await (await request.get('/api/ui/state')).json();
   await page.getByRole('link', { name: 'Full screen', exact: true }).click();
   await expect(page).toHaveURL(/\/game\/fullscreen$/);
   if (await page.evaluate(() => document.fullscreenEnabled)) {
@@ -68,18 +70,17 @@ test('entering and leaving full screen preserves the running game and audio opt-
   }
   await expect(page.getByRole('navigation')).toHaveCount(0);
   await expect(page.locator('.game-heading').getByRole('button', { name: 'Mute audio', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('button', { name: 'Stop pre-countdown' })).toBeVisible();
-  const current = await (await request.get('/api/countdown/status')).json();
-  expect(current.phase).toBe('PreCountdown');
-  expect(current.preRemainingSeconds).toBeLessThanOrEqual(initial.preRemainingSeconds);
-  expect(current.preRemainingSeconds).toBeGreaterThan(0);
+  await expect(page.getByRole('button', { name: /^Stop (pre-countdown|Countdown)$/ })).toBeVisible();
+  const current = await (await request.get('/api/ui/state')).json();
+  expect(['PreCountdown', 'Running']).toContain(current.game.value.phase);
+  expect(current.game.value.runId).toBe(initial.game.value.runId); // Still the same game.
   await page.getByRole('link', { name: 'Exit full screen' }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(false);
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
   await expect(page.locator('.app-header').getByRole('button', { name: 'Mute audio', exact: true })).toHaveAttribute('aria-pressed', 'true');
   page.once('dialog', dialog => dialog.accept());
-  await page.getByRole('button', { name: 'Stop pre-countdown' }).click();
+  await page.getByRole('button', { name: /^Stop (pre-countdown|Countdown)$/ }).click();
   await expect(page.getByRole('button', { name: 'Start Countdown', exact: true })).toBeVisible();
 });
 
@@ -102,7 +103,8 @@ test('running game keeps Stop available during BOB and hides the remaining time'
   expect((await request.post('/api/countdown/start', {
     data: { durationSeconds: 60, deviationSeconds: 0 },
   })).ok()).toBeTruthy();
-  await expect(page.getByText('BOB!', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Stop pre-countdown' })).toBeVisible();
+  await expect(page.getByText('BOB!', { exact: true })).toBeVisible({ timeout: 10000 }); // After the three-second pre-countdown.
   await expect(page.getByRole('button', { name: 'Stop Countdown', exact: true })).toBeVisible();
   await expect(page.getByRole('timer')).toHaveCount(0);
   await expect(page.getByText('Game on!', { exact: true })).toBeVisible();
@@ -127,11 +129,11 @@ test('two screens receive the same live game without polling or reloading', asyn
   second.on('pageerror', error => errors.push(error.message));
   try {
     await ready(second, '/game/fullscreen');
-    expect((await request.post('/api/countdown/start-with-pre')).ok()).toBeTruthy();
-    await expect(page.getByRole('button', { name: 'Stop pre-countdown' })).toBeVisible();
-    await expect(second.getByRole('button', { name: 'Stop pre-countdown' })).toBeVisible();
+    expect((await request.post('/api/countdown/start')).ok()).toBeTruthy();
+    await expect(page.getByRole('button', { name: /^Stop (pre-countdown|Countdown)$/ })).toBeVisible();
+    await expect(second.getByRole('button', { name: /^Stop (pre-countdown|Countdown)$/ })).toBeVisible();
     second.once('dialog', dialog => dialog.accept());
-    await second.getByRole('button', { name: 'Stop pre-countdown' }).click();
+    await second.getByRole('button', { name: /^Stop (pre-countdown|Countdown)$/ }).click();
     await expect(page.getByRole('button', { name: 'Start Countdown', exact: true })).toBeVisible();
     await expect(second.getByRole('button', { name: 'Start Countdown', exact: true })).toBeVisible();
     expect(errors).toEqual([]);
@@ -144,10 +146,10 @@ test('offline controls cannot queue a command and reconnect restores current ser
   await context.setOffline(true);
   await expect(page.getByTestId('connection-status')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start Countdown', exact: true })).toBeDisabled();
-  expect((await request.post('/api/countdown/start-with-pre')).ok()).toBeTruthy();
+  expect((await request.post('/api/countdown/start')).ok()).toBeTruthy();
   await context.setOffline(false);
   await expect(page.getByTestId('connection-status')).toBeHidden({ timeout: 10000 });
-  await expect(page.getByRole('button', { name: 'Stop pre-countdown' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: /^Stop (pre-countdown|Countdown)$/ })).toBeEnabled();
 });
 
 test('mountains move without an animation toggle or saved opt-out', async ({ page }) => {
@@ -213,10 +215,10 @@ test('a delayed initial snapshot cannot overwrite a newer realtime update', asyn
   });
   try {
     await page.goto('/'); await captured;
-    expect((await request.post('/api/countdown/start-with-pre')).ok()).toBeTruthy();
+    expect((await request.post('/api/countdown/start')).ok()).toBeTruthy();
     await expect.poll(() => liveUpdateReceived).toBe(true);
     release();
-    await expect(page.getByRole('button', { name: 'Stop pre-countdown' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: /^Stop (pre-countdown|Countdown)$/ })).toBeEnabled();
   } finally { release(); }
 });
 

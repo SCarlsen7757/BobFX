@@ -21,23 +21,24 @@ public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<
     public bool IsPreCountdownRunning => Snapshot.IsPreCountdownRunning;
     public TimeSpan Remaining => Snapshot.Remaining;
     public TimeSpan PreCountdownRemaining => Snapshot.PreCountdownRemaining;
-    public TimeSpan PreCountdownDuration => TimeSpan.FromSeconds(options.Value.PreDurationSeconds);
+    /// <summary>Every game is preceded by the same short preparation; it is not configurable.</summary>
+    public static readonly TimeSpan PreCountdownDuration = TimeSpan.FromSeconds(3);
     public TimeSpan CountdownDuration => TimeSpan.FromSeconds(options.Value.DurationSeconds);
     public TimeSpan CountdownDeviation => TimeSpan.FromSeconds(options.Value.DeviationSeconds);
 
-    internal void Start(bool withPre, TimeSpan? pre = null, TimeSpan? duration = null, TimeSpan? deviation = null)
+    /// <param name="withPre">False only in tests that need a game already running.</param>
+    internal void Start(bool withPre = true, TimeSpan? duration = null, TimeSpan? deviation = null)
     {
-        var preDuration = pre ?? PreCountdownDuration;
+        var preDuration = PreCountdownDuration;
         var baseDuration = duration ?? CountdownDuration;
         var variation = deviation ?? CountdownDeviation;
-        if (preDuration < TimeSpan.Zero || preDuration > TimeSpan.FromMinutes(1) ||
-            baseDuration < TimeSpan.FromSeconds(1) || baseDuration > TimeSpan.FromHours(24) ||
+        if (baseDuration < TimeSpan.FromSeconds(1) || baseDuration > TimeSpan.FromHours(24) ||
             variation < TimeSpan.Zero || variation >= baseDuration || variation.Ticks % TimeSpan.TicksPerSecond != 0)
-            throw new ArgumentException("Use a pre-countdown of 0–60 seconds, duration of 1 second–24 hours, and whole-second deviation smaller than duration.");
+            throw new ArgumentException("Use a duration of 1 second–24 hours and a whole-second deviation smaller than duration.");
         var seconds = (int)variation.TotalSeconds;
         gameDuration = baseDuration + TimeSpan.FromSeconds(Random.Shared.Next(-seconds, seconds + 1));
         startedAt = clock.GetTimestamp();
-        var preActive = withPre && preDuration > TimeSpan.Zero;
+        var preActive = withPre;
         phaseDuration = preActive ? preDuration : gameDuration;
         Volatile.Write(ref snapshot, new(!preActive, preActive, preActive ? TimeSpan.Zero : gameDuration,
             preActive ? preDuration : TimeSpan.Zero, Snapshot.RunId + 1, preActive ? null : clock.GetUtcNow()));

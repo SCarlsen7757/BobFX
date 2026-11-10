@@ -85,7 +85,6 @@ Configuration uses normal ASP.NET Core precedence: appsettings, environment-spec
 | `WLed__Udp__TargetPort` | Legacy transport/test setting; registered devices use their reported UDP port |
 | `WLed__Udp__UpdateIntervalMs` | Legacy transport/test setting; installation frame rate is configured in Board layout |
 | `WLed__Discovery__UpdateIntervalSeconds` | 30; 5–3600 seconds |
-| `Countdown__PreDurationSeconds` | 5; 0–60 seconds |
 | `Countdown__DurationSeconds` | 600; 1–86400 seconds |
 | `Countdown__DeviationSeconds` | 120; nonnegative and below duration |
 | `AllowedHosts` | Explicit semicolon-separated names/IPs required in Production |
@@ -111,9 +110,9 @@ Example commands from a trusted LAN client, while no game owns the output:
 curl -X POST http://bobfx.local:5159/api/drgb/start \
   -H 'Content-Type: application/json' -d '{"effect":"Rainbow","speedMs":100}'
 curl -X POST http://bobfx.local:5159/api/drgb/stop
-curl -X POST http://bobfx.local:5159/api/countdown/start-with-pre \
+curl -X POST http://bobfx.local:5159/api/countdown/start \
   -H 'Content-Type: application/json' \
-  -d '{"preDurationSeconds":5,"durationSeconds":600,"deviationSeconds":120}'
+  -d '{"durationSeconds":600,"deviationSeconds":120}'
 curl -X POST http://bobfx.local:5159/api/countdown/stop
 ```
 

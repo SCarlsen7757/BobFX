@@ -102,37 +102,50 @@ public sealed class InstallationTests
         Assert.Equal(data, packets.SelectMany(p => p.Skip(4)).ToArray());
     }
     [Fact]
-    public void BusyBarColorModeContainsNoTimerAndInputIgnoresReleasesUnknownAndMalformedFrames()
+    public void BusyBarRunningScreenContainsNoTimerAndInputIgnoresBackReleasesUnknownAndMalformedFrames()
     {
-        var colors = JsonSerializer.Serialize(BusyBarService.BuildDisplay(false, GamePhase.Running, 5, 5, TimeSpan.FromSeconds(123), new()));
-        Assert.DoesNotContain("timer", colors); Assert.DoesNotContain("2:03", colors);
-        var timer = JsonSerializer.Serialize(BusyBarService.BuildDisplay(true, GamePhase.Running, 5, 5, TimeSpan.FromSeconds(123), new()));
-        Assert.Contains("2:03", timer);
-        Assert.Contains("bobfx-running-", colors);
-        Assert.Contains("animation", colors);
+        var running = JsonSerializer.Serialize(BusyBarService.BuildDisplay(GamePhase.Running, 5, 5, new()));
+        Assert.DoesNotContain("timer", running); Assert.DoesNotContain("countdown", running); Assert.DoesNotContain("text", running);
+        Assert.Contains("bobfx-running-b1-", running);
+        Assert.Contains("bobfx-running-b0-", JsonSerializer.Serialize(BusyBarService.BuildDisplay(GamePhase.Running, 5, 5, new(), BusyBarAnimFormat.Bicycle0)));
+        Assert.Contains("animation", running);
         // State.updates(2) -> StateUpdate.input(11) -> InputEvent.button_event(1).
         Assert.Equal(new[] { 2 }, BusyBarInputDecoder.Presses([0x12, 6, 0x5a, 4, 0x0a, 2, 0x08, 2]));
-        Assert.Equal(new[] { 1 }, BusyBarInputDecoder.Presses([0x12, 6, 0x5a, 4, 0x0a, 2, 0x08, 1]));
+        // Pressing the wheel is OK, button 0: sent explicitly, or omitted as the protobuf default.
+        Assert.Equal(new[] { 0 }, BusyBarInputDecoder.Presses([0x12, 6, 0x5a, 4, 0x0a, 2, 0x08, 0]));
+        Assert.Equal(new[] { 0 }, BusyBarInputDecoder.Presses([0x12, 4, 0x5a, 2, 0x0a, 0]));
+        Assert.Empty(BusyBarInputDecoder.Presses([0x12, 6, 0x5a, 4, 0x0a, 2, 0x10, 1])); // Wheel released.
+        Assert.Empty(BusyBarInputDecoder.Presses([0x12, 6, 0x5a, 4, 0x0a, 2, 0x08, 1])); // BACK belongs to the bar.
+        Assert.Empty(BusyBarInputDecoder.Presses([0x12, 6, 0x5a, 4, 0x1a, 2, 0x08, 1])); // Turning the wheel.
         Assert.Empty(BusyBarInputDecoder.Presses([0x12, 8, 0x5a, 6, 0x0a, 4, 0x08, 2, 0x10, 1]));
         Assert.Empty(BusyBarInputDecoder.Presses([0x12, 6, 0x5a, 4, 0x0a, 2, 0x08, 99]));
-        Assert.Empty(BusyBarInputDecoder.Presses([0x12, 4, 0x5a, 2, 0x0a, 0])); // Default OK/PRESS.
         Assert.Throws<InvalidDataException>(() => BusyBarInputDecoder.Presses([0x12, 99]));
     }
     [Fact]
-    public void BusyBarPreparationAlwaysShowsSecondsAndIdleIsBranded()
+    public void BusyBarPreparationPlaysTheCountdownClipAndIdleIsBranded()
     {
-        foreach (var showTimer in new[] { false, true })
-        {
-            var display = JsonSerializer.SerializeToElement(BusyBarService.BuildDisplay(showTimer, GamePhase.PreCountdown, 1.2, 5, TimeSpan.FromSeconds(123), new()));
-            var text = display.GetProperty("elements").EnumerateArray().Where(e => e.TryGetProperty("text", out _)).Select(e => e.GetProperty("text").GetString()).ToArray();
-            Assert.Contains("4", text);
-            Assert.Contains("bobfx-scanner-", display.ToString());
-            Assert.DoesNotContain("2:03", text);
-        }
-        var idle = JsonSerializer.Serialize(BusyBarService.BuildDisplay(false, GamePhase.Idle, 2, 5, TimeSpan.Zero, new()));
+        // The seconds are baked into the countdown clip, so no text element is ever sent.
+        var display = JsonSerializer.Serialize(BusyBarService.BuildDisplay(GamePhase.PreCountdown, 1.2, 5, new()));
+        Assert.Contains("bobfx-countdown5-", display); Assert.Contains("from1", display); Assert.DoesNotContain("text", display);
+        var idle = JsonSerializer.Serialize(BusyBarService.BuildDisplay(GamePhase.Idle, 2, 5, new()));
         Assert.Contains("bobfx-idle-", idle);
-        var go = JsonSerializer.Serialize(BusyBarService.BuildDisplay(true, GamePhase.Running, 0.2, 5, TimeSpan.FromSeconds(123), new()));
-        Assert.Contains("bobfx-go-", go); Assert.DoesNotContain("2:03", go);
+        var go = JsonSerializer.Serialize(BusyBarService.BuildDisplay(GamePhase.Running, 0.2, 5, new()));
+        Assert.Contains("bobfx-go-", go);
+    }
+    [Fact]
+    public async Task SettingsSavedWithTheRemovedBusyBarTimerOptionStillLoad()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        await File.WriteAllTextAsync(Path.Combine(path, "settings.json"), """
+            { "version": 1, "controllers": [ { "id": "remote", "name": "Family remote", "address": "192.168.1.30", "port": 80,
+              "enabled": true, "showTimer": true, "remoteEnabled": true, "secretName": "busybar_token" } ] }
+            """);
+        var store = Store(path);
+        var bar = Assert.Single(store.Snapshot.Controllers);
+        Assert.True(bar.Enabled); Assert.True(bar.RemoteEnabled); Assert.Equal("Family remote", bar.Name);
+        await store.SaveAsync(store.Snapshot);
+        Assert.DoesNotContain("showTimer", await File.ReadAllTextAsync(Path.Combine(path, "settings.json")));
     }
     [Fact]
     public async Task LocateOwnsOutputAndRejectsGameManualAndOtherLocate()
@@ -148,12 +161,12 @@ public sealed class InstallationTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.LocateAsync(() => Task.CompletedTask));
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid)));
         release.SetResult(); await locating;
-        await control.StartGameAsync(true, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(60), TimeSpan.Zero);
+        await control.StartGameAsync(TimeSpan.FromSeconds(60), TimeSpan.Zero);
         Assert.False(timer.IsRunning); Assert.Equal(GamePhase.PreCountdown, control.Phase);
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.LocateAsync(() => Task.CompletedTask));
         await control.StartAsync(CancellationToken.None);
         await Eventually(() => control.IsReady);
-        clock.Advance(TimeSpan.FromSeconds(5));
+        clock.Advance(CountdownService.PreCountdownDuration);
         await Eventually(() => control.Phase == GamePhase.Running);
         Assert.True(timer.IsRunning); Assert.Equal(TimeSpan.FromSeconds(60), timer.Remaining);
         await control.StopAsync(CancellationToken.None);

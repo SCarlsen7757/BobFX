@@ -12,7 +12,6 @@ services:
       ASPNETCORE_HTTP_PORTS: "8080"
       AllowedHosts: "localhost;127.0.0.1"
       WLed__Discovery__UpdateIntervalSeconds: "30"
-      Countdown__PreDurationSeconds: "5"
       Countdown__DurationSeconds: "60"
       Countdown__DeviationSeconds: "20"
     restart: "no"
