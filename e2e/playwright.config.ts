@@ -22,7 +22,7 @@ export default defineConfig({
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
     {
       name: 'ipad-webkit',
-      testMatch: /(?:game-display|installation)\.spec\.ts/,
+      testMatch: /(?:game-display|installation|light-show)\.spec\.ts/,
       use: { ...devices['iPad (gen 7)'] },
     },
   ],
@@ -38,7 +38,6 @@ export default defineConfig({
       ASPNETCORE_URLS: baseURL,
       AllowedHosts: '127.0.0.1;localhost',
       Security__AllowedClientNetworks__0: '127.0.0.0/8',
-      WLed__Udp__TargetAddress: '127.0.0.1',
       WLed__Led__LedCount: '30',
       WLed__Discovery__UpdateIntervalSeconds: '3600',
       Countdown__DurationSeconds: '60',

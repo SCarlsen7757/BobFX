@@ -11,6 +11,7 @@ public sealed record InstallationSettings
     public List<BoardSettings> Boards { get; init; } = [];
     public IdleSyncSettings IdleSync { get; init; } = new();
     public AnimationSettings Animation { get; init; } = new();
+    public LightShowSettings LightShow { get; init; } = new();
     public List<BusyBarSettings> Controllers { get; init; } = [];
 }
 public sealed record DeviceSettings(string Mac, string Name, string Address, int HttpPort, int LedCount, int UdpPort, bool Selected = true);
@@ -37,6 +38,24 @@ public sealed record AnimationSettings
     public double FlashSeconds { get; init; } = 2;
     public double DotSeconds { get; init; } = 3;
     public double DotLapsPerSecond { get; init; } = 4;
+}
+/// <summary>Look of the board light show. Kept apart from <see cref="AnimationSettings"/>, whose
+/// values also time the BUSY Bar clips.</summary>
+public sealed record LightShowSettings
+{
+    public string Theme { get; init; } = "neonSunset";
+    public LightShowColors Custom { get; init; } = new();
+    public int Brightness { get; init; } = 100;
+    /// <summary>Drift speed of the playing phase in percent; the big moments stay clock-locked.</summary>
+    public int Speed { get; init; } = 100;
+    public string Intensity { get; init; } = "calm";
+}
+public sealed record LightShowColors
+{
+    public string Primary { get; init; } = "#ff4fad";
+    public string Secondary { get; init; } = "#ffad66";
+    public string Tertiary { get; init; } = "#8c50ff";
+    public string Accent { get; init; } = "#96eddf";
 }
 public sealed record BusyBarSettings
 {
@@ -97,7 +116,7 @@ public sealed class InstallationSettingsStore
     public static void Validate(InstallationSettings value)
     {
         if (value.Version != 1) throw new ArgumentException("Unsupported settings version; restore a compatible backup.");
-        if (value.Devices is null || value.Boards is null || value.Controllers is null || value.Animation is null || value.IdleSync is null)
+        if (value.Devices is null || value.Boards is null || value.Controllers is null || value.Animation is null || value.IdleSync is null || value.LightShow is null)
             throw new ArgumentException("Settings sections cannot be null.");
         if (value.Devices.Any(d => d is null) || value.Boards.Any(b => b is null) || value.Controllers.Any(c => c is null))
             throw new ArgumentException("Settings entries cannot be null.");
@@ -136,11 +155,19 @@ public sealed class InstallationSettingsStore
         var a = value.Animation;
         if (a.FramesPerSecond is < 10 or > 60 || !double.IsFinite(a.FlashSeconds) || a.FlashSeconds is < 1 or > 10 || !double.IsFinite(a.DotSeconds) || a.DotSeconds is < 1 or > 30 || !double.IsFinite(a.DotLapsPerSecond) || a.DotLapsPerSecond is < 1 or > 20)
             throw new ArgumentException("Animation timings or frame rate are outside supported limits.");
+        var show = value.LightShow;
+        if (!BoardLightShow.KnownTheme(show.Theme) || BoardLightShow.Level(show.Intensity) is null ||
+            show.Brightness is < 20 or > 100 || show.Speed is < 25 or > 200 || show.Custom is null ||
+            !ValidColor(show.Custom.Primary) || !ValidColor(show.Custom.Secondary) || !ValidColor(show.Custom.Tertiary) || !ValidColor(show.Custom.Accent))
+            throw new ArgumentException("Light show needs a known theme and intensity, brightness 20–100%, speed 25–200% and #RRGGBB colors that are not black.");
         if (value.Controllers.Select(c => c.Id).Distinct().Count() != value.Controllers.Count) throw new ArgumentException("Controller IDs must be unique.");
         foreach (var c in value.Controllers)
             if (string.IsNullOrWhiteSpace(c.Id) || string.IsNullOrWhiteSpace(c.Name) || !LocalAddress(c.Address) || c.Port is < 1 or > 65535 || !Regex.IsMatch(c.SecretName ?? "", "^[a-zA-Z0-9_-]{1,64}$"))
                 throw new ArgumentException("Controllers require a private IPv4 address, valid port and a Docker secret name.");
     }
     public static bool LocalAddress(string address) => IPAddress.TryParse(address, out var ip) && WLedDiscoveryService.IsLocalDeviceAddress(ip);
+    /// <summary>#RRGGBB with at least one channel bright enough to light a board.</summary>
+    public static bool ValidColor(string? color) => color is { Length: 7 } && color[0] == '#' && color.Skip(1).All(char.IsAsciiHexDigit) &&
+        Enumerable.Range(0, 3).Max(i => Convert.ToInt32(color.Substring(1 + i * 2, 2), 16)) >= 0x30;
     public static bool ValidMac(string mac) => mac is { Length: 12 } && mac.All(c => char.IsAsciiHexDigit(c) && !char.IsUpper(c));
 }

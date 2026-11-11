@@ -73,24 +73,35 @@ public static class BoardSceneRenderer
         var boards = AssignedBoards(settings);
         var index = boards.FindIndex(b => b.Id == board.Id);
         if (index < 0) return output;
-        var total = boards.Count;
-        void Set(int pixel, double r, double g, double b)
+        if (phase == GamePhase.Idle) return output;
+        var show = settings.LightShow;
+        var timing = settings.Animation;
+        var colors = LightPalette.For(show);
+        var gain = show.Brightness / 100d;
+        byte Channel(double value) => (byte)Math.Clamp(Math.Round(value * gain), 0, 255);
+        void Set(int pixel, Rgb color)
         {
             if (pixel < 0 || pixel >= count) return;
-            output[pixel * 3] = (byte)Math.Clamp(r * 255, 0, 255);
-            output[pixel * 3 + 1] = (byte)Math.Clamp(g * 255, 0, 255);
-            output[pixel * 3 + 2] = (byte)Math.Clamp(b * 255, 0, 255);
+            output[pixel * 3] = Channel(color.R); output[pixel * 3 + 1] = Channel(color.G); output[pixel * 3 + 2] = Channel(color.B);
         }
-        if (phase == GamePhase.Ending && elapsed >= settings.Animation.FlashSeconds)
+        // The second part of the ending: a comet runs the dot path over a glow that sinks to black.
+        Dictionary<int, double>? trail = null;
+        Rgb glow = default;
+        double since = 0, tail = 1;
+        if (phase == GamePhase.Ending && elapsed >= timing.FlashSeconds)
         {
+            since = elapsed - timing.FlashSeconds;
+            glow = BoardLightShow.Afterglow(colors, since, timing.DotSeconds);
+            (var head, tail) = BoardLightShow.Comet(since, timing);
             var path = DotPath(boards);
-            if (path.Count > 0)
+            trail = [];
+            for (var step = 0; step < path.Count; step++)
             {
-                var position = (int)((elapsed - settings.Animation.FlashSeconds) * settings.Animation.DotLapsPerSecond * path.Count) % path.Count;
-                var dot = path[position];
-                if (dot.BoardId == board.Id) Set(dot.Pixel, 1, 0, 0);
+                if (path[step].BoardId != board.Id) continue;
+                // An interior board is on the path twice; each pixel keeps its position nearest the head.
+                var behind = BusyBarScene.Frac(head - step / (double)path.Count);
+                if (behind < tail && (!trail.TryGetValue(path[step].Pixel, out var nearest) || behind < nearest)) trail[path[step].Pixel] = behind;
             }
-            return output;
         }
         for (var edge = 0; edge < 4; edge++)
         {
@@ -99,25 +110,15 @@ public static class BoardSceneRenderer
             {
                 var fraction = (p + 0.5) / pixels.Length;
                 var x = index + (edge == 0 ? fraction : edge == 1 ? 1 : edge == 2 ? 1 - fraction : 0);
-                if (phase == GamePhase.PreCountdown)
+                var at = new BoardLightShow.Spot(x, boards.Count, edge, index, (edge + fraction) / 4);
+                Set(pixels[p], phase switch
                 {
-                    var progress = preparationSeconds > 0 ? elapsed / preparationSeconds : 1;
-                    var lit = progress < 0.6 ? Math.Abs(x - progress / 0.6 * total) < 0.15
-                        : progress >= 0.8 || edge is 0 or 2;
-                    if (lit) Set(pixels[p], 0, 0, 1);
-                }
-                else if (phase == GamePhase.Running)
-                {
-                    if (elapsed < 0.75) Set(pixels[p], 0, 1, 0);
-                    else
-                    {
-                        var wave = (Math.Sin(x * Math.PI * 2 - elapsed * 3) + 1) / 2;
-                        var pulse = Math.Pow(Math.Max(0, Math.Cos(x * 2 - elapsed * 4)), 12);
-                        Set(pixels[p], pulse, 0.15 + 0.6 * wave + 0.25 * pulse, 0.25 + 0.6 * (1 - wave) + 0.15 * pulse);
-                    }
-                }
-                else if (phase == GamePhase.Ending && (int)(elapsed / settings.Animation.FlashSeconds * 6) % 2 == 0)
-                    Set(pixels[p], 1, 0, 0);
+                    GamePhase.PreCountdown => BoardLightShow.Countdown(colors, at, elapsed, preparationSeconds),
+                    GamePhase.Running => BoardLightShow.Running(colors, show, at, elapsed),
+                    _ when trail is null => BoardLightShow.Flare(colors, at, elapsed, timing.FlashSeconds),
+                    _ => trail.TryGetValue(pixels[p], out var behind)
+                        ? BoardLightShow.CometPixel(colors, glow, behind / tail, since, timing.DotSeconds) : glow
+                });
             }
         }
         return output;

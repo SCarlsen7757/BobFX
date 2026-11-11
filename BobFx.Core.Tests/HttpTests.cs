@@ -130,7 +130,7 @@ public sealed class HttpTests
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
         var effects = await client.GetFromJsonAsync<JsonElement>("/api/drgb/effects");
         Assert.True(effects.GetArrayLength() >= 10);
-        foreach (var path in new[] { "/", "/game/fullscreen", "/countdown", "/drgb", "/wled", "/ui/index.html", "/api/ui/state", "/api/wled/devices", "/sounds/game_over/game-over-yeah.mp3" })
+        foreach (var path in new[] { "/", "/game/fullscreen", "/countdown", "/lights", "/drgb", "/wled", "/ui/index.html", "/api/ui/state", "/api/wled/devices", "/sounds/game_over/game-over-yeah.mp3" })
         {
             var response = await client.GetAsync(path);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -184,6 +184,76 @@ public sealed class HttpTests
         Assert.Equal("PreCountdown", changed.GetProperty("value").GetProperty("phase").GetString());
     }
 
+    private static InstallationSettings OneBoard() => new()
+    {
+        Devices = [new("001122334455", "Board", "192.168.1.20", 80, 16, 21324)],
+        Boards = [new() { Id = "a", Name = "A", DeviceMac = "001122334455", Edges = [new(0, 4), new(4, 4), new(8, 4), new(12, 4)] }]
+    };
+
+    [Fact]
+    public async Task LightShowSectionSavePreservesOtherSections()
+    {
+        await using var app = new TestApp();
+        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", OneBoard())).StatusCode);
+        var themes = await client.GetFromJsonAsync<JsonElement>("/api/installation/light-show/themes");
+        Assert.Equal(new[] { "neonSunset", "aurora", "ember" }, themes.EnumerateArray().Select(t => t.GetProperty("id").GetString()));
+        Assert.Equal("#ff4fad", themes[0].GetProperty("primary").GetString());
+
+        var animation = new { framesPerSecond = 25, flashSeconds = 2, dotSeconds = 4, dotLapsPerSecond = 3 };
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation/light-show",
+            new { lightShow = new { theme = "aurora", brightness = 60, speed = 150, intensity = "lively" }, animation })).StatusCode);
+        var saved = await client.GetFromJsonAsync<JsonElement>("/api/installation");
+        Assert.Equal("aurora", saved.GetProperty("lightShow").GetProperty("theme").GetString());
+        Assert.Equal(60, saved.GetProperty("lightShow").GetProperty("brightness").GetInt32());
+        Assert.Equal("#ff4fad", saved.GetProperty("lightShow").GetProperty("custom").GetProperty("primary").GetString());
+        Assert.Equal(4, saved.GetProperty("animation").GetProperty("dotSeconds").GetDouble());
+        Assert.Equal(1, saved.GetProperty("boards").GetArrayLength());
+
+        // Board layout no longer owns the animation timing, even when an old page still sends it.
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation/layout",
+            new { boards = OneBoard().Boards, idleSync = new IdleSyncSettings(), animation = new { framesPerSecond = 59 } })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/api/installation/light-show",
+            new { lightShow = new { theme = "aurora", brightness = 5 }, animation })).StatusCode);
+        saved = await client.GetFromJsonAsync<JsonElement>("/api/installation");
+        Assert.Equal(25, saved.GetProperty("animation").GetProperty("framesPerSecond").GetInt32());
+        Assert.Equal(60, saved.GetProperty("lightShow").GetProperty("brightness").GetInt32());
+    }
+
+    [Fact]
+    public async Task LightShowTestOwnsTheLightsUntilStoppedAndConflictsReturn409()
+    {
+        await using var app = new TestApp();
+        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        var test = new { segment = "playing", lightShow = new { theme = "ember" }, animation = new { } };
+        // Nothing to test on before a board is assigned.
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/installation/light-show/test", test)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", OneBoard())).StatusCode);
+
+        var started = await client.PostAsJsonAsync("/api/installation/light-show/test", test);
+        Assert.Equal(HttpStatusCode.OK, started.StatusCode);
+        Assert.Equal("playing", (await started.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("segment").GetString());
+        var state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state");
+        Assert.Equal("playing", state.GetProperty("installation").GetProperty("value").GetProperty("lightShowTest").GetProperty("segment").GetString());
+        Assert.Equal("neonSunset", state.GetProperty("installation").GetProperty("value").GetProperty("settings").GetProperty("lightShow").GetProperty("theme").GetString());
+
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Solid" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PutAsJsonAsync("/api/installation/light-show", new { lightShow = new { }, animation = new { } })).StatusCode);
+        // Another segment replaces the running test; an unknown one is rejected and changes nothing.
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/installation/light-show/test", new { segment = "gameOver", lightShow = new { }, animation = new { } })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/installation/light-show/test", new { segment = "idle", lightShow = new { }, animation = new { } })).StatusCode);
+        state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state");
+        Assert.Equal("gameOver", state.GetProperty("installation").GetProperty("value").GetProperty("lightShowTest").GetProperty("segment").GetString());
+
+        Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync("/api/installation/light-show/test")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync("/api/installation/light-show/test")).StatusCode);
+        state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state");
+        Assert.Equal(JsonValueKind.Null, state.GetProperty("installation").GetProperty("value").GetProperty("lightShowTest").ValueKind);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/installation/light-show/test", test)).StatusCode);
+    }
+
     private sealed class TestApp : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -193,7 +263,6 @@ public sealed class HttpTests
             {
                 ["AllowedHosts"] = "localhost",
                 ["Security:AllowedClientNetworks:0"] = "127.0.0.0/8",
-                ["WLed:Udp:TargetAddress"] = "127.0.0.1",
                 ["Settings:DataPath"] = Path.Combine(Path.GetTempPath(), "bobfx-http-" + Guid.NewGuid().ToString("N")),
             }));
             builder.ConfigureTestServices(services =>

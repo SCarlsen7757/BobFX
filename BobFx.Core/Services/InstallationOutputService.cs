@@ -8,6 +8,8 @@ namespace BobFx.Core.Services;
 
 public sealed record CalibrationView(string SessionId, string ActiveBoardId, DateTimeOffset ExpiresUtc);
 public sealed record CalibrationRequest(List<BoardSettings> Boards, string ActiveBoardId);
+public sealed record LightShowTestView(string Segment, DateTimeOffset EndsUtc);
+public sealed record LightShowTestRequest(string Segment, LightShowSettings LightShow, AnimationSettings Animation);
 
 public sealed class InstallationOutputService(InstallationSettingsStore settings, WLedDiscoveryService discovery,
     RgbAndSoundControlService control, DRgbService rgb, IHttpClientFactory httpFactory, TimeProvider clock,
@@ -29,6 +31,33 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
     private sealed record CalibrationDraft(CalibrationView View, InstallationSettings Settings, long Started);
     private CalibrationDraft? calibration;
     public CalibrationView? Calibration => Volatile.Read(ref calibration)?.View;
+    private sealed record LightTest(LightShowTestView View, InstallationSettings Settings, long Started);
+    private LightTest? lightTest;
+    public LightShowTestView? LightShowTest => Volatile.Read(ref lightTest)?.View;
+
+    /// <summary>Plays one moment of the light show on the real boards from unsaved settings. The test ends
+    /// by itself, so a closed browser cannot leave the boards lit; a new test replaces a running one.</summary>
+    public Task StartLightShowTestAsync(LightShowTestRequest request) => control.LightTestCommandAsync(() =>
+    {
+        if (Volatile.Read(ref stopping) != 0) throw new InvalidOperationException("Installation output is shutting down.");
+        if (request.LightShow is null || request.Animation is null) throw new ArgumentException("Light show and animation settings are required.");
+        var draft = settings.Snapshot with { LightShow = request.LightShow, Animation = request.Animation };
+        InstallationSettingsStore.Validate(draft);
+        var seconds = BoardLightShow.TestSeconds(request.Segment ?? "", draft.Animation)
+            ?? throw new ArgumentException("Choose countdown, playing or gameOver to test.");
+        if (BoardSceneRenderer.AssignedBoards(draft).Count == 0) throw new ArgumentException("Assign at least one board before testing the light show.");
+        Volatile.Write(ref lightTest, new(new(request.Segment!, clock.GetUtcNow().AddSeconds(seconds)), draft, clock.GetTimestamp()));
+        return true;
+    }, starting: true);
+
+    /// <summary>Stops the running test. With <paramref name="onlyIfStarted"/>, a test that replaced the
+    /// expired one is left playing.</summary>
+    public Task StopLightShowTestAsync(long? onlyIfStarted = null) => control.LightTestCommandAsync(() =>
+    {
+        var current = Volatile.Read(ref lightTest);
+        if (current is not null && (onlyIfStarted is null || onlyIfStarted == current.Started)) Volatile.Write(ref lightTest, null);
+        return Volatile.Read(ref lightTest) is not null;
+    });
 
     private InstallationSettings ValidateCalibration(CalibrationRequest request)
     {
@@ -133,6 +162,26 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
             yield return packet;
         }
     }
+    /// <summary>Sends one frame of the game scene to every assigned board that is not known to be offline.</summary>
+    private async Task SendSceneAsync(InstallationSettings source, GamePhase phase, double elapsed, double preparation, CancellationToken token)
+    {
+        var scene = source with { Boards = BoardSceneRenderer.AssignedBoards(source) };
+        foreach (var board in scene.Boards)
+        {
+            var saved = source.Devices.First(d => d.Mac == board.DeviceMac);
+            if (KnownOffline(saved)) continue;
+            var device = Resolve(saved);
+            try
+            {
+                if (board.Edges.Any(e => (long)e.Start + e.Count > device.LedCount))
+                    throw new ArgumentException("LED count changed; update this board's edge mapping.");
+                await SendAsync(device, BoardSceneRenderer.Render(scene, board, device.LedCount, phase, elapsed, preparation), token);
+                errors.TryRemove(device.Mac, out _);
+            }
+            catch (Exception ex) when (ex is SocketException or ArgumentException or IOException)
+            { errors[device.Mac] = ex.Message; }
+        }
+    }
     private async Task SendAsync(DeviceSettings device, byte[] pixels, CancellationToken token)
     {
         await transport.SendAsync(device, pixels, token);
@@ -158,39 +207,45 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
                     }
                     else await CalibrationFrameAsync(stoppingToken);
                 }
-                var active = rgb.IsUdpActive;
+                var test = Volatile.Read(ref lightTest);
+                if (test is not null)
+                {
+                    if (BoardLightShow.TestScene(test.View.Segment, clock.GetElapsedTime(test.Started).TotalSeconds, test.Settings.Animation) is { } moment)
+                        await SendSceneAsync(test.Settings, moment.Phase, moment.Elapsed, CountdownService.PreCountdownDuration.TotalSeconds, stoppingToken);
+                    else await StopLightShowTestAsync(test.Started);
+                }
+                var streaming = rgb.IsUdpActive;
+                // A finished test hands the boards back to WLED's idle state the same way a finished game does.
+                var active = streaming || test is not null;
                 if (wasActive && !active)
                 {
                     try { await control.ConfigureAsync(() => ApplyIdleSyncAsync(stoppingToken, false)); }
                     catch (InvalidOperationException) { /* A new game acquired output first. */ }
                 }
                 wasActive = active;
-                if (active)
+                if (streaming)
                 {
                     var scene = control.GetSceneFrame();
-                    var phase = scene.Phase;
-                    var elapsed = scene.Elapsed;
-                    var manual = phase == GamePhase.Idle ? rgb.GetSnapshot() : null;
-                    var sceneSettings = snapshot with { Boards = BoardSceneRenderer.AssignedBoards(snapshot) };
-                    foreach (var d in snapshot.Devices.Where(saved => saved.Selected).Where(saved => !KnownOffline(saved)).Select(Resolve))
+                    // The game plays on the boards only; a manual effect is mirrored to every selected device.
+                    if (scene.Phase != GamePhase.Idle) await SendSceneAsync(snapshot, scene.Phase, scene.Elapsed, scene.Preparation, stoppingToken);
+                    else
                     {
-                        try
+                        var manual = rgb.GetSnapshot();
+                        foreach (var d in snapshot.Devices.Where(saved => saved.Selected).Where(saved => !KnownOffline(saved)).Select(Resolve))
                         {
-                            var board = snapshot.Boards.FirstOrDefault(b => b.DeviceMac == d.Mac);
-                            if (phase != GamePhase.Idle && snapshot.Boards.Count > 0 && board is null) continue;
-                            if (board is not null && board.Edges.Any(e => (long)e.Start + e.Count > d.LedCount))
-                                throw new ArgumentException("LED count changed; update this board's edge mapping.");
-                            var pixels = board is not null && phase != GamePhase.Idle
-                                ? BoardSceneRenderer.Render(sceneSettings, board, d.LedCount, phase, elapsed, scene.Preparation)
-                                : BoardSceneRenderer.Resample(manual ?? rgb.GetSnapshot(), d.LedCount);
-                            await SendAsync(d, pixels, stoppingToken);
-                            errors.TryRemove(d.Mac, out _);
+                            try
+                            {
+                                if (snapshot.Boards.FirstOrDefault(b => b.DeviceMac == d.Mac) is { } board && board.Edges.Any(e => (long)e.Start + e.Count > d.LedCount))
+                                    throw new ArgumentException("LED count changed; update this board's edge mapping.");
+                                await SendAsync(d, BoardSceneRenderer.Resample(manual, d.LedCount), stoppingToken);
+                                errors.TryRemove(d.Mac, out _);
+                            }
+                            catch (Exception ex) when (ex is SocketException or ArgumentException or IOException)
+                            { errors[d.Mac] = ex.Message; }
                         }
-                        catch (Exception ex) when (ex is SocketException or ArgumentException or IOException)
-                        { errors[d.Mac] = ex.Message; }
                     }
                 }
-                await Task.Delay(TimeSpan.FromSeconds(1d / snapshot.Animation.FramesPerSecond), clock, stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(1d / (test?.Settings ?? snapshot).Animation.FramesPerSecond), clock, stoppingToken);
                 LastError = null;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
@@ -239,6 +294,7 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
             catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { logger.LogDebug("Locate completed before shutdown with a cancellation or device failure"); }
         await base.StopAsync(cancellationToken);
         if (Calibration is { } preview) await StopCalibrationAsync(preview.SessionId);
+        if (LightShowTest is not null) await StopLightShowTestAsync();
     }
     public override void Dispose()
     {

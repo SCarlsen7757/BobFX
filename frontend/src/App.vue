@@ -46,6 +46,7 @@ watch(() => route.path, async () => {
       <nav aria-label="Main navigation">
         <RouterLink to="/" :class="{ active: route.path === '/' }">Game</RouterLink>
         <RouterLink to="/countdown">Countdown settings</RouterLink>
+        <RouterLink to="/lights">Light show</RouterLink>
         <RouterLink to="/drgb">LED effects</RouterLink>
         <RouterLink to="/wled">WLED devices</RouterLink>
         <RouterLink to="/layout">Board layout</RouterLink>

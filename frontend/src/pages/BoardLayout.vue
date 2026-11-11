@@ -4,7 +4,7 @@ import { onBeforeRouteLeave } from 'vue-router';
 import { useMutation } from '@tanstack/vue-query';
 import { api } from '../lib/api';
 import { command, connected, synchronize, useInstallation } from '../lib/session';
-import { boardPixels, clone, newId, swapStrips, twoStripEdges, useCanConfigure, validateBoards } from '../lib/installation';
+import { boardPixels, clone, edgeStrips, newId, swapStrips, twoStripEdges, unevenStripNotice, unmappedLeds, useCanConfigure, validateBoards } from '../lib/installation';
 import type { Board, CalibrationSession, InstallationSettings } from '../lib/contracts';
 
 const installation = useInstallation();
@@ -21,6 +21,19 @@ const message = ref('');
 const advanced = ref(false);
 const edgeNames = ['Top', 'Right', 'Bottom', 'Left'];
 const edgeColors = ['#0060a0', '#008040', '#a06000', '#900060'];
+const stripColors = ['#ffad66', '#b18cff', '#96eddf', '#ff4fad'];
+function stripCount(board: Board) { return new Set(edgeStrips(board.edges).filter(strip => strip >= 0)).size; }
+function mappingLabel(board: Board) {
+  if (!board.deviceMac) return 'Unassigned';
+  const strips = stripCount(board);
+  return strips === 0 ? 'Not mapped' : strips === 1 ? '1 strip' : `${strips} strips`;
+}
+function spareLabel(board: Board) {
+  const device = draft.value?.devices.find(d => d.mac === board.deviceMac);
+  const spare = device && board.edges.length ? unmappedLeds(board, device.ledCount) : 0;
+  return spare === 0 ? '' : spare === 1 ? '1 LED unmapped' : `${spare} LEDs unmapped`;
+}
+const legendStrips = computed(() => Math.max(0, ...(draft.value?.boards.filter(b => b.deviceMac).map(stripCount) ?? [])));
 let beforeCalibration: InstallationSettings | undefined;
 let heartbeat: ReturnType<typeof setInterval> | undefined;
 let previewQueue: Promise<void> = Promise.resolve();
@@ -53,7 +66,7 @@ function assign(board: Board, value: string) {
   if (!device) return;
   const fits = board.edges.length === 4 && board.edges.every(e => e.start >= 0 && e.count >= 1 && e.start + e.count <= device.ledCount);
   if (!fits) {
-    try { board.edges = twoStripEdges(device.ledCount); }
+    try { board.edges = twoStripEdges(device.ledCount); message.value = unevenStripNotice(device.name, device.ledCount); }
     catch (error) { board.edges = []; advanced.value = true; selectedId.value = board.id; message.value = (error as Error).message; }
   }
 }
@@ -79,7 +92,7 @@ function defaultMapping() {
   try {
     const device = draft.value?.devices.find(d => d.mac === editing.value?.deviceMac);
     if (editing.value && device) editing.value.edges = twoStripEdges(device.ledCount);
-    message.value = '';
+    message.value = device ? unevenStripNotice(device.name, device.ledCount) : '';
   } catch (error) { message.value = (error as Error).message; }
 }
 function previewRequest() {
@@ -118,7 +131,7 @@ async function save() {
   if (!draft.value) return;
   validateBoards(draft.value);
   const idleSync = { ...draft.value.idleSync, followers: draft.value.idleSync.followers.filter(mac => mac !== draft.value!.idleSync.masterMac) };
-  await command('/api/installation/layout', { boards: draft.value.boards, idleSync, animation: draft.value.animation }, 'PUT');
+  await command('/api/installation/layout', { boards: draft.value.boards, idleSync }, 'PUT');
   message.value = Object.keys(installation.data.value?.value.outputErrors ?? {}).length ? 'Layout saved; check device errors.' : 'Layout saved.';
 }
 const mutation = useMutation({ mutationFn: async (action: 'save' | 'start' | 'finish' | 'cancel' | 'locate') => {
@@ -192,9 +205,13 @@ onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); leaving
                 <path d="M10 10H190" :stroke="edgeColors[0]" stroke-width="8" /><path d="M190 10V190" :stroke="edgeColors[1]" stroke-width="8" />
                 <path d="M190 190H10" :stroke="edgeColors[2]" stroke-width="8" /><path d="M10 190V10" :stroke="edgeColors[3]" stroke-width="8" />
               </template>
-              <template v-else><circle v-for="(pixel, pixelIndex) in boardPixels(board)" :key="pixelIndex" :cx="pixel.x" :cy="pixel.y" r="2.5" :fill="pixel.playerEdge ? '#96eddf' : '#ff4fad'"><title>LED {{ pixel.index }}</title></circle></template>
+              <template v-else v-for="(pixel, pixelIndex) in boardPixels(board)" :key="pixelIndex">
+                <circle v-if="pixel.stripStart" class="strip-start" :cx="pixel.x" :cy="pixel.y" r="6" fill="none" :stroke="stripColors[pixel.strip % 4]" stroke-width="1.5" />
+                <circle :cx="pixel.x" :cy="pixel.y" r="2.5" :fill="stripColors[pixel.strip % 4]"><title>Strip {{ pixel.strip + 1 }} · LED {{ pixel.index }}{{ pixel.stripStart ? ' (first LED)' : '' }}</title></circle>
+              </template>
               <text x="100" y="78" text-anchor="middle">{{ board.rotation }}°</text>
-              <text x="100" y="115" text-anchor="middle">{{ board.deviceMac ? 'Two strips' : 'Unassigned' }}</text>
+              <text x="100" y="115" text-anchor="middle">{{ mappingLabel(board) }}</text>
+              <text v-if="spareLabel(board)" x="100" y="132" text-anchor="middle">{{ spareLabel(board) }}</text>
               <text x="100" y="160" text-anchor="middle">Near side ↓</text>
             </svg>
             <strong>{{ index + 1 }}. {{ board.name }}</strong>
@@ -207,6 +224,7 @@ onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); leaving
           <div class="board-actions"><button :aria-label="`Move ${board.name} left`" :disabled="busy || index === 0" @click="move(index, -1)">←</button><button :aria-label="`Move ${board.name} right`" :disabled="busy || index === draft.boards.length - 1" @click="move(index, 1)">→</button><button :aria-label="`Remove ${board.name}`" :disabled="setupBusy" @click="remove(board.id)">Remove</button></div>
         </article>
       </div>
+      <p v-if="legendStrips && !sessionId" class="strip-legend"><span v-for="strip in legendStrips" :key="strip"><span class="strip-swatch" :style="{ background: stripColors[(strip - 1) % 4] }"></span>Strip {{ strip }}</span><span><span class="strip-swatch strip-swatch-start"></span>First LED of a strip</span></p>
       <section v-if="sessionId && editing" class="calibration-panel" aria-label="Board calibration">
         <h2>Check {{ selectedPosition + 1 }}. {{ editing.name }}</h2>
         <p>Stand on the near side shown below. Check the lit board’s position, then rotate until its edge colors match the screen. The white marker travels clockwise.</p>
@@ -234,7 +252,6 @@ onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); leaving
           <div class="parameters"><div><label for="idle-master">Master</label><select id="idle-master" v-model="draft.idleSync.masterMac"><option :value="null">Choose master</option><option v-for="device in draft.devices.filter(d => d.selected)" :key="device.mac" :value="device.mac">{{ device.name }}</option></select></div><div><label for="sync-group">Sync group</label><input id="sync-group" v-model.number="draft.idleSync.group" type="number" min="1" max="8" /></div></div>
           <div class="follower-list"><label v-for="device in draft.devices.filter(d => d.selected && d.mac !== draft!.idleSync.masterMac)" :key="device.mac" class="checkbox-label"><input v-model="draft.idleSync.followers" type="checkbox" :value="device.mac" />{{ device.name }}</label></div>
         </fieldset>
-        <fieldset class="settings-section" :disabled="setupBusy"><legend>Animation timing</legend><div class="parameters"><div><label for="fps">Frames per second</label><input id="fps" v-model.number="draft.animation.framesPerSecond" type="number" min="10" max="60" /></div><div><label for="flash-seconds">Red flash seconds</label><input id="flash-seconds" v-model.number="draft.animation.flashSeconds" type="number" min="1" max="10" step="0.1" /></div><div><label for="dot-seconds">Dot seconds</label><input id="dot-seconds" v-model.number="draft.animation.dotSeconds" type="number" min="1" max="30" step="0.1" /></div><div><label for="dot-speed">Dot circuits per second</label><input id="dot-speed" v-model.number="draft.animation.dotLapsPerSecond" type="number" min="1" max="20" step="0.1" /></div></div></fieldset>
       </details>
       <div v-if="!sessionId" class="button-group layout-save"><button class="primary" :disabled="busy" @click="mutation.mutate('save')">Save layout</button><button :disabled="setupBusy" @click="reload">Reload saved settings</button></div>
     </template>

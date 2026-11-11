@@ -88,6 +88,27 @@ test('layout persists board order and mappings and rejects overlaps', async ({ p
   } finally { expect((await request.put('/api/installation', { data: original })).ok()).toBeTruthy(); }
 });
 
+test('a controller whose LED total does not divide by four is mapped, explained and saved', async ({ page, request }) => {
+  const original = await (await request.get('/api/installation')).json();
+  try {
+    expect((await request.put('/api/installation', { data: { ...original, idleSync: { ...original.idleSync, enabled: false },
+      devices: [{ mac: '001122334455', name: 'Odd strip', address: '192.168.1.20', httpPort: 80, ledCount: 17, udpPort: 21324, selected: true }],
+      boards: [{ id: 'north', name: 'Board 1', deviceMac: null, rotation: 0, edges: [] }],
+    } })).ok()).toBeTruthy();
+    await page.goto('/layout');
+    await expect(page.getByRole('button', { name: 'Enable audio', exact: true })).toBeEnabled();
+    await page.getByLabel('WLED controller', { exact: true }).selectOption('001122334455');
+    await expect(page.locator('p[role="status"]')).toContainText('Odd strip reports 17 LEDs');
+    await expect(page.locator('p[role="status"]')).toContainText('The first 16 are mapped and the last one stays dark');
+    await page.getByRole('button', { name: 'Save layout', exact: true }).click();
+    await expect(page.locator('p[role="status"]')).toHaveText('Layout saved.');
+    const saved = (await (await request.get('/api/installation')).json()).boards[0];
+    expect(saved.deviceMac).toBe('001122334455');
+    expect(saved.edges).toEqual([{ start: 0, count: 4, reversed: false }, { start: 4, count: 4, reversed: false },
+      { start: 12, count: 4, reversed: true }, { start: 8, count: 4, reversed: true }]);
+  } finally { expect((await request.put('/api/installation', { data: original })).ok()).toBeTruthy(); }
+});
+
 test('boards can be added before controllers and calibrated without saving until finish', async ({ page, request }, testInfo) => {
   const original = await (await request.get('/api/installation')).json();
   let sessionId: string | undefined;
@@ -215,7 +236,8 @@ test('a failed finish save releases calibration and keeps the adjusted draft for
     } })).ok()).toBeTruthy();
     await page.goto('/layout');
     await page.getByText('Advanced settings', { exact: true }).click();
-    await page.getByLabel('Frames per second', { exact: true }).fill('9');
+    // Idle sync without a master is only rejected by the server, so the save after calibration fails.
+    await page.getByLabel('Enable WLED idle sync', { exact: true }).check();
     await page.getByRole('button', { name: 'Calibrate boards', exact: true }).click();
     const panel = page.getByRole('region', { name: 'Board calibration', exact: true });
     await expect(panel).toBeVisible();
@@ -223,12 +245,12 @@ test('a failed finish save releases calibration and keeps the adjusted draft for
     await panel.getByRole('button', { name: 'Rotate right', exact: true }).click();
     expectedApiErrors.add('400 /api/installation/layout');
     await panel.getByRole('button', { name: 'Finish and save', exact: true }).click();
-    await expect(page.locator('p[role="status"]')).toContainText('outside supported limits');
+    await expect(page.locator('p[role="status"]')).toContainText('Idle sync requires');
     sessionId = undefined;
     expect((await (await request.get('/api/ui/state')).json()).installation.value.calibration).toBeNull();
     expect((await (await request.get('/api/installation')).json()).boards[0].rotation).toBe(0);
     await expect(page.locator('.board-tile').first()).toContainText('90°');
-    await page.getByLabel('Frames per second', { exact: true }).fill('30');
+    await page.getByLabel('Enable WLED idle sync', { exact: true }).uncheck();
     await page.getByRole('button', { name: 'Save layout', exact: true }).click();
     await expect(page.locator('p[role="status"]')).toHaveText('Layout saved.');
     expect((await (await request.get('/api/installation')).json()).boards[0].rotation).toBe(90);

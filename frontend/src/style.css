@@ -42,7 +42,8 @@ button:disabled { opacity: .45; cursor: default; }
 input, select { min-height: 48px; max-width: 100%; padding: 10px 14px; font-size: 16px; color: var(--text); background: #160d23; border: 1px solid #765284; border-radius: 6px; }
 input[type='number'] { font-variant-numeric: tabular-nums; }
 input[type='color'] { width: 76px; padding: 5px; }
-input[type='checkbox'] { width: 20px; height: 20px; min-height: 0; margin: 0; accent-color: var(--pink); }
+input[type='checkbox'], input[type='radio'] { width: 20px; height: 20px; min-height: 0; margin: 0; padding: 0; accent-color: var(--pink); }
+input[type='range'] { padding: 0; border: 0; background: transparent; accent-color: var(--pink); }
 label { color: var(--muted); }
 ::selection { background: var(--pink); color: var(--ink); }
 .app-shell { position: relative; min-height: 100svh; display: flex; flex-direction: column; }
@@ -154,6 +155,8 @@ dialog::backdrop { background: #10091ecc; }
   .settings-page { padding: 24px 18px; border-radius: 12px; }
   .parameters > div { grid-template-columns: minmax(0, 1fr) 90px; gap: 12px; }
   .effect-parameters > div { grid-template-columns: minmax(0, 1fr) 80px 30px; gap: 8px; }
+  .slider-parameters > div { grid-template-columns: minmax(0, 1fr) minmax(90px, 140px) 44px; gap: 8px; }
+  .theme-option { flex: 1 1 100%; }
   .effect-parameters label { font-size: 14px; }
   .button-group > button { flex-grow: 1; }
 }
@@ -182,6 +185,10 @@ nav a { flex-shrink: 0; }
 .board-tile.selected { box-shadow: 0 0 0 2px var(--pink); }
 .board-tile svg { width: 180px; height: 180px; }
 .board-tile text { fill: var(--muted); font-size: 11px; }
+.strip-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: -8px 0 16px; color: var(--muted); font-size: 13px; }
+.strip-legend > span { display: inline-flex; align-items: center; gap: 8px; }
+.strip-swatch { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.strip-swatch-start { width: 14px; height: 14px; border: 1.5px solid var(--muted); }
 .board-actions { display: flex; gap: 6px; margin-top: 8px; }
 .board-actions button { padding: 10px 12px; flex: 1; }
 .layout-toolbar { align-items: center; }
@@ -212,6 +219,16 @@ legend { color: var(--text); padding: 0 8px; font-size: 15px; }
 .edge-indices { color: var(--muted); font-size: 12px; margin: 0; overflow-wrap: anywhere; }
 .follower-list { display: flex; flex-wrap: wrap; gap: 8px 24px; }
 .controller-editor { margin-top: 28px; max-width: 760px; }
+.light-show-page fieldset { max-width: 760px; }
+.light-show-page fieldset .parameters { margin: 20px 0 0; }
+.theme-options { display: flex; flex-wrap: wrap; gap: 12px; }
+.theme-option { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; }
+.theme-option:has(input:checked) { border-color: var(--pink); background: #2d1b3d; }
+.theme-swatch { width: 72px; height: 20px; border-radius: 4px; flex-shrink: 0; }
+.slider-parameters > div { grid-template-columns: minmax(0, 1fr) minmax(120px, 240px) 52px; }
+.slider-parameters select { grid-column: 2 / -1; }
+.slider-parameters output { color: var(--text); font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; }
+.test-status { color: var(--muted); font-size: 14px; margin: 16px 0 0; }
 .controller-editor .parameters { border: 0; margin-top: 0; padding-top: 0; max-width: none; }
 .controller-editor .parameters > div { grid-template-columns: 190px minmax(0, 1fr); }
 .controller-status, .password-status { color: var(--muted); font-size: 13px; margin: 12px 0 0; }

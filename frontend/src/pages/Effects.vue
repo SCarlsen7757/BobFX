@@ -29,7 +29,7 @@ const mutation = useMutation({ mutationFn: async (stop: boolean) => {
     ...(selected.value === 'Breathing' ? { breathDurationSeconds: breath.value, minBrightnessPercent: minimum.value, maxBrightnessPercent: maximum.value } : {}),
   });
 } });
-const busy = computed(() => !connected.value || mutation.isPending.value || !!installation.data.value?.value.calibration);
+const busy = computed(() => !connected.value || mutation.isPending.value || !!installation.data.value?.value.calibration || !!installation.data.value?.value.lightShowTest);
 </script>
 <template>
   <section class="settings-page effects-page">

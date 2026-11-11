@@ -18,9 +18,22 @@ public sealed class InstallationController(InstallationSettingsStore settings, R
     [HttpPut("layout")]
     public Task<IActionResult> SaveLayout(LayoutRequest value, CancellationToken token) => Execute(() => control.ConfigureAsync(async () =>
     {
-        await settings.UpdateAsync(s => s with { Boards = value.Boards, IdleSync = value.IdleSync, Animation = value.Animation }, token);
+        await settings.UpdateAsync(s => s with { Boards = value.Boards, IdleSync = value.IdleSync }, token);
         await output.ApplyIdleSyncAsync(token);
     }));
+    [HttpPut("light-show")]
+    public Task<IActionResult> SaveLightShow(LightShowRequest value, CancellationToken token) => Execute(() => control.ConfigureAsync(() =>
+        settings.UpdateAsync(s => s with { LightShow = value.LightShow, Animation = value.Animation }, token)));
+    [HttpGet("light-show/themes")]
+    public IReadOnlyList<LightShowTheme> LightShowThemes() => BoardLightShow.Themes;
+    [HttpPost("light-show/test")]
+    public async Task<IActionResult> StartLightShowTest(LightShowTestRequest request)
+    {
+        var result = await Execute(() => output.StartLightShowTestAsync(request));
+        return result is OkResult ? Ok(output.LightShowTest) : result;
+    }
+    [HttpDelete("light-show/test")]
+    public Task<IActionResult> StopLightShowTest() => Execute(() => output.StopLightShowTestAsync());
     [HttpPut("controllers")]
     public Task<IActionResult> SaveControllers(ControllersRequest value, CancellationToken token) => Execute(() => control.ConfigureAsync(async () =>
     {
@@ -102,7 +115,8 @@ public sealed class InstallationController(InstallationSettingsStore settings, R
 }
 public sealed record ManualDeviceRequest(string Address, int Port = 80);
 public sealed record ControllerPasswordRequest(string Password);
-public sealed record LayoutRequest(List<BoardSettings> Boards, IdleSyncSettings IdleSync, AnimationSettings Animation);
+public sealed record LayoutRequest(List<BoardSettings> Boards, IdleSyncSettings IdleSync);
+public sealed record LightShowRequest(LightShowSettings LightShow, AnimationSettings Animation);
 public sealed record ControllersRequest(List<BusyBarSettings> Controllers, Dictionary<string, string> Passwords);
 public sealed record ControllerTestRequest(BusyBarSettings Controller, string? Password = null);
 public sealed record DeviceSelectionRequest(bool Selected);

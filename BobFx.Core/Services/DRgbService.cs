@@ -61,16 +61,6 @@ public sealed class DRgbService : BackgroundService
     }
     public RgbStatus GetStatus() { lock (sync) return new(currentEffect?.EffectType ?? RgbEffect.Off, currentEffect?.Speed ?? TimeSpan.FromMilliseconds(100), leds.Length, IsUdpActive, LastError); }
     public Vector3[] GetSnapshot() { lock (sync) return (Vector3[])leds.Clone(); }
-    public void CopyTo(Span<byte> destination)
-    {
-        if (destination.Length < leds.Length * 3) throw new ArgumentException("Destination is too small.", nameof(destination));
-        lock (sync)
-            for (var i = 0; i < leds.Length; i++)
-            {
-                var (r, g, b) = ColorHelper.ToRgbBytes(leds[i]);
-                destination[i * 3] = r; destination[i * 3 + 1] = g; destination[i * 3 + 2] = b;
-            }
-    }
     private static void Validate(IRgbEffect effect) => EffectValidation.EnsureValid(effect);
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

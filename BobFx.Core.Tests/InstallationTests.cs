@@ -207,30 +207,44 @@ public sealed class InstallationTests
     public void PreparationLightsPlayerEdgesThenRemainingEdgesAndGo()
     {
         var settings = Installation(); var board = settings.Boards[0];
+        static byte Peak(byte[] frame, int pixel) => frame[(pixel * 3)..(pixel * 3 + 3)].Max();
+        // Sampled half a second after a count, when the white pop has faded.
         var player = BoardSceneRenderer.Render(settings, board, 16, GamePhase.PreCountdown, 3.5, 5);
-        Assert.All(Enumerable.Range(0, 4).Concat(Enumerable.Range(8, 4)), i => Assert.Equal(255, player[i * 3 + 2]));
-        Assert.All(Enumerable.Range(4, 4).Concat(Enumerable.Range(12, 4)), i => Assert.Equal(0, player[i * 3 + 2]));
+        Assert.All(Enumerable.Range(0, 4).Concat(Enumerable.Range(8, 4)), i => Assert.True(Peak(player, i) > 100));
+        Assert.All(Enumerable.Range(4, 4).Concat(Enumerable.Range(12, 4)), i => Assert.Equal(0, Peak(player, i)));
         var all = BoardSceneRenderer.Render(settings, board, 16, GamePhase.PreCountdown, 4.5, 5);
-        Assert.Equal(16, all.Count(b => b == 255));
+        Assert.All(Enumerable.Range(0, 16), i => Assert.True(Peak(all, i) > 100));
+        // GO floods every board in the accent colour with white, never the old pure green.
         var go = BoardSceneRenderer.Render(settings, board, 16, GamePhase.Running, 0, 5);
-        Assert.All(Enumerable.Range(0, 16), i => Assert.Equal(new byte[] { 0, 255, 0 }, go[(i * 3)..(i * 3 + 3)]));
+        Assert.All(Enumerable.Range(0, 16), i =>
+        {
+            Assert.True(Peak(go, i) >= 200);
+            Assert.True(go[i * 3] > 0 && go[i * 3 + 2] > 0);
+        });
     }
     [Fact]
     public void ReorderedScannerAndSingleDotUseConfiguredRow()
     {
         var a = Board(); var b = Board("aabbccddeeff", "b");
         var settings = Installation() with { Devices = [Device(), Device("aabbccddeeff")], Boards = [a, b] };
-        // Early scanner reaches only the first board.
-        Assert.Contains((byte)255, BoardSceneRenderer.Render(settings, a, 16, GamePhase.PreCountdown, 0.2, 5));
-        Assert.All(BoardSceneRenderer.Render(settings, b, 16, GamePhase.PreCountdown, 0.2, 5), value => Assert.Equal(0, value));
+        // Just before a count the scanner is back at the start of the row, on the first board only.
+        Assert.Contains(BoardSceneRenderer.Render(settings, a, 16, GamePhase.PreCountdown, 0.9, 5), value => value > 100);
+        Assert.All(BoardSceneRenderer.Render(settings, b, 16, GamePhase.PreCountdown, 0.9, 5), value => Assert.Equal(0, value));
         settings = settings with { Boards = [b, a] };
-        Assert.Contains((byte)255, BoardSceneRenderer.Render(settings, b, 16, GamePhase.PreCountdown, 0.2, 5));
+        Assert.Contains(BoardSceneRenderer.Render(settings, b, 16, GamePhase.PreCountdown, 0.9, 5), value => value > 100);
+        Assert.All(BoardSceneRenderer.Render(settings, a, 16, GamePhase.PreCountdown, 0.9, 5), value => Assert.Equal(0, value));
+        var path = BoardSceneRenderer.DotPath(settings.Boards);
+        // After the flares one comet runs the dot path; its head is the brightest pixel of the whole row.
         foreach (var time in new[] { 2d, 2.03, 2.12, 2.9, 4.9 })
         {
-            var frames = settings.Boards.SelectMany(board => BoardSceneRenderer.Render(settings, board, 16, GamePhase.Ending, time, 5)).ToArray();
-            Assert.Equal(1, frames.Count(value => value == 255));
+            var head = path[(int)(BoardLightShow.Comet(time - settings.Animation.FlashSeconds, settings.Animation).Head * path.Count)];
+            var brightest = settings.Boards.SelectMany(board =>
+            {
+                var frame = BoardSceneRenderer.Render(settings, board, 16, GamePhase.Ending, time, 5);
+                return Enumerable.Range(0, 16).Select(pixel => (board.Id, Pixel: pixel, Level: frame[pixel * 3] + frame[pixel * 3 + 1] + frame[pixel * 3 + 2]));
+            }).MaxBy(pixel => pixel.Level);
+            Assert.Equal(head, (brightest.Id, brightest.Pixel));
         }
-        var path = BoardSceneRenderer.DotPath(settings.Boards);
         Assert.Equal(32, path.Count); Assert.Equal(32, path.Distinct().Count());
         Assert.Equal("b", path[0].BoardId);
         Assert.Equal(16, BoardSceneRenderer.DotPath([a]).Count);
@@ -339,6 +353,143 @@ public sealed class InstallationTests
         await output.StartAsync(CancellationToken.None);
         await Eventually(() => transport.Sent.Contains("aabbccddeeff"));
         Assert.Contains("001122334455", output.Errors.Keys);
+        await output.StopAsync(CancellationToken.None);
+    }
+    [Fact]
+    public async Task SettingsWithoutLightShowLoadDefaultsAndInvalidValuesAreRejected()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        await File.WriteAllTextAsync(Path.Combine(path, "settings.json"), """{ "version": 1, "animation": { "framesPerSecond": 20 } }""");
+        var store = Store(path);
+        var saved = store.Snapshot;
+        Assert.Equal(new LightShowSettings(), saved.LightShow);
+        Assert.Equal("neonSunset", saved.LightShow.Theme); Assert.Equal("calm", saved.LightShow.Intensity);
+        Assert.Equal(20, saved.Animation.FramesPerSecond);
+        var show = saved.LightShow;
+        foreach (var invalid in new[]
+        {
+            show with { Theme = "disco" }, show with { Intensity = "wild" }, show with { Brightness = 19 }, show with { Brightness = 101 },
+            show with { Speed = 24 }, show with { Speed = 201 }, show with { Custom = null! },
+            show with { Custom = show.Custom with { Accent = "#000000" } }, show with { Custom = show.Custom with { Primary = "ff4fad" } },
+            show with { Custom = show.Custom with { Tertiary = "#ff4fa" } }, show with { Custom = show.Custom with { Secondary = "#gg4fad" } }
+        })
+            Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(saved with { LightShow = invalid }));
+        Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(saved with { LightShow = null! }));
+        await store.UpdateAsync(s => s with { LightShow = new() { Theme = "custom", Brightness = 60, Speed = 150, Intensity = "lively", Custom = new() { Primary = "#00FF00" } } });
+        var reloaded = Store(path).Snapshot;
+        Assert.Equal(("custom", 60, 150, "lively", "#00FF00"), (reloaded.LightShow.Theme, reloaded.LightShow.Brightness, reloaded.LightShow.Speed, reloaded.LightShow.Intensity, reloaded.LightShow.Custom.Primary));
+        Assert.Equal(20, reloaded.Animation.FramesPerSecond);
+    }
+    [Fact]
+    public async Task LightTestPlaysUnsavedDraftEndsByItselfAndConflictsCleanly()
+    {
+        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        var saved = Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }],
+            Boards = [Board(), new(), Board("aabbccddeeff", "b")] };
+        await store.SaveAsync(saved);
+        var clock = new FakeTimeProvider();
+        var options = Options.Create(new WLedOptions());
+        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
+        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
+        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
+        var clients = new DummyClients();
+        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery());
+        var transport = new RecordingTransport();
+        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, transport);
+        await output.StartAsync(CancellationToken.None);
+        await Eventually(() => output.IsReady);
+        var red = new LightShowSettings { Theme = "custom", Custom = new() { Primary = "#ff0000", Secondary = "#ff0000", Tertiary = "#ff0000", Accent = "#ff0000" } };
+        LightShowTestRequest Request(string segment) => new(segment, red, new());
+
+        // A rejected request leaves the boards alone.
+        await Assert.ThrowsAsync<ArgumentException>(() => output.StartLightShowTestAsync(Request("idle")));
+        await Assert.ThrowsAsync<ArgumentException>(() => output.StartLightShowTestAsync(new("playing", red with { Brightness = 0 }, new())));
+        await Assert.ThrowsAsync<ArgumentException>(() => output.StartLightShowTestAsync(new("playing", null!, new())));
+        Assert.False(control.IsTestingLights); Assert.Null(output.LightShowTest);
+
+        await output.StartLightShowTestAsync(Request("playing"));
+        Assert.True(control.IsTestingLights);
+        Assert.Equal("playing", output.LightShowTest!.Segment);
+        Assert.Equal(clock.GetUtcNow().AddSeconds(30), output.LightShowTest.EndsUtc);
+        Assert.Equal(new LightShowSettings(), store.Snapshot.LightShow); // The draft is played, not saved.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartGameAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => control.ConfigureAsync(() => Task.CompletedTask));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.LocateAsync("001122334455"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartCalibrationAsync(new(saved.Boards, "a")));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Eventually(() => transport.Sent.Contains("001122334455") && transport.Sent.Contains("aabbccddeeff"));
+        // Both boards show the draft's colours: red only.
+        Assert.All(transport.Frames, frame =>
+        {
+            Assert.Contains(frame.Pixels, value => value > 0);
+            Assert.All(frame.Pixels.Chunk(3), pixel => { Assert.Equal(0, pixel[1]); Assert.Equal(0, pixel[2]); });
+        });
+
+        // A second test replaces the first, and a test ends by itself.
+        await output.StartLightShowTestAsync(Request("gameOver"));
+        Assert.Equal("gameOver", output.LightShowTest!.Segment);
+        Assert.True(control.IsTestingLights);
+        clock.Advance(TimeSpan.FromSeconds(6));
+        await Eventually(() => output.LightShowTest is null && !control.IsTestingLights);
+        await control.ConfigureAsync(() => Task.CompletedTask);
+
+        // Whoever owns the lights keeps them.
+        await control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartLightShowTestAsync(Request("playing")));
+        await control.StopManualEffectAsync();
+        await control.StartGameAsync(TimeSpan.FromSeconds(60), TimeSpan.Zero);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartLightShowTestAsync(Request("playing")));
+        await control.StopGameAsync();
+        await output.StartCalibrationAsync(new(saved.Boards, "a"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartLightShowTestAsync(Request("playing")));
+        await output.StopCalibrationAsync(output.Calibration!.SessionId);
+        Assert.False(control.IsTestingLights);
+
+        // Without a board there is nothing to test on.
+        await store.UpdateAsync(s => s with { Boards = [new()] });
+        await Assert.ThrowsAsync<ArgumentException>(() => output.StartLightShowTestAsync(Request("playing")));
+        await store.UpdateAsync(s => s with { Boards = saved.Boards });
+
+        // Stopping is idempotent, and shutdown releases a running test.
+        await output.StopLightShowTestAsync();
+        await output.StartLightShowTestAsync(Request("countdown"));
+        await output.StopLightShowTestAsync();
+        Assert.Null(output.LightShowTest); Assert.False(control.IsTestingLights);
+        await output.StartLightShowTestAsync(Request("playing"));
+        await output.StopAsync(CancellationToken.None);
+        Assert.Null(output.LightShowTest); Assert.False(control.IsTestingLights);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartLightShowTestAsync(Request("playing")));
+    }
+    [Fact]
+    public async Task GameWithoutBoardsSendsNoFramesButManualOutputStillDoes()
+    {
+        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        await store.SaveAsync(Installation() with { Boards = [new()] });
+        var clock = new FakeTimeProvider();
+        var options = Options.Create(new WLedOptions());
+        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
+        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
+        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
+        var clients = new DummyClients();
+        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery());
+        var transport = new RecordingTransport();
+        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, transport);
+        await control.StartGameAsync(TimeSpan.FromSeconds(60), TimeSpan.Zero);
+        await output.StartAsync(CancellationToken.None);
+        await Eventually(() => output.IsReady);
+        for (var pass = 0; pass < 5; pass++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            await Task.Delay(20);
+        }
+        Assert.Empty(transport.Sent);
+        // The same loop still mirrors a manual effect to the strip, so it was running all along.
+        await control.StopGameAsync();
+        await control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Eventually(() => transport.Sent.Contains("001122334455"));
         await output.StopAsync(CancellationToken.None);
     }
     private static async Task Eventually(Func<bool> condition)

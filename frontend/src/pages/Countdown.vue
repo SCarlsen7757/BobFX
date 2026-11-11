@@ -19,7 +19,7 @@ const mutation = useMutation({ mutationFn: async (mode: 'start' | 'stop') => {
     throw new Error('Enter valid limits. Total duration must exceed random deviation.');
   await command(`/api/countdown/${mode}`, { durationSeconds: minutes.value * 60 + seconds.value, deviationSeconds: deviation.value });
 } });
-const busy = computed(() => !connected.value || mutation.isPending.value || !!installation.data.value?.value.calibration);
+const busy = computed(() => !connected.value || mutation.isPending.value || !!installation.data.value?.value.calibration || !!installation.data.value?.value.lightShowTest);
 </script>
 <template>
   <section class="settings-page">
