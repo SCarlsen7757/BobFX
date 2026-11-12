@@ -157,7 +157,6 @@ dialog::backdrop { background: #10091ecc; }
   .settings-page { padding: 4px 0 24px; }
   .parameters > div { grid-template-columns: minmax(0, 1fr) 90px; gap: 12px; }
   .effect-parameters > div { grid-template-columns: minmax(0, 1fr) 80px 30px; gap: 8px; }
-  .slider-parameters > div { grid-template-columns: minmax(0, 1fr) minmax(90px, 140px) 44px; gap: 8px; }
   .theme-option { flex: 1 1 100%; }
   .effect-parameters label { font-size: 14px; }
   .button-group > button { flex-grow: 1; }
@@ -250,6 +249,7 @@ legend + * { clear: both; }
 @media (max-width: 700px) {
   .app-header { gap: 0; }
   .edge-editors { grid-template-columns: 1fr; }
+  .slider-parameters > div { grid-template-columns: minmax(0, 1fr) minmax(90px, 140px) 44px; gap: 8px; }
   .registered-device { align-items: flex-start; flex-wrap: wrap; }
   .registered-device .device-actions { flex-wrap: wrap; }
   .controller-editor .parameters > div { grid-template-columns: 1fr; gap: 8px; }
