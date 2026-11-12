@@ -13,6 +13,12 @@ public sealed record InstallationSettings
     public AnimationSettings Animation { get; init; } = new();
     public LightShowSettings LightShow { get; init; } = new();
     public List<BusyBarSettings> Controllers { get; init; } = [];
+    /// <summary>Saved game length. Null until saved from the UI, so the Countdown configuration supplies the first-run values.</summary>
+    public CountdownSettings? Countdown { get; init; }
+}
+public sealed record CountdownSettings(int DurationSeconds, int DeviationSeconds)
+{
+    public bool IsValid() => DurationSeconds is >= 1 and <= 86400 && DeviationSeconds >= 0 && DeviationSeconds < DurationSeconds;
 }
 public sealed record DeviceSettings(string Mac, string Name, string Address, int HttpPort, int LedCount, int UdpPort, bool Selected = true);
 public sealed record EdgeSettings(int Start, int Count, bool Reversed = false);
@@ -160,6 +166,8 @@ public sealed class InstallationSettingsStore
             show.Brightness is < 20 or > 100 || show.Speed is < 25 or > 200 || show.Custom is null ||
             !ValidColor(show.Custom.Primary) || !ValidColor(show.Custom.Secondary) || !ValidColor(show.Custom.Tertiary) || !ValidColor(show.Custom.Accent))
             throw new ArgumentException("Light show needs a known theme and intensity, brightness 20–100%, speed 25–200% and #RRGGBB colors that are not black.");
+        if (value.Countdown is { } countdown && !countdown.IsValid())
+            throw new ArgumentException("Countdown requires 1–86400s duration and a deviation smaller than the duration.");
         if (value.Controllers.Select(c => c.Id).Distinct().Count() != value.Controllers.Count) throw new ArgumentException("Controller IDs must be unique.");
         foreach (var c in value.Controllers)
             if (string.IsNullOrWhiteSpace(c.Id) || string.IsNullOrWhiteSpace(c.Name) || !LocalAddress(c.Address) || c.Port is < 1 or > 65535 || !Regex.IsMatch(c.SecretName ?? "", "^[a-zA-Z0-9_-]{1,64}$"))

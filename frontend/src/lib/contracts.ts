@@ -27,7 +27,7 @@ export interface LightShowSettings { theme: string; custom: LightShowColors; bri
 export interface LightShowTheme extends LightShowColors { id: string; name: string; highlight: string }
 export type LightShowSegment = 'countdown' | 'playing' | 'gameOver';
 export interface LightShowTest { segment: LightShowSegment; endsUtc: string }
-export interface InstallationSettings { version: number; devices: SavedDevice[]; boards: Board[]; idleSync: IdleSync; animation: AnimationSettings; lightShow: LightShowSettings; controllers: RemoteController[] }
+export interface InstallationSettings { version: number; devices: SavedDevice[]; boards: Board[]; idleSync: IdleSync; animation: AnimationSettings; lightShow: LightShowSettings; controllers: RemoteController[]; countdown: Defaults | null }
 export interface RemoteStatus { state: string; apiVersion: string | null; inputSupported: boolean; selector: number }
 export interface InstallationState {
   settings: InstallationSettings; locating: boolean; outputErrors: Record<string, string>;

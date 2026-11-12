@@ -382,6 +382,21 @@ public sealed class InstallationTests
         Assert.Equal(20, reloaded.Animation.FramesPerSecond);
     }
     [Fact]
+    public async Task SavedCountdownSurvivesReloadOverridesConfigurationAndIsValidated()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
+        var store = Store(path);
+        var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions { DurationSeconds = 600, DeviationSeconds = 120 }),
+            new FakeTimeProvider(), store);
+        Assert.Null(store.Snapshot.Countdown);
+        Assert.Equal((600, 120), ((int)countdown.CountdownDuration.TotalSeconds, (int)countdown.CountdownDeviation.TotalSeconds)); // Configuration until saved.
+        await store.UpdateAsync(s => s with { Countdown = new(720, 30) });
+        Assert.Equal((720, 30), ((int)countdown.CountdownDuration.TotalSeconds, (int)countdown.CountdownDeviation.TotalSeconds));
+        Assert.Equal(new CountdownSettings(720, 30), Store(path).Snapshot.Countdown); // A restart reads the file again.
+        foreach (var invalid in new CountdownSettings[] { new(0, 0), new(86401, 0), new(60, -1), new(60, 60) })
+            Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(store.Snapshot with { Countdown = invalid }));
+    }
+    [Fact]
     public async Task LightTestPlaysUnsavedDraftEndsByItselfAndConflictsCleanly()
     {
         var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));

@@ -17,7 +17,7 @@ public sealed class ConfigurationTests
     [InlineData("Security:AllowedClientNetworks:0", "not-a-cidr", "AllowedClientNetworks")]
     [InlineData("WLed:Led:LedCount", "491", "1–490 LEDs")]
     [InlineData("WLed:Discovery:UpdateIntervalSeconds", "4", "discovery interval")]
-    [InlineData("Countdown:DeviationSeconds", "600", "deviation smaller than duration")]
+    [InlineData("Countdown:DeviationSeconds", "720", "deviation smaller than duration")]
     public void InvalidProductionConfigurationFailsBeforeServing(string key, string value, string expected)
     {
         using var app = new InvalidApp(key, value);

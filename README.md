@@ -82,7 +82,7 @@ Configuration uses normal ASP.NET Core precedence: appsettings, environment-spec
 | --- | --- |
 | `WLed__Led__LedCount` | 30; 1–490 LEDs per realtime frame |
 | `WLed__Discovery__UpdateIntervalSeconds` | 30; 5–3600 seconds |
-| `Countdown__DurationSeconds` | 600; 1–86400 seconds |
+| `Countdown__DurationSeconds` | 720; 1–86400 seconds |
 | `Countdown__DeviationSeconds` | 120; nonnegative and below duration |
 | `AllowedHosts` | Explicit semicolon-separated names/IPs required in Production |
 | `Security__AllowedClientNetworks__0` | Explicit trusted CIDR required in Production |

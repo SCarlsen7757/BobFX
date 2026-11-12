@@ -24,6 +24,9 @@ public sealed class InstallationController(InstallationSettingsStore settings, R
     [HttpPut("light-show")]
     public Task<IActionResult> SaveLightShow(LightShowRequest value, CancellationToken token) => Execute(() => control.ConfigureAsync(() =>
         settings.UpdateAsync(s => s with { LightShow = value.LightShow, Animation = value.Animation }, token)));
+    /// <summary>Takes effect from the next game, so it is allowed while a game runs.</summary>
+    [HttpPut("countdown")]
+    public Task<IActionResult> SaveCountdown(CountdownSettings value, CancellationToken token) => Execute(() => settings.UpdateAsync(s => s with { Countdown = value }, token));
     [HttpGet("light-show/themes")]
     public IReadOnlyList<LightShowTheme> LightShowThemes() => BoardLightShow.Themes;
     [HttpPost("light-show/test")]

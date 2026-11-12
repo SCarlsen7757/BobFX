@@ -26,7 +26,6 @@ public sealed class UiStateService(
     CountdownService countdown, RgbAndSoundControlService control, DRgbService rgb,
     WLedDiscoveryService discovery, SoundService sounds, TimeProvider clock,
     InstallationSettingsStore settings, InstallationOutputService output, BusyBarService busyBars, ControllerCredentials credentials,
-    Microsoft.Extensions.Options.IOptions<CountdownOptions> options,
     IHubContext<UiHub> hub, ILogger<UiStateService> logger) : BackgroundService
 {
     private readonly string instanceId = Guid.NewGuid().ToString("N");
@@ -75,7 +74,8 @@ public sealed class UiStateService(
                 installationJson = nextJson;
                 installation = new(instanceId, (installation?.Revision ?? 0) + 1, now, nextInstallation);
             }
-            return new(game!, effect!, devices!, installation!, options.Value);
+            return new(game!, effect!, devices!, installation!,
+                new CountdownOptions { DurationSeconds = (int)countdown.CountdownDuration.TotalSeconds, DeviationSeconds = (int)countdown.CountdownDeviation.TotalSeconds });
         }
     }
 

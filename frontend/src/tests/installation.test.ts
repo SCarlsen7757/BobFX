@@ -6,7 +6,7 @@ import type { Board, InstallationSettings } from '../lib/contracts';
 const board = (): Board => ({ id: 'a', name: 'Board 1', deviceMac: '001122334455', rotation: 0, edges: twoStripEdges(16) });
 const settings = (boards: Board[]): InstallationSettings => ({ version: 1, boards,
   devices: [{ mac: '001122334455', name: 'WLED', address: '192.168.1.20', httpPort: 80, ledCount: 16, udpPort: 21324, selected: true }],
-  controllers: [], idleSync: { enabled: false, masterMac: null, followers: [], group: 1 },
+  controllers: [], countdown: null, idleSync: { enabled: false, masterMac: null, followers: [], group: 1 },
   animation: { framesPerSecond: 30, flashSeconds: 2, dotSeconds: 3, dotLapsPerSecond: 4 },
   lightShow: { theme: 'neonSunset', brightness: 100, speed: 100, intensity: 'calm',
     custom: { primary: '#ff4fad', secondary: '#ffad66', tertiary: '#8c50ff', accent: '#96eddf' } } });
