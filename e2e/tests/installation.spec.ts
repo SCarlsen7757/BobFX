@@ -65,7 +65,9 @@ test('layout persists board order and mappings and rejects overlaps', async ({ p
     } })).ok()).toBeTruthy();
     await page.goto('/layout');
     await expect(page.getByRole('button', { name: 'Enable audio', exact: true })).toBeEnabled();
-    await page.getByRole('button', { name: 'Move South left', exact: true }).click();
+    await page.locator('.board-tile').filter({ hasText: 'South' }).click();
+    await page.getByRole('button', { name: '← Move board left', exact: true }).click();
+    await expect(page.getByRole('button', { name: '← Move board left', exact: true })).toBeDisabled();
     await page.getByRole('button', { name: 'Save layout', exact: true }).click();
     await expect(page.locator('p[role="status"]')).toHaveText('Layout saved.');
     await page.reload();

@@ -221,7 +221,6 @@ onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); leaving
             <option value="">Assign later</option><option v-for="device in choices(board)" :key="device.mac" :value="device.mac">{{ device.name }} ({{ device.address }})</option>
           </select>
           <p v-if="board.deviceMac && installation.data.value?.value.outputErrors[board.deviceMac]" class="device-error" role="status">{{ installation.data.value.value.outputErrors[board.deviceMac] }}</p>
-          <div class="board-actions"><button :aria-label="`Move ${board.name} left`" :disabled="busy || index === 0" @click="move(index, -1)">←</button><button :aria-label="`Move ${board.name} right`" :disabled="busy || index === draft.boards.length - 1" @click="move(index, 1)">→</button><button :aria-label="`Remove ${board.name}`" :disabled="setupBusy" @click="remove(board.id)">Remove</button></div>
         </article>
       </div>
       <p v-if="legendStrips && !sessionId" class="strip-legend"><span v-for="strip in legendStrips" :key="strip"><span class="strip-swatch" :style="{ background: stripColors[(strip - 1) % 4] }"></span>Strip {{ strip }}</span><span><span class="strip-swatch strip-swatch-start"></span>First LED of a strip</span></p>
@@ -236,7 +235,10 @@ onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); leaving
       <section v-if="editing" class="settings-section" aria-label="Board settings">
         <h2>{{ editing.name }}</h2>
         <div class="text-field"><label for="board-name">Name</label><input id="board-name" v-model="editing.name" :disabled="setupBusy" /></div>
-        <div v-if="!sessionId" class="button-group"><button :disabled="busy" @click="rotate(-90)">Rotate left</button><span>{{ editing.rotation }}°</span><button :disabled="busy" @click="rotate(90)">Rotate right</button><button :disabled="busy || !editing.deviceMac" @click="mutation.mutate('locate')">Locate board</button></div>
+        <!-- One set of controls for the selected board: it stays selected as it moves, so repeated clicks walk it along the row. -->
+        <div v-if="!sessionId" class="button-group"><button :disabled="busy || selectedPosition === 0" @click="move(selectedPosition, -1)">← Move board left</button><button :disabled="busy || selectedPosition === draft.boards.length - 1" @click="move(selectedPosition, 1)">Move board right →</button><button class="danger" :disabled="setupBusy" @click="remove(editing.id)">Remove board</button></div>
+        <p v-if="!sessionId" class="rotation-status">Rotation <strong>{{ editing.rotation }}°</strong></p>
+        <div v-if="!sessionId" class="button-group rotation-controls"><button :disabled="busy" @click="rotate(-90)">↺ Rotate left</button><button :disabled="busy" @click="rotate(90)">Rotate right ↻</button><button :disabled="busy || !editing.deviceMac" @click="mutation.mutate('locate')">Locate board</button></div>
       </section>
       <details class="settings-section layout-advanced" :open="advanced" @toggle="advanced = ($event.target as HTMLDetailsElement).open">
         <summary>Advanced settings</summary>

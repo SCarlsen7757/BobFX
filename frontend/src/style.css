@@ -102,6 +102,9 @@ main { width: 100%; max-width: 1440px; margin: 0 auto; padding: 20px 40px 24px; 
 .effect-picker { display: grid; max-width: 560px; gap: 8px; }
 /* A free-text field: the label sits directly above a box wide enough for the text, unlike the number grids. */
 .text-field { display: grid; gap: 8px; width: min(360px, 100%); margin: 16px 0 8px; }
+.rotation-status { margin: 24px 0 0; color: var(--muted); }
+.rotation-status strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.rotation-controls { margin-top: 8px; }
 .effect-description { color: var(--muted); font-size: 14px; margin-top: 14px; }
 .effect-parameters > div { grid-template-columns: minmax(0, 1fr) 120px 58px; }
 .effect-parameters input[type='color'] { grid-column: 2; }
@@ -192,8 +195,6 @@ nav a { flex-shrink: 0; }
 .strip-legend > span { display: inline-flex; align-items: center; gap: 8px; }
 .strip-swatch { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .strip-swatch-start { width: 14px; height: 14px; border: 1.5px solid var(--muted); }
-.board-actions { display: flex; gap: 6px; margin-top: 8px; }
-.board-actions button { padding: 10px 12px; flex: 1; }
 .layout-toolbar { align-items: center; }
 .layout-toolbar a { margin-left: 8px; }
 .layout-advanced > summary { cursor: pointer; min-height: 48px; padding: 10px 0; color: var(--muted); }
