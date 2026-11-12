@@ -32,6 +32,14 @@ public sealed class InstallationController(InstallationSettingsStore settings, R
         var result = await Execute(() => output.StartLightShowTestAsync(request));
         return result is OkResult ? Ok(output.LightShowTest) : result;
     }
+    /// <summary>Renders a part of the show for the browser preview. It only reads settings and owns no lights,
+    /// so it works during games and tests too.</summary>
+    [HttpPost("light-show/preview")]
+    public IActionResult PreviewLightShow(LightShowTestRequest request)
+    {
+        try { return Ok(LightShowPreviewRenderer.Render(settings.Snapshot, request)); }
+        catch (ArgumentException ex) { return Problem(ex.Message, statusCode: 400); }
+    }
     [HttpDelete("light-show/test")]
     public Task<IActionResult> StopLightShowTest() => Execute(() => output.StopLightShowTestAsync());
     [HttpPut("controllers")]

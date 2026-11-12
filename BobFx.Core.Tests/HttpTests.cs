@@ -221,6 +221,25 @@ public sealed class HttpTests
     }
 
     [Fact]
+    public async Task LightShowPreviewRendersDuringAGameWithoutOwningTheLights()
+    {
+        await using var app = new TestApp();
+        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", OneBoard())).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
+        var response = await client.PostAsJsonAsync("/api/installation/light-show/preview", new { segment = "playing", lightShow = new { theme = "aurora" }, animation = new { } });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var preview = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(600, preview.GetProperty("frames").GetArrayLength());
+        Assert.Equal(16, preview.GetProperty("boards")[0].GetProperty("ledCount").GetInt32());
+        Assert.False(preview.GetProperty("exampleBoards").GetBoolean());
+        var state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state");
+        Assert.Equal(JsonValueKind.Null, state.GetProperty("installation").GetProperty("value").GetProperty("lightShowTest").ValueKind);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/installation/light-show/preview",
+            new { segment = "playing", lightShow = new { brightness = 5 }, animation = new { } })).StatusCode);
+    }
+
+    [Fact]
     public async Task LightShowTestOwnsTheLightsUntilStoppedAndConflictsReturn409()
     {
         await using var app = new TestApp();

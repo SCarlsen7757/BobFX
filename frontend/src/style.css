@@ -235,6 +235,10 @@ legend + * { clear: both; }
 .slider-parameters > div { grid-template-columns: minmax(0, 1fr) minmax(120px, 240px) 52px; }
 .slider-parameters select { grid-column: 2 / -1; }
 .slider-parameters output { color: var(--text); font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; }
+.preview-status, .preview-note { color: var(--muted); font-size: 14px; margin: 16px 0 12px; font-variant-numeric: tabular-nums; }
+.preview-note { margin-top: 12px; }
+.preview-stage { max-width: 100%; overflow-x: auto; }
+.preview-canvas { display: block; width: 100%; height: auto; border-radius: 8px; }
 .test-status { color: var(--muted); font-size: 14px; margin: 16px 0 0; }
 .controller-editor .parameters { border: 0; margin-top: 0; padding-top: 0; max-width: none; }
 .controller-editor .parameters > div { grid-template-columns: 190px minmax(0, 1fr); }

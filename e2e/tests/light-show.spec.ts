@@ -77,9 +77,11 @@ test('light show tests play an unsaved draft and hold the lights until they end'
   try {
     await page.goto('/lights');
     await expect(page.getByRole('button', { name: 'Enable audio', exact: true })).toBeEnabled();
+    // The preview has buttons with the same names; these are the ones that drive the real boards.
+    const boards = page.getByRole('region', { name: 'Test on the boards', exact: true });
     const status = page.getByTestId('light-test-status');
-    const playing = page.getByRole('button', { name: 'Playing', exact: true });
-    const stop = page.getByRole('button', { name: 'Stop test', exact: true });
+    const playing = boards.getByRole('button', { name: 'Playing', exact: true });
+    const stop = boards.getByRole('button', { name: 'Stop test', exact: true });
     await expect(playing).toBeEnabled();
     await expect(stop).toBeDisabled();
 
@@ -92,7 +94,7 @@ test('light show tests play an unsaved draft and hold the lights until they end'
     expect((await request.post('/api/countdown/start')).status()).toBe(409);
 
     // Another test replaces the running one; Stop hands the lights back.
-    await page.getByRole('button', { name: 'Game over', exact: true }).click();
+    await boards.getByRole('button', { name: 'Game over', exact: true }).click();
     await expect(status).toContainText('Playing “Game over” on the boards');
     await stop.click();
     await expect(status).toBeHidden();
@@ -100,7 +102,7 @@ test('light show tests play an unsaved draft and hold the lights until they end'
     expect(state.lightShowTest).toBeNull();
 
     // A test ends by itself.
-    await page.getByRole('button', { name: 'Countdown + GO', exact: true }).click();
+    await boards.getByRole('button', { name: 'Countdown + GO', exact: true }).click();
     await expect(status).toContainText('Playing “Countdown + GO” on the boards');
     await expect(status).toBeHidden({ timeout: 12_000 });
     await expect(stop).toBeDisabled();
@@ -110,6 +112,39 @@ test('light show tests play an unsaved draft and hold the lights until they end'
     await expect(playing).toBeDisabled();
     await expect(page.getByRole('button', { name: 'Save light show', exact: true })).toBeDisabled();
     await expect(status).toContainText('The lights are in use');
+  } finally {
+    await restore(request, original);
+  }
+});
+
+test('the preview plays the unsaved draft on drawings of the boards and follows setting changes', async ({ page, request }) => {
+  const original = await seed(request);
+  try {
+    await page.goto('/lights');
+    await expect(page.getByRole('button', { name: 'Enable audio', exact: true })).toBeEnabled();
+    const preview = page.getByRole('region', { name: 'Preview', exact: true });
+    await preview.getByRole('button', { name: 'Countdown + GO', exact: true }).click();
+    const status = page.getByTestId('preview-status');
+    await expect(status).toContainText('of 6.0 s');
+    const canvas = preview.locator('canvas');
+    await expect(canvas).toHaveAttribute('aria-label', 'Light show preview of 1 board');
+    const snapshot = () => canvas.evaluate(element => (element as HTMLCanvasElement).toDataURL());
+    // The drawing moves on its own.
+    const first = await snapshot();
+    await expect.poll(snapshot).not.toBe(first);
+    // Pausing holds the frame, and a changed setting is previewed without saving.
+    await preview.getByRole('button', { name: 'Pause', exact: true }).click();
+    const rendered = page.waitForResponse(response => response.url().endsWith('/api/installation/light-show/preview')
+      && response.request().postDataJSON().lightShow.theme === 'ember');
+    await page.getByRole('radio', { name: 'Ember', exact: true }).check();
+    expect((await rendered).ok()).toBeTruthy();
+    await expect(status).not.toContainText('updating');
+    const held = await snapshot();
+    await page.waitForTimeout(500);
+    expect(await snapshot()).toBe(held);
+    expect((await (await request.get('/api/installation')).json()).lightShow.theme).toBe('neonSunset');
+    // Nothing was sent to the boards.
+    expect((await (await request.get('/api/ui/state')).json()).installation.value.lightShowTest).toBeNull();
   } finally {
     await restore(request, original);
   }

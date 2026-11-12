@@ -46,3 +46,6 @@ export interface DeviceDetails {
     architecture: string; coreVersion: string; freeHeap: number; uptimeSeconds: number;
     dataSourceType: string; dataSourceAddress: string } | null;
 }
+export interface LightShowPreviewBoard { id: string; name: string; rotation: number; edges: Edge[]; ledCount: number; assigned: boolean }
+/** Server-rendered frames of one segment: each frame is base64 RGB for every board in row order. */
+export interface LightShowPreview { framesPerSecond: number; seconds: number; exampleBoards: boolean; boards: LightShowPreviewBoard[]; frames: string[] }

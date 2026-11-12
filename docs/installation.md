@@ -32,6 +32,8 @@ Open **Light show** to choose a color theme (Neon sunset, Aurora, Ember, or Cust
 
 Theme colors are converted for LEDs (scaled to full level, then gamma 2.2) on the assumption that WLED leaves realtime data uncorrected. That conversion, the brightness and the play levels need a check on the real boards.
 
+**Preview** plays Countdown + GO, Playing or Game over with the page's settings on drawings of the assigned boards, in row order and rotation, and follows each setting change. The server renders the frames with the same code that drives the boards, at 20 frames per second; the page converts LED values back for the screen, so judge colors and movement there and brightness on the boards. Boards in the layout without a controller are drawn as example boards marked "not assigned", with the same LED count and edge mapping as the first board that has a controller (60 LEDs in the two-strip mapping if none has one) and their own rotation, so the show can be judged across the whole row before every controller is there; games still skip them. A layout with no boards at all previews two example boards. The preview sends nothing to WLED and works during games and tests.
+
 **Test on the boards** plays Countdown + GO (6 seconds), Playing (30 seconds) or Game over (flare plus comet time) on the assigned boards with the settings on the page, saved or not. A test reserves the lights like calibration does: games, manual effects, Locate, calibration and configuration writes return 409 until it ends. It ends by itself, another test replaces it, and **Stop test**, saving, or leaving the page ends it early. Tests need at least one assigned board and are unavailable while a game or other output owns the lights.
 
 WLED native sync does not automatically relay incoming realtime pixels. BobFX renders a single timeline and sends each board its own frame. UDP unicast is best effort; these protocols do not guarantee physically simultaneous display or acknowledge receipt. Firmware/router behavior and visual smoothness require hardware checks.
@@ -79,6 +81,7 @@ Backend operations, subject to existing host/CIDR/origin restrictions:
 | Save light show look and animation timing | `PUT /api/installation/light-show` with `{ lightShow, animation }` |
 | List built-in color themes | `GET /api/installation/light-show/themes` |
 | Play/stop a light show test on the boards | `POST` / `DELETE /api/installation/light-show/test` |
+| Render a light show segment for the browser preview | `POST /api/installation/light-show/preview` with `{ segment, lightShow, animation }` |
 | Save controllers and write-only password replacements | `PUT /api/installation/controllers` |
 | Test an unsaved controller draft | `POST /api/installation/controllers/test` |
 | Check/register a manual device | `POST /api/installation/devices/manual` with `{ "address": "192.168.1.20", "port": 80 }` |

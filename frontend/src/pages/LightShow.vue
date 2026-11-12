@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import { useMutation, useQuery } from '@tanstack/vue-query';
 import { api } from '../lib/api';
+import LightShowPreview from '../components/LightShowPreview.vue';
 import { command, connected, useInstallation } from '../lib/session';
 import { clone, useCanConfigure, validateLightShow } from '../lib/installation';
 import type { AnimationSettings, LightShowColors, LightShowSegment, LightShowSettings, LightShowTheme } from '../lib/contracts';
@@ -109,6 +110,7 @@ onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); });
           <div class="parameters"><div><label for="fps">Frames per second</label><input id="fps" v-model.number="draft.animation.framesPerSecond" type="number" min="10" max="60" /></div></div>
         </fieldset>
       </details>
+      <LightShowPreview :draft="draft" />
       <section class="settings-section" aria-label="Test on the boards">
         <h2>Test on the boards</h2>
         <p>Plays one part of the show on the real boards with the settings above, saved or not.</p>

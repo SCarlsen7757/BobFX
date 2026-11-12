@@ -194,6 +194,71 @@ public sealed class BoardLightShowTests
     }
 
     [Fact]
+    public void PreviewFramesMatchWhatTheBoardsReceive()
+    {
+        var saved = Row();
+        var draft = new LightShowSettings { Theme = "ember", Brightness = 60 };
+        var preview = LightShowPreviewRenderer.Render(saved, new("countdown", draft, new()));
+        Assert.False(preview.ExampleBoards);
+        Assert.Equal(20, preview.FramesPerSecond);
+        Assert.Equal(6, preview.Seconds);
+        Assert.Equal(120, preview.Frames.Count);
+        Assert.Equal(["a", "b"], preview.Boards.Select(b => b.Id));
+        // Frame 30 is 1.5 s into the countdown: both boards in row order, exactly as the output loop renders them.
+        var drafted = saved with { LightShow = draft };
+        Assert.Equal(Frame(drafted, GamePhase.PreCountdown, 1.5), Convert.FromBase64String(preview.Frames[30]));
+        // The draft is previewed, not the saved theme.
+        Assert.NotEqual(Frame(saved, GamePhase.PreCountdown, 1.5), Convert.FromBase64String(preview.Frames[30]));
+    }
+
+    [Fact]
+    public void PreviewUsesExampleBoardsUntilTheLayoutHasOneAndRejectsBadDrafts()
+    {
+        var empty = new InstallationSettings();
+        var preview = LightShowPreviewRenderer.Render(empty, new("gameOver", new(), new()));
+        Assert.True(preview.ExampleBoards);
+        Assert.Equal(2, preview.Boards.Count);
+        Assert.All(preview.Boards, board => { Assert.Equal(60, board.LedCount); Assert.False(board.Assigned); });
+        Assert.Equal(100, preview.Frames.Count);
+        Assert.Equal(2 * 60 * 3, Convert.FromBase64String(preview.Frames[0]).Length);
+        Assert.Throws<ArgumentException>(() => LightShowPreviewRenderer.Render(empty, new("idle", new(), new())));
+        Assert.Throws<ArgumentException>(() => LightShowPreviewRenderer.Render(empty, new("playing", new() { Brightness = 0 }, new())));
+        Assert.Throws<ArgumentException>(() => LightShowPreviewRenderer.Render(empty, new("playing", null!, new())));
+    }
+
+    [Fact]
+    public void PreviewDrawsTheWholeRowIncludingBoardsWithoutAController()
+    {
+        // One real board in the middle of three slots, as when only one controller is at hand.
+        var real = Row();
+        var layout = real with { Boards = [new() { Id = "left", Name = "Left" }, real.Boards[0], new() { Id = "right", Name = "Right", Rotation = 90 }] };
+        var preview = LightShowPreviewRenderer.Render(layout, new("gameOver", new(), new()));
+        Assert.False(preview.ExampleBoards);
+        Assert.Equal(["left", "a", "right"], preview.Boards.Select(b => b.Id));
+        Assert.Equal([false, true, false], preview.Boards.Select(b => b.Assigned));
+        // Boards without a controller copy the real board's LED count and mapping, but keep their own rotation.
+        Assert.Equal([Leds, Leds, Leds], preview.Boards.Select(b => b.LedCount));
+        Assert.All(preview.Boards, b => Assert.Equal(real.Boards[0].Edges, b.Edges));
+        Assert.Equal([0, 0, 90], preview.Boards.Select(b => b.Rotation));
+        Assert.Equal(3 * Leds * 3, Convert.FromBase64String(preview.Frames[0]).Length);
+        // The comet runs the whole row, so every board is lit at some point after the flares.
+        var lit = new bool[3];
+        foreach (var frame in preview.Frames.Skip(2 * LightShowPreviewRenderer.FramesPerSecond).Select(Convert.FromBase64String))
+        {
+            var spans = new[] { (0, Leds), (Leds, Leds), (2 * Leds, Leds) };
+            for (var board = 0; board < 3; board++)
+                if (frame.Skip(spans[board].Item1 * 3).Take(spans[board].Item2 * 3).Any(value => value > 100)) lit[board] = true;
+        }
+        Assert.All(lit, Assert.True);
+        // The saved settings are not touched: games still skip the empty slots.
+        Assert.Single(BoardSceneRenderer.AssignedBoards(layout));
+        // With no controller anywhere, slots fall back to 60 LEDs.
+        var none = LightShowPreviewRenderer.Render(new InstallationSettings { Boards = [new() { Id = "x", Name = "X" }] }, new("playing", new(), new()));
+        Assert.Equal(60, Assert.Single(none.Boards).LedCount);
+        Assert.False(none.ExampleBoards);
+    }
+
+    [Fact]
     public void TestSceneMapsSegmentsToPhasesAndEnds()
     {
         var timing = new AnimationSettings();
