@@ -100,6 +100,8 @@ main { width: 100%; max-width: 1440px; margin: 0 auto; padding: 20px 40px 24px; 
 .effect-summary { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 24px; font-size: 14px; color: var(--muted); }
 .effect-summary strong { color: var(--text); }
 .effect-picker { display: grid; max-width: 560px; gap: 8px; }
+/* A free-text field: the label sits directly above a box wide enough for the text, unlike the number grids. */
+.text-field { display: grid; gap: 8px; width: min(360px, 100%); margin: 16px 0 8px; }
 .effect-description { color: var(--muted); font-size: 14px; margin-top: 14px; }
 .effect-parameters > div { grid-template-columns: minmax(0, 1fr) 120px 58px; }
 .effect-parameters input[type='color'] { grid-column: 2; }

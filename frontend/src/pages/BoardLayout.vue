@@ -235,7 +235,7 @@ onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); leaving
       </section>
       <section v-if="editing" class="settings-section" aria-label="Board settings">
         <h2>{{ editing.name }}</h2>
-        <div class="parameters"><div><label for="board-name">Name</label><input id="board-name" v-model="editing.name" :disabled="setupBusy" /></div></div>
+        <div class="text-field"><label for="board-name">Name</label><input id="board-name" v-model="editing.name" :disabled="setupBusy" /></div>
         <div v-if="!sessionId" class="button-group"><button :disabled="busy" @click="rotate(-90)">Rotate left</button><span>{{ editing.rotation }}°</span><button :disabled="busy" @click="rotate(90)">Rotate right</button><button :disabled="busy || !editing.deviceMac" @click="mutation.mutate('locate')">Locate board</button></div>
       </section>
       <details class="settings-section layout-advanced" :open="advanced" @toggle="advanced = ($event.target as HTMLDetailsElement).open">
