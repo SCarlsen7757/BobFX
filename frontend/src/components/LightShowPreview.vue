@@ -55,7 +55,8 @@ watch(() => props.draft, () => {
   clearTimeout(debounce); debounce = setTimeout(() => { void load(); }, 400);
 }, { deep: true });
 
-function restart() { started = performance.now() - time.value * 1000; cancelAnimationFrame(animation); animation = requestAnimationFrame(tick); }
+// Draws the current frame at once, so the canvas already shows freshly loaded frames when "updating…" clears.
+function restart() { const now = performance.now(); started = now - time.value * 1000; cancelAnimationFrame(animation); tick(now); }
 function tick(now: number) {
   const result = preview.value;
   if (!result || !frames.length) return;
