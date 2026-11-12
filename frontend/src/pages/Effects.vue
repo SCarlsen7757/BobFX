@@ -2,10 +2,11 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useMutation, useQuery } from '@tanstack/vue-query';
 import { api } from '../lib/api';
-import { command, connected, preview, setPreview, useEffect } from '../lib/session';
+import { command, connected, preview, setPreview, useEffect, useInstallation } from '../lib/session';
 import type { EffectDescriptor } from '../lib/contracts';
 const { data: descriptors } = useQuery({ queryKey: ['effect-descriptors'], queryFn: () => api<EffectDescriptor[]>('/api/drgb/effects') });
 const { data: status } = useEffect();
+const installation = useInstallation();
 const selected = ref('Rainbow');
 const descriptor = computed(() => descriptors.value?.find(effect => effect.type === selected.value));
 const speed = ref(50), fade = ref(2), breath = ref(2), minimum = ref(0), maximum = ref(100);
@@ -28,7 +29,7 @@ const mutation = useMutation({ mutationFn: async (stop: boolean) => {
     ...(selected.value === 'Breathing' ? { breathDurationSeconds: breath.value, minBrightnessPercent: minimum.value, maxBrightnessPercent: maximum.value } : {}),
   });
 } });
-const busy = computed(() => !connected.value || mutation.isPending.value);
+const busy = computed(() => !connected.value || mutation.isPending.value || !!installation.data.value?.value.calibration || !!installation.data.value?.value.lightShowTest);
 </script>
 <template>
   <section class="settings-page effects-page">

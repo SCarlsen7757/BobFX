@@ -10,7 +10,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<InstallationSettingsStore>();
 builder.Services.AddSingleton<ControllerCredentials>();
 builder.Services.AddOptions<WLedOptions>().BindConfiguration("WLed")
-    .Validate(options => options.IsValid(), "WLED requires 1–490 LEDs, IPv4 target, valid port, 10–500ms UDP interval and 5–3600s discovery interval.").ValidateOnStart();
+    .Validate(options => options.IsValid(), "WLED requires 1–490 LEDs and a 5–3600s discovery interval.").ValidateOnStart();
 builder.Services.AddOptions<CountdownOptions>().BindConfiguration("Countdown")
     .Validate(options => options.IsValid(), "Countdown requires 0–60s pre-duration, 1–86400s duration, and deviation smaller than duration.").ValidateOnStart();
 builder.Services.AddOptions<SecurityOptions>().BindConfiguration("Security")
@@ -90,7 +90,7 @@ app.MapGet("/api/installation/status", (InstallationOutputService output) => Res
 app.MapGet("/api/installation/controllers/status", (BusyBarService busy) => Results.Ok(busy.Statuses));
 app.MapControllers();
 app.MapHub<UiHub>("/hubs/ui");
-foreach (var route in new[] { "/", "/game/fullscreen", "/countdown", "/drgb", "/wled", "/layout", "/controllers" })
+foreach (var route in new[] { "/", "/game/fullscreen", "/countdown", "/lights", "/drgb", "/wled", "/layout", "/controllers" })
     app.MapGet(route, async (HttpContext context) =>
     {
         context.Response.Headers.CacheControl = "no-cache";

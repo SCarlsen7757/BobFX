@@ -21,6 +21,150 @@ public sealed class InstallationTests
     private static InstallationSettingsStore Store(string path) => new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Settings:DataPath"] = path }).Build());
 
     [Fact]
+    public async Task UnassignedSlotsPersistAndOnlyAssignedDevicesMustBeUnique()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
+        var store = Store(path);
+        var first = new BoardSettings { Name = "Waiting one" };
+        var second = new BoardSettings { Name = "Waiting two" };
+        await store.SaveAsync(Installation() with { Boards = [first, Board(), second] });
+        var saved = Store(path).Snapshot;
+        Assert.Equal(3, saved.Boards.Count);
+        Assert.Null(saved.Boards[0].DeviceMac); Assert.Empty(saved.Boards[0].Edges);
+        Assert.Equal("001122334455", saved.Boards[1].DeviceMac);
+        Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(saved with { Boards = [first, first] }));
+        Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(saved with { Boards = [first with { DeviceMac = "001122334455" }] }));
+        Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(saved with { Boards = [first with { DeviceMac = "" }] }));
+        Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(saved with { Boards = [Board(), Board(id: "duplicate")] }));
+    }
+
+    [Fact]
+    public void UnassignedSlotsDoNotIntroduceScannerOrDotGaps()
+    {
+        var a = Board(); var b = Board("aabbccddeeff", "b");
+        var compact = Installation() with { Devices = [Device(), Device("aabbccddeeff")], Boards = [a, b] };
+        var withGaps = compact with { Boards = [new(), a, new(), b, new()] };
+        foreach (var phase in new[] { GamePhase.PreCountdown, GamePhase.Running, GamePhase.Ending })
+        foreach (var time in new[] { .2, 1.5, 2.1, 3.5 })
+        foreach (var board in new[] { a, b })
+            Assert.Equal(BoardSceneRenderer.Render(compact, board, 16, phase, time, 5), BoardSceneRenderer.Render(withGaps, board, 16, phase, time, 5));
+        Assert.Equal(BoardSceneRenderer.DotPath(compact.Boards), BoardSceneRenderer.DotPath(withGaps.Boards));
+        Assert.All(BoardSceneRenderer.Render(withGaps, withGaps.Boards[0], 16, GamePhase.Running, 1, 5), value => Assert.Equal(0, value));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(90)]
+    [InlineData(180)]
+    [InlineData(270)]
+    public void CalibrationColorsFollowVisualEdgesAndMarkerTravelsClockwise(int rotation)
+    {
+        var board = Board() with { Rotation = rotation, Edges = [new(0, 4), new(4, 4), new(12, 4, true), new(8, 4, true)] };
+        byte[][] colors = [[0, 96, 160], [0, 128, 64], [160, 96, 0], [144, 0, 96]];
+        for (var side = 0; side < 4; side++)
+        {
+            var frame = BoardSceneRenderer.Calibration(board, 16, side);
+            var marker = BoardSceneRenderer.EdgePixels(board, side)[0];
+            Assert.Equal(new byte[] { 220, 220, 220 }, frame[(marker * 3)..(marker * 3 + 3)]);
+            for (var edge = 0; edge < 4; edge++)
+            foreach (var pixel in BoardSceneRenderer.EdgePixels(board, edge).Where(p => p != marker))
+                Assert.Equal(colors[edge], frame[(pixel * 3)..(pixel * 3 + 3)]);
+        }
+        Assert.Throws<ArgumentException>(() => BoardSceneRenderer.Calibration(board, 15, 0));
+    }
+
+    [Fact]
+    public async Task CalibrationPreviewsDraftOwnsOutputRenewsExpiresAndReleasesOnShutdown()
+    {
+        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        var saved = Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }],
+            Boards = [Board(), new(), Board("aabbccddeeff", "b")] };
+        await store.SaveAsync(saved);
+        var clock = new FakeTimeProvider();
+        var options = Options.Create(new WLedOptions());
+        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
+        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
+        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
+        var clients = new DummyClients();
+        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery());
+        var transport = new RecordingTransport();
+        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, transport);
+        await output.StartAsync(CancellationToken.None);
+        await Eventually(() => output.IsReady);
+        await Assert.ThrowsAsync<ArgumentException>(() => output.StartCalibrationAsync(new(saved.Boards, saved.Boards[1].Id)));
+        Assert.False(control.IsCalibrating);
+        var initialDraft = saved.Boards.Select(b => b with { Edges = b.Edges.ToList() }).ToList();
+        await output.StartCalibrationAsync(new(initialDraft, "a"));
+        initialDraft[0].Edges[0] = new(60000, 1); // Session must own a validated copy of the draft.
+        var id = output.Calibration!.SessionId;
+        Assert.True(control.IsCalibrating);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartGameAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => control.ConfigureAsync(() => Task.CompletedTask));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.LocateAsync("001122334455"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartCalibrationAsync(new(saved.Boards, "b")));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StopCalibrationAsync("other-session"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.UpdateCalibrationAsync("other-session", new(saved.Boards, "b")));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Eventually(() => transport.Frames.Count >= 2);
+        Assert.Contains(transport.Frames, f => f.Mac == "001122334455" && f.Pixels.Any(p => p != 0));
+        Assert.Contains(transport.Frames, f => f.Mac == "aabbccddeeff" && f.Pixels.All(p => p == 0));
+        var reordered = new List<BoardSettings> { saved.Boards[2] with { Rotation = 90 }, saved.Boards[0], saved.Boards[1] };
+        clock.Advance(TimeSpan.FromSeconds(9));
+        await output.UpdateCalibrationAsync(id, new(reordered, "b"));
+        Assert.Equal("b", output.Calibration!.ActiveBoardId);
+        Assert.Equal("a", store.Snapshot.Boards[0].Id);
+        Assert.Equal(0, store.Snapshot.Boards[2].Rotation);
+        await Assert.ThrowsAsync<ArgumentException>(() => output.UpdateCalibrationAsync(id, new([saved.Boards[0]], "a")));
+        transport.FailMac = "001122334455";
+        var count = transport.Frames.Count;
+        clock.Advance(TimeSpan.FromSeconds(6));
+        await Eventually(() => transport.Frames.Count > count);
+        Assert.True(control.IsCalibrating);
+        Assert.Contains("001122334455", output.Errors.Keys);
+        Assert.Contains(transport.Frames, f => f.Mac == "aabbccddeeff" && f.Pixels.Any(p => p != 0));
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await Eventually(() => output.Calibration is null);
+        Assert.False(control.IsCalibrating);
+        await control.ConfigureAsync(() => Task.CompletedTask);
+        await control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartCalibrationAsync(new(saved.Boards, "a")));
+        await control.StopManualEffectAsync();
+        await control.StartGameAsync(TimeSpan.FromSeconds(60), TimeSpan.Zero);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartCalibrationAsync(new(saved.Boards, "a")));
+        await control.StopGameAsync();
+        await output.StartCalibrationAsync(new(saved.Boards, "a"));
+        await output.StopAsync(CancellationToken.None);
+        Assert.Null(output.Calibration); Assert.False(control.IsCalibrating);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartCalibrationAsync(new(saved.Boards, "a")));
+    }
+
+    [Fact]
+    public async Task GameOutputUsesOnlyAssignedBoardsWhileManualOutputStillUsesAllSelectedDevices()
+    {
+        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        await store.SaveAsync(Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }], Boards = [new(), Board(), new()] });
+        var clock = new FakeTimeProvider();
+        var options = Options.Create(new WLedOptions());
+        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
+        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
+        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
+        var clients = new DummyClients();
+        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery());
+        var transport = new RecordingTransport();
+        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, transport);
+        await control.StartGameAsync(TimeSpan.FromSeconds(60), TimeSpan.Zero);
+        await output.StartAsync(CancellationToken.None);
+        await Eventually(() => transport.Sent.Contains("001122334455"));
+        Assert.DoesNotContain("aabbccddeeff", transport.Sent);
+        await control.StopGameAsync();
+        await control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Eventually(() => transport.Sent.Contains("aabbccddeeff"));
+        await output.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task SaveReloadRejectsInvalidAndDoesNotShareMutableCollections()
     {
         var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
@@ -63,30 +207,44 @@ public sealed class InstallationTests
     public void PreparationLightsPlayerEdgesThenRemainingEdgesAndGo()
     {
         var settings = Installation(); var board = settings.Boards[0];
+        static byte Peak(byte[] frame, int pixel) => frame[(pixel * 3)..(pixel * 3 + 3)].Max();
+        // Sampled half a second after a count, when the white pop has faded.
         var player = BoardSceneRenderer.Render(settings, board, 16, GamePhase.PreCountdown, 3.5, 5);
-        Assert.All(Enumerable.Range(0, 4).Concat(Enumerable.Range(8, 4)), i => Assert.Equal(255, player[i * 3 + 2]));
-        Assert.All(Enumerable.Range(4, 4).Concat(Enumerable.Range(12, 4)), i => Assert.Equal(0, player[i * 3 + 2]));
+        Assert.All(Enumerable.Range(0, 4).Concat(Enumerable.Range(8, 4)), i => Assert.True(Peak(player, i) > 100));
+        Assert.All(Enumerable.Range(4, 4).Concat(Enumerable.Range(12, 4)), i => Assert.Equal(0, Peak(player, i)));
         var all = BoardSceneRenderer.Render(settings, board, 16, GamePhase.PreCountdown, 4.5, 5);
-        Assert.Equal(16, all.Count(b => b == 255));
+        Assert.All(Enumerable.Range(0, 16), i => Assert.True(Peak(all, i) > 100));
+        // GO floods every board in the accent colour with white, never the old pure green.
         var go = BoardSceneRenderer.Render(settings, board, 16, GamePhase.Running, 0, 5);
-        Assert.All(Enumerable.Range(0, 16), i => Assert.Equal(new byte[] { 0, 255, 0 }, go[(i * 3)..(i * 3 + 3)]));
+        Assert.All(Enumerable.Range(0, 16), i =>
+        {
+            Assert.True(Peak(go, i) >= 200);
+            Assert.True(go[i * 3] > 0 && go[i * 3 + 2] > 0);
+        });
     }
     [Fact]
     public void ReorderedScannerAndSingleDotUseConfiguredRow()
     {
         var a = Board(); var b = Board("aabbccddeeff", "b");
         var settings = Installation() with { Devices = [Device(), Device("aabbccddeeff")], Boards = [a, b] };
-        // Early scanner reaches only the first board.
-        Assert.Contains((byte)255, BoardSceneRenderer.Render(settings, a, 16, GamePhase.PreCountdown, 0.2, 5));
-        Assert.All(BoardSceneRenderer.Render(settings, b, 16, GamePhase.PreCountdown, 0.2, 5), value => Assert.Equal(0, value));
+        // Just before a count the scanner is back at the start of the row, on the first board only.
+        Assert.Contains(BoardSceneRenderer.Render(settings, a, 16, GamePhase.PreCountdown, 0.9, 5), value => value > 100);
+        Assert.All(BoardSceneRenderer.Render(settings, b, 16, GamePhase.PreCountdown, 0.9, 5), value => Assert.Equal(0, value));
         settings = settings with { Boards = [b, a] };
-        Assert.Contains((byte)255, BoardSceneRenderer.Render(settings, b, 16, GamePhase.PreCountdown, 0.2, 5));
+        Assert.Contains(BoardSceneRenderer.Render(settings, b, 16, GamePhase.PreCountdown, 0.9, 5), value => value > 100);
+        Assert.All(BoardSceneRenderer.Render(settings, a, 16, GamePhase.PreCountdown, 0.9, 5), value => Assert.Equal(0, value));
+        var path = BoardSceneRenderer.DotPath(settings.Boards);
+        // After the flares one comet runs the dot path; its head is the brightest pixel of the whole row.
         foreach (var time in new[] { 2d, 2.03, 2.12, 2.9, 4.9 })
         {
-            var frames = settings.Boards.SelectMany(board => BoardSceneRenderer.Render(settings, board, 16, GamePhase.Ending, time, 5)).ToArray();
-            Assert.Equal(1, frames.Count(value => value == 255));
+            var head = path[(int)(BoardLightShow.Comet(time - settings.Animation.FlashSeconds, settings.Animation).Head * path.Count)];
+            var brightest = settings.Boards.SelectMany(board =>
+            {
+                var frame = BoardSceneRenderer.Render(settings, board, 16, GamePhase.Ending, time, 5);
+                return Enumerable.Range(0, 16).Select(pixel => (board.Id, Pixel: pixel, Level: frame[pixel * 3] + frame[pixel * 3 + 1] + frame[pixel * 3 + 2]));
+            }).MaxBy(pixel => pixel.Level);
+            Assert.Equal(head, (brightest.Id, brightest.Pixel));
         }
-        var path = BoardSceneRenderer.DotPath(settings.Boards);
         Assert.Equal(32, path.Count); Assert.Equal(32, path.Distinct().Count());
         Assert.Equal("b", path[0].BoardId);
         Assert.Equal(16, BoardSceneRenderer.DotPath([a]).Count);
@@ -197,6 +355,158 @@ public sealed class InstallationTests
         Assert.Contains("001122334455", output.Errors.Keys);
         await output.StopAsync(CancellationToken.None);
     }
+    [Fact]
+    public async Task SettingsWithoutLightShowLoadDefaultsAndInvalidValuesAreRejected()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        await File.WriteAllTextAsync(Path.Combine(path, "settings.json"), """{ "version": 1, "animation": { "framesPerSecond": 20 } }""");
+        var store = Store(path);
+        var saved = store.Snapshot;
+        Assert.Equal(new LightShowSettings(), saved.LightShow);
+        Assert.Equal("neonSunset", saved.LightShow.Theme); Assert.Equal("calm", saved.LightShow.Intensity);
+        Assert.Equal(20, saved.Animation.FramesPerSecond);
+        var show = saved.LightShow;
+        foreach (var invalid in new[]
+        {
+            show with { Theme = "disco" }, show with { Intensity = "wild" }, show with { Brightness = 19 }, show with { Brightness = 101 },
+            show with { Speed = 24 }, show with { Speed = 201 }, show with { Custom = null! },
+            show with { Custom = show.Custom with { Accent = "#000000" } }, show with { Custom = show.Custom with { Primary = "ff4fad" } },
+            show with { Custom = show.Custom with { Tertiary = "#ff4fa" } }, show with { Custom = show.Custom with { Secondary = "#gg4fad" } }
+        })
+            Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(saved with { LightShow = invalid }));
+        Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(saved with { LightShow = null! }));
+        await store.UpdateAsync(s => s with { LightShow = new() { Theme = "custom", Brightness = 60, Speed = 150, Intensity = "lively", Custom = new() { Primary = "#00FF00" } } });
+        var reloaded = Store(path).Snapshot;
+        Assert.Equal(("custom", 60, 150, "lively", "#00FF00"), (reloaded.LightShow.Theme, reloaded.LightShow.Brightness, reloaded.LightShow.Speed, reloaded.LightShow.Intensity, reloaded.LightShow.Custom.Primary));
+        Assert.Equal(20, reloaded.Animation.FramesPerSecond);
+    }
+    [Fact]
+    public async Task SavedCountdownSurvivesReloadOverridesConfigurationAndIsValidated()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
+        var store = Store(path);
+        var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions { DurationSeconds = 600, DeviationSeconds = 120 }),
+            new FakeTimeProvider(), store);
+        Assert.Null(store.Snapshot.Countdown);
+        Assert.Equal((600, 120), ((int)countdown.CountdownDuration.TotalSeconds, (int)countdown.CountdownDeviation.TotalSeconds)); // Configuration until saved.
+        await store.UpdateAsync(s => s with { Countdown = new(720, 30) });
+        Assert.Equal((720, 30), ((int)countdown.CountdownDuration.TotalSeconds, (int)countdown.CountdownDeviation.TotalSeconds));
+        Assert.Equal(new CountdownSettings(720, 30), Store(path).Snapshot.Countdown); // A restart reads the file again.
+        foreach (var invalid in new CountdownSettings[] { new(0, 0), new(86401, 0), new(60, -1), new(60, 60) })
+            Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(store.Snapshot with { Countdown = invalid }));
+    }
+    [Fact]
+    public async Task LightTestPlaysUnsavedDraftEndsByItselfAndConflictsCleanly()
+    {
+        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        var saved = Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }],
+            Boards = [Board(), new(), Board("aabbccddeeff", "b")] };
+        await store.SaveAsync(saved);
+        var clock = new FakeTimeProvider();
+        var options = Options.Create(new WLedOptions());
+        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
+        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
+        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
+        var clients = new DummyClients();
+        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery());
+        var transport = new RecordingTransport();
+        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, transport);
+        await output.StartAsync(CancellationToken.None);
+        await Eventually(() => output.IsReady);
+        var red = new LightShowSettings { Theme = "custom", Custom = new() { Primary = "#ff0000", Secondary = "#ff0000", Tertiary = "#ff0000", Accent = "#ff0000" } };
+        LightShowTestRequest Request(string segment) => new(segment, red, new());
+
+        // A rejected request leaves the boards alone.
+        await Assert.ThrowsAsync<ArgumentException>(() => output.StartLightShowTestAsync(Request("idle")));
+        await Assert.ThrowsAsync<ArgumentException>(() => output.StartLightShowTestAsync(new("playing", red with { Brightness = 0 }, new())));
+        await Assert.ThrowsAsync<ArgumentException>(() => output.StartLightShowTestAsync(new("playing", null!, new())));
+        Assert.False(control.IsTestingLights); Assert.Null(output.LightShowTest);
+
+        await output.StartLightShowTestAsync(Request("playing"));
+        Assert.True(control.IsTestingLights);
+        Assert.Equal("playing", output.LightShowTest!.Segment);
+        Assert.Equal(clock.GetUtcNow().AddSeconds(30), output.LightShowTest.EndsUtc);
+        Assert.Equal(new LightShowSettings(), store.Snapshot.LightShow); // The draft is played, not saved.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartGameAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => control.ConfigureAsync(() => Task.CompletedTask));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.LocateAsync("001122334455"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartCalibrationAsync(new(saved.Boards, "a")));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Eventually(() => transport.Sent.Contains("001122334455") && transport.Sent.Contains("aabbccddeeff"));
+        // Both boards show the draft's colours: red only.
+        Assert.All(transport.Frames, frame =>
+        {
+            Assert.Contains(frame.Pixels, value => value > 0);
+            Assert.All(frame.Pixels.Chunk(3), pixel => { Assert.Equal(0, pixel[1]); Assert.Equal(0, pixel[2]); });
+        });
+
+        // A second test replaces the first, and a test ends by itself.
+        await output.StartLightShowTestAsync(Request("gameOver"));
+        Assert.Equal("gameOver", output.LightShowTest!.Segment);
+        Assert.True(control.IsTestingLights);
+        clock.Advance(TimeSpan.FromSeconds(6));
+        await Eventually(() => output.LightShowTest is null && !control.IsTestingLights);
+        await control.ConfigureAsync(() => Task.CompletedTask);
+
+        // Whoever owns the lights keeps them.
+        await control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartLightShowTestAsync(Request("playing")));
+        await control.StopManualEffectAsync();
+        await control.StartGameAsync(TimeSpan.FromSeconds(60), TimeSpan.Zero);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartLightShowTestAsync(Request("playing")));
+        await control.StopGameAsync();
+        await output.StartCalibrationAsync(new(saved.Boards, "a"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartLightShowTestAsync(Request("playing")));
+        await output.StopCalibrationAsync(output.Calibration!.SessionId);
+        Assert.False(control.IsTestingLights);
+
+        // Without a board there is nothing to test on.
+        await store.UpdateAsync(s => s with { Boards = [new()] });
+        await Assert.ThrowsAsync<ArgumentException>(() => output.StartLightShowTestAsync(Request("playing")));
+        await store.UpdateAsync(s => s with { Boards = saved.Boards });
+
+        // Stopping is idempotent, and shutdown releases a running test.
+        await output.StopLightShowTestAsync();
+        await output.StartLightShowTestAsync(Request("countdown"));
+        await output.StopLightShowTestAsync();
+        Assert.Null(output.LightShowTest); Assert.False(control.IsTestingLights);
+        await output.StartLightShowTestAsync(Request("playing"));
+        await output.StopAsync(CancellationToken.None);
+        Assert.Null(output.LightShowTest); Assert.False(control.IsTestingLights);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartLightShowTestAsync(Request("playing")));
+    }
+    [Fact]
+    public async Task GameWithoutBoardsSendsNoFramesButManualOutputStillDoes()
+    {
+        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        await store.SaveAsync(Installation() with { Boards = [new()] });
+        var clock = new FakeTimeProvider();
+        var options = Options.Create(new WLedOptions());
+        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
+        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
+        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
+        var clients = new DummyClients();
+        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery());
+        var transport = new RecordingTransport();
+        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, transport);
+        await control.StartGameAsync(TimeSpan.FromSeconds(60), TimeSpan.Zero);
+        await output.StartAsync(CancellationToken.None);
+        await Eventually(() => output.IsReady);
+        for (var pass = 0; pass < 5; pass++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            await Task.Delay(20);
+        }
+        Assert.Empty(transport.Sent);
+        // The same loop still mirrors a manual effect to the strip, so it was running all along.
+        await control.StopGameAsync();
+        await control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Eventually(() => transport.Sent.Contains("001122334455"));
+        await output.StopAsync(CancellationToken.None);
+    }
     private static async Task Eventually(Func<bool> condition)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
@@ -205,11 +515,12 @@ public sealed class InstallationTests
     private sealed class RecordingTransport : IWLedFrameTransport
     {
         public ConcurrentQueue<string> Sent { get; } = new();
+        public ConcurrentQueue<(string Mac, byte[] Pixels)> Frames { get; } = new();
         public string? FailMac { get; set; }
         public Task SendAsync(DeviceSettings device, byte[] pixels, CancellationToken token)
         {
             if (device.Mac == FailMac) throw new IOException("Test device offline.");
-            Sent.Enqueue(device.Mac); return Task.CompletedTask;
+            Sent.Enqueue(device.Mac); Frames.Enqueue((device.Mac, pixels.ToArray())); return Task.CompletedTask;
         }
     }
     private sealed class DummyClients : IHttpClientFactory { public HttpClient CreateClient(string name) => new(new DummyHandler()); }

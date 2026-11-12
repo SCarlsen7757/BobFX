@@ -16,8 +16,8 @@ public sealed class ConfigurationTests
     [InlineData("AllowedHosts", "", "Production requires explicit AllowedHosts")]
     [InlineData("Security:AllowedClientNetworks:0", "not-a-cidr", "AllowedClientNetworks")]
     [InlineData("WLed:Led:LedCount", "491", "1–490 LEDs")]
-    [InlineData("WLed:Udp:TargetPort", "0", "valid port")]
-    [InlineData("Countdown:DeviationSeconds", "600", "deviation smaller than duration")]
+    [InlineData("WLed:Discovery:UpdateIntervalSeconds", "4", "discovery interval")]
+    [InlineData("Countdown:DeviationSeconds", "720", "deviation smaller than duration")]
     public void InvalidProductionConfigurationFailsBeforeServing(string key, string value, string expected)
     {
         using var app = new InvalidApp(key, value);
@@ -34,8 +34,7 @@ public sealed class ConfigurationTests
                 var values = new Dictionary<string, string?>
                 {
                     ["AllowedHosts"] = "localhost",
-                    ["Security:AllowedClientNetworks:0"] = "127.0.0.0/8",
-                    ["WLed:Udp:TargetAddress"] = "127.0.0.1"
+                    ["Security:AllowedClientNetworks:0"] = "127.0.0.0/8"
                 };
                 values[key] = value;
                 config.AddInMemoryCollection(values);

@@ -83,6 +83,9 @@ public sealed class BackendTests
         await control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid).WithColor("#ff0000"));
         Assert.True(rgb.IsUdpActive);
         await control.StartGameAsync(TimeSpan.FromSeconds(10), TimeSpan.Zero);
+        // The game is rendered on the boards from the scene clock; it ends the manual effect and starts none.
+        Assert.Equal(RgbEffect.Off, rgb.CurrentEffect);
+        Assert.True(rgb.IsUdpActive);
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Rainbow)));
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StopManualEffectAsync());
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.SetManualSpeedAsync(TimeSpan.FromMilliseconds(100)));
@@ -109,6 +112,7 @@ public sealed class BackendTests
         await Eventually(() => timer.Remaining <= TimeSpan.FromSeconds(14));
         Assert.Equal(GamePhase.Running, control.Phase);
         Assert.True(rgb.IsUdpActive);
+        Assert.Equal(RgbEffect.Off, rgb.CurrentEffect); // Six seconds in, the virtual strip is still not driven.
         await control.StopAsync(CancellationToken.None);
         Assert.False(control.IsReady);
         Assert.False(rgb.IsUdpActive);
@@ -130,24 +134,6 @@ public sealed class BackendTests
         });
         Assert.Equal(1, (await Task.WhenAll(attempts)).Count(success => success));
         Assert.Equal(1, timer.Snapshot.RunId);
-    }
-
-    [Theory]
-    [InlineData(1)]
-    [InlineData(490)]
-    public async Task DrgbFrameHasProtocolHeaderAndExactBoundaryPayload(int count)
-    {
-        var clock = new FakeTimeProvider();
-        using var rgb = Renderer(clock, count);
-        await rgb.StartEffectAsync(new SolidEffect { Color = new Vector3(1, 0.5f, 0) });
-        var snapshot = rgb.GetSnapshot();
-        snapshot[0] = Vector3.Zero;
-        var buffer = new byte[count * 3 + 2];
-        Assert.Equal(buffer.Length, WLedBroadcastService.WriteFrame(rgb, buffer));
-        Assert.Equal((byte)2, buffer[0]);
-        Assert.Equal((byte)1, buffer[1]);
-        Assert.Equal(new byte[] { 255, 127, 0 }, buffer[^3..]);
-        Assert.Equal(new byte[] { 255, 127, 0 }, buffer[2..5]);
     }
 
     [Fact]

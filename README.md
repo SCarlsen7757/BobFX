@@ -2,7 +2,7 @@
 
 BobFX provides light and sound effects for **Bob**, a board game related to Carrom. A shared game countdown drives RGB effects on selected WLED devices, with persistent board mappings and optional BUSY Bar display/start/stop integration. The application uses ASP.NET Core on .NET 10 LTS with a Vue/TypeScript frontend and a SignalR realtime connection; browsers control one shared game, and the server sends WLED realtime RGB frames over UDP to selected devices.
 
-When realtime output stops, WLED's realtime lease expires and the devices resume their configured idle playlist. Board layout also supports native WLED idle synchronization and configurable game scenes.
+When realtime output stops, WLED's realtime lease expires and the devices resume their configured idle playlist. Board layout also supports native WLED idle synchronization, and the Light show page sets the color theme, brightness and pace of the game lights and can test them on the boards.
 
 ## Run locally
 
@@ -16,7 +16,7 @@ npm --prefix frontend test
 dotnet run --project BobFx.Core --launch-profile http
 ```
 
-Open http://localhost:5159. Running game state exists in memory; restarting resets it. Device registrations, board layouts, animation settings and controller credentials persist in the configured data directory. No database is required. Node is needed for builds, but the production runtime remains .NET only. Navigation and WLED discovery are available in production. Manual effect controls are rejected while a game is active or ending; stop the game first.
+Open http://localhost:5159. Running game state exists in memory; restarting resets it. Device registrations, board layouts, light show settings and controller credentials persist in the configured data directory. No database is required. Node is needed for builds, but the production runtime remains .NET only. Navigation and WLED discovery are available in production. Manual effect controls are rejected while a game is active or ending; stop the game first.
 
 The neon-sunset Game page is sized for portrait and landscape tablets, with large Start/Stop controls. Select **Full screen** to open `/game/fullscreen` without the navigation bar; **Exit full screen** restores navigation. Supported browsers also enter native fullscreen after the tap. The dedicated URL works without native fullscreen support and can be bookmarked or reloaded. Changing views preserves the shared game and the browser's audio opt-in; reloading still resets audio. Remaining game time stays hidden during play.
 
@@ -81,11 +81,8 @@ Configuration uses normal ASP.NET Core precedence: appsettings, environment-spec
 | Environment key | Default / constraint |
 | --- | --- |
 | `WLed__Led__LedCount` | 30; 1–490 LEDs per realtime frame |
-| `WLed__Udp__TargetAddress` | Legacy transport/test setting; production sends to selected registered devices |
-| `WLed__Udp__TargetPort` | Legacy transport/test setting; registered devices use their reported UDP port |
-| `WLed__Udp__UpdateIntervalMs` | Legacy transport/test setting; installation frame rate is configured in Board layout |
 | `WLed__Discovery__UpdateIntervalSeconds` | 30; 5–3600 seconds |
-| `Countdown__DurationSeconds` | 600; 1–86400 seconds |
+| `Countdown__DurationSeconds` | 720; 1–86400 seconds |
 | `Countdown__DeviationSeconds` | 120; nonnegative and below duration |
 | `AllowedHosts` | Explicit semicolon-separated names/IPs required in Production |
 | `Security__AllowedClientNetworks__0` | Explicit trusted CIDR required in Production |
@@ -100,6 +97,7 @@ Breaking migration changes:
 - Upgrade developer/runtime tooling from .NET 9 to .NET 10 and restore from checked-in package locks.
 - Replace legacy flat application configuration (`WLED_*`, `PRE_COUNTDOWN_*`, `COUNTDOWN_*`) with the table's hierarchical keys. The former Compose `*_TIME_SECONDS` keys never matched application `*_DURATION_SECONDS` keys.
 - Replace the ignored `CountdownConfiguration` JSON section with `Countdown`.
+- Remove `WLed__Udp__*` keys. The broadcast transport they configured is gone; they are ignored if still set. Frame rate is set on the Light show page.
 - Replace implicit production/development Compose merging with explicit `-f compose.prod.yaml`. Production requires an image digest, bind address, allowed hosts, trusted CIDR, and persistent data volume.
 - Effect start/speed endpoints now require JSON bodies instead of query parameters. Game start endpoints accept an optional JSON body; omitted settings use configured defaults. Invalid input returns Problem Details with HTTP 400; output ownership conflicts return HTTP 409. Browser calls must use the application's own origin; trusted CLI callers can omit Origin. No wildcard/public production configuration is supported.
 - Browser audio defaults muted. Tap the speaker icon in the header to enable audio; tap it again to mute that browser. Reloading a tab resets this opt-in. Enabled clients hear the existing game-over sound; playback errors appear below the icon.
@@ -125,7 +123,7 @@ Replace `bobfx.local` with a configured allowed hostname or the host LAN IP.
 - **403 / rejected control:** check the client's actual source address against the trusted CIDRs, hostnames against `AllowedHosts`, and use the application's own origin.
 - **No WLED devices:** check UDP 5353 multicast, same-LAN connectivity, Wi-Fi client isolation, and device HTTP reachability.
 - **Discovery works but LEDs do not:** verify realtime UDP is enabled, the device is selected in BobFX, its reported UDP port and LED count are correct, and its board mapping is valid. Discovery and realtime output are independent.
-- **One output goes black in realtime mode:** verify every physical WLED output has the correct start/count in WLED, scan again to refresh its reported LED count, and map all four edges in Board layout. Use Locate and WLED Peek to check which indices receive frames.
+- **One output goes black in realtime mode:** verify both physical WLED outputs have the correct start/count in WLED, scan again to refresh the reported LED total, and use Board layout calibration to check the two-strip mapping. Advanced settings provides strip swapping and manual edge ranges. Use Locate and WLED Peek to check which indices receive frames.
 - **Unhealthy:** inspect logs and `docker inspect` health output. Confirm the bind IP exists on the host, is permitted by the CIDR, and has an allowed Host header.
 - **No sound:** tap the speaker icon in that browser and check mute/autoplay restrictions. Reenable after a visible playback error to retry.
 - **Restore changes unexpectedly:** use `--locked-mode`; deliberate dependency updates must regenerate and commit locks.

@@ -6,6 +6,7 @@ import './style.css';
 import App from './App.vue';
 import Game from './pages/Game.vue';
 import Countdown from './pages/Countdown.vue';
+import LightShow from './pages/LightShow.vue';
 import Effects from './pages/Effects.vue';
 import Devices from './pages/Devices.vue';
 import BoardLayout from './pages/BoardLayout.vue';
@@ -18,6 +19,7 @@ const router = createRouter({
     { path: '/', component: Game, meta: { title: 'Game' } },
     { path: '/game/fullscreen', component: Game, meta: { title: 'Game', fullscreen: true } },
     { path: '/countdown', component: Countdown, meta: { title: 'Countdown settings' } },
+    { path: '/lights', component: LightShow, meta: { title: 'Light show' } },
     { path: '/drgb', component: Effects, meta: { title: 'LED effects' } },
     { path: '/wled', component: Devices, meta: { title: 'WLED devices' } },
     { path: '/layout', component: BoardLayout, meta: { title: 'Board layout' } },

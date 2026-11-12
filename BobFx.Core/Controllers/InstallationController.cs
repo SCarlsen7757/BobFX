@@ -18,9 +18,33 @@ public sealed class InstallationController(InstallationSettingsStore settings, R
     [HttpPut("layout")]
     public Task<IActionResult> SaveLayout(LayoutRequest value, CancellationToken token) => Execute(() => control.ConfigureAsync(async () =>
     {
-        await settings.UpdateAsync(s => s with { Boards = value.Boards, IdleSync = value.IdleSync, Animation = value.Animation }, token);
+        await settings.UpdateAsync(s => s with { Boards = value.Boards, IdleSync = value.IdleSync }, token);
         await output.ApplyIdleSyncAsync(token);
     }));
+    [HttpPut("light-show")]
+    public Task<IActionResult> SaveLightShow(LightShowRequest value, CancellationToken token) => Execute(() => control.ConfigureAsync(() =>
+        settings.UpdateAsync(s => s with { LightShow = value.LightShow, Animation = value.Animation }, token)));
+    /// <summary>Takes effect from the next game, so it is allowed while a game runs.</summary>
+    [HttpPut("countdown")]
+    public Task<IActionResult> SaveCountdown(CountdownSettings value, CancellationToken token) => Execute(() => settings.UpdateAsync(s => s with { Countdown = value }, token));
+    [HttpGet("light-show/themes")]
+    public IReadOnlyList<LightShowTheme> LightShowThemes() => BoardLightShow.Themes;
+    [HttpPost("light-show/test")]
+    public async Task<IActionResult> StartLightShowTest(LightShowTestRequest request)
+    {
+        var result = await Execute(() => output.StartLightShowTestAsync(request));
+        return result is OkResult ? Ok(output.LightShowTest) : result;
+    }
+    /// <summary>Renders a part of the show for the browser preview. It only reads settings and owns no lights,
+    /// so it works during games and tests too.</summary>
+    [HttpPost("light-show/preview")]
+    public IActionResult PreviewLightShow(LightShowTestRequest request)
+    {
+        try { return Ok(LightShowPreviewRenderer.Render(settings.Snapshot, request)); }
+        catch (ArgumentException ex) { return Problem(ex.Message, statusCode: 400); }
+    }
+    [HttpDelete("light-show/test")]
+    public Task<IActionResult> StopLightShowTest() => Execute(() => output.StopLightShowTestAsync());
     [HttpPut("controllers")]
     public Task<IActionResult> SaveControllers(ControllersRequest value, CancellationToken token) => Execute(() => control.ConfigureAsync(async () =>
     {
@@ -68,6 +92,16 @@ public sealed class InstallationController(InstallationSettingsStore settings, R
     public Task<IActionResult> AddManual(ManualDeviceRequest request, CancellationToken token) => Execute(() => registry.AddManualAsync(request.Address, request.Port, token));
     [HttpPost("devices/{mac}/locate")]
     public Task<IActionResult> Locate(string mac, CancellationToken token) => Execute(() => output.LocateAsync(mac, token));
+    [HttpPost("calibration")]
+    public async Task<IActionResult> StartCalibration(CalibrationRequest request)
+    {
+        var result = await Execute(() => output.StartCalibrationAsync(request));
+        return result is OkResult ? Ok(output.Calibration) : result;
+    }
+    [HttpPut("calibration/{id}")]
+    public Task<IActionResult> UpdateCalibration(string id, CalibrationRequest request) => Execute(() => output.UpdateCalibrationAsync(id, request));
+    [HttpDelete("calibration/{id}")]
+    public Task<IActionResult> StopCalibration(string id) => Execute(() => output.StopCalibrationAsync(id));
     [HttpPost("idle-sync/apply")]
     public Task<IActionResult> Sync(CancellationToken token) => Execute(() => control.ConfigureAsync(() => output.ApplyIdleSyncAsync(token)));
     [HttpGet("controllers/{id}/password")]
@@ -92,7 +126,8 @@ public sealed class InstallationController(InstallationSettingsStore settings, R
 }
 public sealed record ManualDeviceRequest(string Address, int Port = 80);
 public sealed record ControllerPasswordRequest(string Password);
-public sealed record LayoutRequest(List<BoardSettings> Boards, IdleSyncSettings IdleSync, AnimationSettings Animation);
+public sealed record LayoutRequest(List<BoardSettings> Boards, IdleSyncSettings IdleSync);
+public sealed record LightShowRequest(LightShowSettings LightShow, AnimationSettings Animation);
 public sealed record ControllersRequest(List<BusyBarSettings> Controllers, Dictionary<string, string> Passwords);
 public sealed record ControllerTestRequest(BusyBarSettings Controller, string? Password = null);
 public sealed record DeviceSelectionRequest(bool Selected);

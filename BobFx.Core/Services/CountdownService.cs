@@ -5,7 +5,9 @@ public sealed record CountdownSnapshot(bool IsRunning, bool IsPreCountdownRunnin
     DateTimeOffset? StartedUtc = null, DateTimeOffset? EndedUtc = null);
 
 /// <summary>State advanced by the single coordinator, without detached timer tasks.</summary>
-public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<CountdownOptions> options, TimeProvider clock)
+/// <param name="settings">Saved UI values; when absent or unset, the Countdown configuration applies.</param>
+public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<CountdownOptions> options, TimeProvider clock,
+    InstallationSettingsStore? settings = null)
 {
     private CountdownSnapshot snapshot = new(false, false, TimeSpan.Zero, TimeSpan.Zero, 0);
     private long startedAt;
@@ -23,8 +25,8 @@ public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<
     public TimeSpan PreCountdownRemaining => Snapshot.PreCountdownRemaining;
     /// <summary>Every game is preceded by the same short preparation; it is not configurable.</summary>
     public static readonly TimeSpan PreCountdownDuration = TimeSpan.FromSeconds(3);
-    public TimeSpan CountdownDuration => TimeSpan.FromSeconds(options.Value.DurationSeconds);
-    public TimeSpan CountdownDeviation => TimeSpan.FromSeconds(options.Value.DeviationSeconds);
+    public TimeSpan CountdownDuration => TimeSpan.FromSeconds(settings?.Read().Countdown?.DurationSeconds ?? options.Value.DurationSeconds);
+    public TimeSpan CountdownDeviation => TimeSpan.FromSeconds(settings?.Read().Countdown?.DeviationSeconds ?? options.Value.DeviationSeconds);
 
     /// <param name="withPre">False only in tests that need a game already running.</param>
     internal void Start(bool withPre = true, TimeSpan? duration = null, TimeSpan? deviation = null)

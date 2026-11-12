@@ -15,9 +15,47 @@ public sealed class RgbAndSoundControlService(
     private long phaseStarted;
     private sealed record SceneState(GamePhase Phase, long Started, double Preparation);
     private SceneState scene = new(GamePhase.Idle, 0, 5);
-    private bool switchedToRunning;
     private int locating;
     public bool IsLocating => Volatile.Read(ref locating) != 0;
+    private int calibrating;
+    public bool IsCalibrating => Volatile.Read(ref calibrating) != 0;
+    private int testingLights;
+    public bool IsTestingLights => Volatile.Read(ref testingLights) != 0;
+    /// <summary>Starts, replaces or stops a light show test. A test owns the boards like calibration does,
+    /// but a new test may replace a running one. <paramref name="action"/> returns whether a test is left playing.</summary>
+    public async Task LightTestCommandAsync(Func<bool> action, bool starting = false)
+    {
+        await commands.WaitAsync();
+        try
+        {
+            if (starting)
+            {
+                EnsureAvailable();
+                if (IsLocating) throw new InvalidOperationException("A board is being located.");
+                if (IsCalibrating) throw new InvalidOperationException("Board calibration owns the lights.");
+                if (Phase != GamePhase.Idle) throw new InvalidOperationException("The game owns the lights until its ending sequence completes.");
+                if (rgb.IsUdpActive) throw new InvalidOperationException("Stop manual output before testing the light show.");
+            }
+            Volatile.Write(ref testingLights, action() ? 1 : 0);
+        }
+        finally { commands.Release(); }
+    }
+    public async Task CalibrationCommandAsync(Func<Task> action, bool starting = false, bool stopping = false)
+    {
+        await commands.WaitAsync();
+        try
+        {
+            if (starting)
+            {
+                EnsureManual();
+                if (rgb.IsUdpActive) throw new InvalidOperationException("Stop manual output before calibration.");
+            }
+            else if (!IsCalibrating) throw new InvalidOperationException("Calibration has ended. Start calibration again.");
+            await action();
+            Volatile.Write(ref calibrating, stopping ? 0 : 1);
+        }
+        finally { commands.Release(); }
+    }
     public double PhaseElapsedSeconds => clock.GetElapsedTime(phaseStarted).TotalSeconds;
     public double PreparationSeconds { get; private set; } = CountdownService.PreCountdownDuration.TotalSeconds;
     public (GamePhase Phase, double Elapsed, double Preparation) GetSceneFrame()
@@ -60,17 +98,15 @@ public sealed class RgbAndSoundControlService(
         {
             EnsureAvailable();
             if (IsLocating) throw new InvalidOperationException("A board is being located.");
+            if (IsCalibrating) throw new InvalidOperationException("Board calibration owns the lights.");
+            if (IsTestingLights) throw new InvalidOperationException(LightTestMessage);
             if (Phase is GamePhase.PreCountdown or GamePhase.Running) throw new InvalidOperationException("A game is already active.");
             countdown.Start(withPreCountdown, duration, deviation);
             PreparationSeconds = countdown.IsPreCountdownRunning ? countdown.PreCountdownRemaining.TotalSeconds : 0;
-            switchedToRunning = false;
+            // The board show is rendered from the scene clock; a manual effect must not run on through the game.
+            rgb.StopEffect();
             rgb.IsUdpActive = true;
-            if (countdown.IsPreCountdownRunning)
-            {
-                SetPhase(GamePhase.PreCountdown);
-                await rgb.StartEffectAsync(b => b.WithEffect(RgbEffect.FadeIn).WithColor("#0000ff").WithSpeed(10).WithFadeDuration(countdown.PreCountdownRemaining));
-            }
-            else await EnterRunningAsync();
+            SetPhase(countdown.IsPreCountdownRunning ? GamePhase.PreCountdown : GamePhase.Running);
         }
         finally { commands.Release(); }
     }
@@ -120,19 +156,15 @@ public sealed class RgbAndSoundControlService(
     {
         EnsureAvailable();
         if (IsLocating) throw new InvalidOperationException("A board is being located.");
+        if (IsCalibrating) throw new InvalidOperationException("Board calibration owns the lights.");
+        if (IsTestingLights) throw new InvalidOperationException(LightTestMessage);
         if (Phase != GamePhase.Idle) throw new InvalidOperationException("The game owns the lights until its ending sequence completes.");
     }
-    private async Task EnterRunningAsync()
-    {
-        SetPhase(GamePhase.Running);
-        switchedToRunning = false;
-        await rgb.StartEffectAsync(b => b.WithEffect(RgbEffect.Blink).WithColor("#00ff00").WithColor("#a2ff00").WithSpeed(200));
-    }
-    private async Task EnterEndingAsync()
+    private const string LightTestMessage = "A light show test is playing on the boards.";
+    private Task EnterEndingAsync()
     {
         SetPhase(GamePhase.Ending);
-        await rgb.StartEffectAsync(b => b.WithEffect(RgbEffect.Blink).WithColor("#ff0000").WithColor("#ffff00").WithSpeed(250));
-        await sounds.Play("end");
+        return sounds.Play("end");
     }
     private void EnterIdle()
     {
@@ -150,13 +182,8 @@ public sealed class RgbAndSoundControlService(
                 try
                 {
                     countdown.Advance();
-                    if (Phase == GamePhase.PreCountdown && countdown.IsRunning) await EnterRunningAsync();
+                    if (Phase == GamePhase.PreCountdown && countdown.IsRunning) SetPhase(GamePhase.Running);
                     else if (Phase == GamePhase.Running && !countdown.IsRunning) await EnterEndingAsync();
-                    else if (Phase == GamePhase.Running && !switchedToRunning && clock.GetElapsedTime(phaseStarted) >= TimeSpan.FromSeconds(5))
-                    {
-                        await rgb.StartEffectAsync(b => b.WithEffect(RgbEffect.Twinkle).WithColor("#a2ff00"));
-                        switchedToRunning = true;
-                    }
                     else if (Phase == GamePhase.Ending && clock.GetElapsedTime(phaseStarted) >= TimeSpan.FromSeconds(settings is null ? 5 : settings.Read().Animation.FlashSeconds + settings.Read().Animation.DotSeconds)) EnterIdle();
                 }
                 finally { commands.Release(); }

@@ -11,7 +11,14 @@ public sealed record InstallationSettings
     public List<BoardSettings> Boards { get; init; } = [];
     public IdleSyncSettings IdleSync { get; init; } = new();
     public AnimationSettings Animation { get; init; } = new();
+    public LightShowSettings LightShow { get; init; } = new();
     public List<BusyBarSettings> Controllers { get; init; } = [];
+    /// <summary>Saved game length. Null until saved from the UI, so the Countdown configuration supplies the first-run values.</summary>
+    public CountdownSettings? Countdown { get; init; }
+}
+public sealed record CountdownSettings(int DurationSeconds, int DeviationSeconds)
+{
+    public bool IsValid() => DurationSeconds is >= 1 and <= 86400 && DeviationSeconds >= 0 && DeviationSeconds < DurationSeconds;
 }
 public sealed record DeviceSettings(string Mac, string Name, string Address, int HttpPort, int LedCount, int UdpPort, bool Selected = true);
 public sealed record EdgeSettings(int Start, int Count, bool Reversed = false);
@@ -19,7 +26,7 @@ public sealed record BoardSettings
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public string Name { get; init; } = "Board";
-    public string DeviceMac { get; init; } = "";
+    public string? DeviceMac { get; init; }
     public int Rotation { get; init; }
     // Physical edges clockwise before rotation. Top/bottom in the preview face the players.
     public List<EdgeSettings> Edges { get; init; } = [];
@@ -37,6 +44,24 @@ public sealed record AnimationSettings
     public double FlashSeconds { get; init; } = 2;
     public double DotSeconds { get; init; } = 3;
     public double DotLapsPerSecond { get; init; } = 4;
+}
+/// <summary>Look of the board light show. Kept apart from <see cref="AnimationSettings"/>, whose
+/// values also time the BUSY Bar clips.</summary>
+public sealed record LightShowSettings
+{
+    public string Theme { get; init; } = "neonSunset";
+    public LightShowColors Custom { get; init; } = new();
+    public int Brightness { get; init; } = 100;
+    /// <summary>Drift speed of the playing phase in percent; the big moments stay clock-locked.</summary>
+    public int Speed { get; init; } = 100;
+    public string Intensity { get; init; } = "calm";
+}
+public sealed record LightShowColors
+{
+    public string Primary { get; init; } = "#ff4fad";
+    public string Secondary { get; init; } = "#ffad66";
+    public string Tertiary { get; init; } = "#8c50ff";
+    public string Accent { get; init; } = "#96eddf";
 }
 public sealed record BusyBarSettings
 {
@@ -97,7 +122,7 @@ public sealed class InstallationSettingsStore
     public static void Validate(InstallationSettings value)
     {
         if (value.Version != 1) throw new ArgumentException("Unsupported settings version; restore a compatible backup.");
-        if (value.Devices is null || value.Boards is null || value.Controllers is null || value.Animation is null || value.IdleSync is null)
+        if (value.Devices is null || value.Boards is null || value.Controllers is null || value.Animation is null || value.IdleSync is null || value.LightShow is null)
             throw new ArgumentException("Settings sections cannot be null.");
         if (value.Devices.Any(d => d is null) || value.Boards.Any(b => b is null) || value.Controllers.Any(c => c is null))
             throw new ArgumentException("Settings entries cannot be null.");
@@ -107,16 +132,21 @@ public sealed class InstallationSettingsStore
             if (!ValidMac(d.Mac) || !devices.TryAdd(d.Mac, d) || !LocalAddress(d.Address) || d.HttpPort is < 1 or > 65535 || d.UdpPort is < 1 or > 65535 || d.LedCount is < 1 or > 65535 || string.IsNullOrWhiteSpace(d.Name))
                 throw new ArgumentException("Devices require unique lowercase MAC identities, a private IPv4 address, valid ports and 1–65535 LEDs.");
         }
-        if (value.Boards.Select(b => b.Id).Distinct().Count() != value.Boards.Count || value.Boards.Select(b => b.DeviceMac).Distinct().Count() != value.Boards.Count)
+        var assigned = value.Boards.Where(b => b.DeviceMac is not null).ToList();
+        if (value.Boards.Select(b => b.Id).Distinct().Count() != value.Boards.Count || assigned.Select(b => b.DeviceMac).Distinct().Count() != assigned.Count)
             throw new ArgumentException("Each board needs a unique ID and WLED device.");
         foreach (var b in value.Boards)
         {
-            if (string.IsNullOrWhiteSpace(b.Id) || string.IsNullOrWhiteSpace(b.Name) || !devices.TryGetValue(b.DeviceMac, out var d) || !d.Selected || b.Rotation is not (0 or 90 or 180 or 270) || b.Edges is null || b.Edges.Count != 4)
-                throw new ArgumentException("Boards require a selected device, four edges and rotation 0/90/180/270.");
+            if (string.IsNullOrWhiteSpace(b.Id) || string.IsNullOrWhiteSpace(b.Name) || b.Rotation is not (0 or 90 or 180 or 270) || b.Edges is null ||
+                (b.Edges.Count != 4 && !(b.DeviceMac is null && b.Edges.Count == 0)))
+                throw new ArgumentException("Boards require a name, rotation 0/90/180/270 and four mapped edges when assigned.");
+            DeviceSettings? d = null;
+            if (b.DeviceMac is not null && (!devices.TryGetValue(b.DeviceMac, out d) || !d.Selected))
+                throw new ArgumentException("Assigned boards require a selected WLED device.");
             var used = new HashSet<int>();
             foreach (var edge in b.Edges)
             {
-                if (edge is null || edge.Start < 0 || edge.Count < 1 || (long)edge.Start + edge.Count > d.LedCount)
+                if (edge is null || edge.Start < 0 || edge.Count < 1 || (long)edge.Start + edge.Count > (d?.LedCount ?? 65535))
                     throw new ArgumentException($"{b.Name}: edge lies outside the device LED count.");
                 for (var i = edge.Start; i < edge.Start + edge.Count; i++)
                     if (!used.Add(i)) throw new ArgumentException($"{b.Name}: edge mappings overlap.");
@@ -131,11 +161,21 @@ public sealed class InstallationSettingsStore
         var a = value.Animation;
         if (a.FramesPerSecond is < 10 or > 60 || !double.IsFinite(a.FlashSeconds) || a.FlashSeconds is < 1 or > 10 || !double.IsFinite(a.DotSeconds) || a.DotSeconds is < 1 or > 30 || !double.IsFinite(a.DotLapsPerSecond) || a.DotLapsPerSecond is < 1 or > 20)
             throw new ArgumentException("Animation timings or frame rate are outside supported limits.");
+        var show = value.LightShow;
+        if (!BoardLightShow.KnownTheme(show.Theme) || BoardLightShow.Level(show.Intensity) is null ||
+            show.Brightness is < 20 or > 100 || show.Speed is < 25 or > 200 || show.Custom is null ||
+            !ValidColor(show.Custom.Primary) || !ValidColor(show.Custom.Secondary) || !ValidColor(show.Custom.Tertiary) || !ValidColor(show.Custom.Accent))
+            throw new ArgumentException("Light show needs a known theme and intensity, brightness 20–100%, speed 25–200% and #RRGGBB colors that are not black.");
+        if (value.Countdown is { } countdown && !countdown.IsValid())
+            throw new ArgumentException("Countdown requires 1–86400s duration and a deviation smaller than the duration.");
         if (value.Controllers.Select(c => c.Id).Distinct().Count() != value.Controllers.Count) throw new ArgumentException("Controller IDs must be unique.");
         foreach (var c in value.Controllers)
             if (string.IsNullOrWhiteSpace(c.Id) || string.IsNullOrWhiteSpace(c.Name) || !LocalAddress(c.Address) || c.Port is < 1 or > 65535 || !Regex.IsMatch(c.SecretName ?? "", "^[a-zA-Z0-9_-]{1,64}$"))
                 throw new ArgumentException("Controllers require a private IPv4 address, valid port and a Docker secret name.");
     }
     public static bool LocalAddress(string address) => IPAddress.TryParse(address, out var ip) && WLedDiscoveryService.IsLocalDeviceAddress(ip);
+    /// <summary>#RRGGBB with at least one channel bright enough to light a board.</summary>
+    public static bool ValidColor(string? color) => color is { Length: 7 } && color[0] == '#' && color.Skip(1).All(char.IsAsciiHexDigit) &&
+        Enumerable.Range(0, 3).Max(i => Convert.ToInt32(color.Substring(1 + i * 2, 2), 16)) >= 0x30;
     public static bool ValidMac(string mac) => mac is { Length: 12 } && mac.All(c => char.IsAsciiHexDigit(c) && !char.IsUpper(c));
 }

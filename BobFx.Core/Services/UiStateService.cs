@@ -15,7 +15,8 @@ public sealed record DeviceView(string Mac, string Address, int Port, string Nam
     string Version, DateTime LastSeen, bool IsOnline, string WebUrl);
 public sealed record DiscoveryView(bool Scanning, string? Error, DateTimeOffset? LastScanUtc, DeviceView[] Devices);
 public sealed record InstallationView(InstallationSettings Settings, bool Locating, IReadOnlyDictionary<string, string> OutputErrors,
-    IReadOnlyDictionary<string, BusyBarStatus> Controllers, Dictionary<string, bool> PasswordsSaved);
+    IReadOnlyDictionary<string, BusyBarStatus> Controllers, Dictionary<string, bool> PasswordsSaved, CalibrationView? Calibration,
+    LightShowTestView? LightShowTest);
 public sealed record UiState(Versioned<GameView> Game, Versioned<EffectView> Effect,
     Versioned<DiscoveryView> Discovery, Versioned<InstallationView> Installation, CountdownOptions Defaults);
 public sealed record SoundEvent(string EventId, long RunId, string Key);
@@ -25,7 +26,6 @@ public sealed class UiStateService(
     CountdownService countdown, RgbAndSoundControlService control, DRgbService rgb,
     WLedDiscoveryService discovery, SoundService sounds, TimeProvider clock,
     InstallationSettingsStore settings, InstallationOutputService output, BusyBarService busyBars, ControllerCredentials credentials,
-    Microsoft.Extensions.Options.IOptions<CountdownOptions> options,
     IHubContext<UiHub> hub, ILogger<UiStateService> logger) : BackgroundService
 {
     private readonly string instanceId = Guid.NewGuid().ToString("N");
@@ -67,14 +67,15 @@ public sealed class UiStateService(
             }
             var saved = settings.Snapshot;
             var nextInstallation = new InstallationView(saved, control.IsLocating, output.Errors, busyBars.Statuses,
-                saved.Controllers.ToDictionary(c => c.Id, c => credentials.HasPassword(c.Id)));
+                saved.Controllers.ToDictionary(c => c.Id, c => credentials.HasPassword(c.Id)), output.Calibration, output.LightShowTest);
             var nextJson = JsonSerializer.Serialize(nextInstallation);
             if (nextJson != installationJson)
             {
                 installationJson = nextJson;
                 installation = new(instanceId, (installation?.Revision ?? 0) + 1, now, nextInstallation);
             }
-            return new(game!, effect!, devices!, installation!, options.Value);
+            return new(game!, effect!, devices!, installation!,
+                new CountdownOptions { DurationSeconds = (int)countdown.CountdownDuration.TotalSeconds, DeviationSeconds = (int)countdown.CountdownDeviation.TotalSeconds });
         }
     }
 
