@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
+// Settings pages put forms straight on the background: there the scene holds still and dims so text stays readable.
+const props = defineProps<{ still?: boolean }>();
 const host = ref<HTMLDivElement>();
 const animated = ref(false);
 const reduced = ref(false);
@@ -12,7 +14,7 @@ let mounting = false;
 async function update() {
   const current = ++generation;
   dispose?.(); dispose = undefined; animated.value = false;
-  if (!mounting || reduced.value || failed || !host.value) return;
+  if (!mounting || reduced.value || failed || props.still || !host.value) return;
   try {
     const { createSunset } = await import('../lib/sunset');
     if (current !== generation || !host.value) return;
@@ -29,11 +31,12 @@ onMounted(() => {
   mounting = true; media = matchMedia('(prefers-reduced-motion: reduce)');
   reduced.value = media.matches; media.addEventListener('change', change); void update();
 });
+watch(() => props.still, () => { void update(); });
 onUnmounted(() => { mounting = false; generation++; media?.removeEventListener('change', change); dispose?.(); });
 </script>
 
 <template>
-  <div ref="host" class="sunset-background" aria-hidden="true" :data-renderer="animated ? 'webgl' : 'static'">
+  <div ref="host" class="sunset-background" :class="{ dimmed: still }" aria-hidden="true" :data-renderer="animated ? 'webgl' : 'static'">
     <div class="sunset-static"><div class="sunset-sun"></div><div class="sunset-horizon"></div><div class="sunset-mountains"></div></div>
   </div>
 </template>

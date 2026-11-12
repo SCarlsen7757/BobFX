@@ -8,6 +8,8 @@ import { connected, connectionStatus, startSession } from './lib/session';
 
 const route = useRoute();
 const immersive = computed(() => !!route.meta.fullscreen);
+// Only the Game page keeps the moving background; every other page is a form laid straight on it.
+const liveBackground = computed(() => route.path === '/' || immersive.value);
 const audioEnabled = ref(false);
 const audioBusy = ref(false);
 const audioReady = ref(false);
@@ -38,7 +40,7 @@ watch(() => route.path, async () => {
 </script>
 
 <template>
-  <SunsetBackground />
+  <SunsetBackground :still="!liveBackground" />
   <div class="app-shell" :class="{ immersive }">
     <a class="skip-link" href="#main-content">Skip to content</a>
     <header v-if="!immersive" class="app-header">

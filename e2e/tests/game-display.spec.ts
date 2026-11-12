@@ -165,6 +165,21 @@ test('mountains move without an animation toggle or saved opt-out', async ({ pag
   await expect.poll(async () => Buffer.compare(before, await page.screenshot({ clip })), { timeout: 5000 }).not.toBe(0);
 });
 
+test('settings pages hold the background still and dimmed, and the game brings the motion back', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await ready(page);
+  const background = page.locator('.sunset-background');
+  await expect(background).toHaveAttribute('data-renderer', 'webgl');
+  await expect(background).not.toHaveClass(/dimmed/);
+  await page.getByRole('link', { name: 'Light show', exact: true }).click();
+  await expect(background).toHaveAttribute('data-renderer', 'static');
+  await expect(background).toHaveClass(/dimmed/);
+  await expect(page.locator('.sunset-canvas')).toHaveCount(0);
+  await page.getByRole('link', { name: 'Game', exact: true }).click();
+  await expect(background).toHaveAttribute('data-renderer', 'webgl');
+  await expect(background).not.toHaveClass(/dimmed/);
+});
+
 test('system reduced motion keeps a static background without an app toggle', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await ready(page);
