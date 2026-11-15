@@ -187,8 +187,48 @@ public sealed class HttpTests
     private static InstallationSettings OneBoard() => new()
     {
         Devices = [new("001122334455", "Board", "192.168.1.20", 80, 16, 21324)],
-        Boards = [new() { Id = "a", Name = "A", DeviceMac = "001122334455", Edges = [new(0, 4), new(4, 4), new(8, 4), new(12, 4)] }]
+        Boards = [new() { Id = "a", Name = "A", DeviceMac = "001122334455", Left = new(0, 8), Right = new(8, 8) }]
     };
+
+    [Fact]
+    public async Task SimulatedBoardCanBeAddedMappedAndCalibratedWithoutHardware()
+    {
+        await using var app = new TestApp();
+        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        var added = await client.PostAsync("/api/installation/devices/simulated", null);
+        Assert.Equal(HttpStatusCode.OK, added.StatusCode);
+        var device = await added.Content.ReadFromJsonAsync<JsonElement>();
+        var mac = device.GetProperty("mac").GetString()!;
+        Assert.True(device.GetProperty("simulated").GetBoolean());
+        Assert.Equal(102, device.GetProperty("ledCount").GetInt32());
+
+        object Layout(object right) => new { boards = new[] { new { id = "a", name = "Table 1", deviceMac = mac, left = new { start = 0, count = 51 }, right } }, idleSync = new { } };
+        // A strip that does not fit is refused with a message that names the board, the strip and the limit.
+        var refused = await client.PutAsJsonAsync("/api/installation/layout", Layout(new { start = 51, count = 60 }));
+        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+        Assert.Equal("Table 1: the right strip uses LEDs 51–110, but Simulated board 1 has 102 LEDs (0–101).",
+            (await refused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("detail").GetString());
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation/layout", Layout(new { start = 51, count = 51 }))).StatusCode);
+        var saved = await client.GetFromJsonAsync<JsonElement>("/api/installation");
+        Assert.Equal(2, saved.GetProperty("version").GetInt32());
+        Assert.Equal(51, saved.GetProperty("boards")[0].GetProperty("right").GetProperty("start").GetInt32());
+        Assert.False(saved.GetProperty("boards")[0].TryGetProperty("edges", out _));
+
+        // Calibration lights the simulated board: the live view's source has a frame, and no device error appears.
+        var calibration = await client.PostAsJsonAsync("/api/installation/calibration", new { boards = saved.GetProperty("boards"), activeBoardId = "a" });
+        Assert.Equal(HttpStatusCode.OK, calibration.StatusCode);
+        var monitor = app.Services.GetRequiredService<BoardFrameMonitor>();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (monitor.Current(mac) is null) await Task.Delay(10, deadline.Token);
+        Assert.Equal(102 * 3, monitor.Current(mac)!.Length);
+        var session = (await calibration.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("sessionId").GetString();
+        Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync($"/api/installation/calibration/{session}")).StatusCode);
+        var state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state");
+        Assert.Empty(state.GetProperty("installation").GetProperty("value").GetProperty("outputErrors").EnumerateObject());
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/boards")).StatusCode);
+        // A simulated controller is removed like any other once no board uses it.
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.DeleteAsync($"/api/installation/devices/{mac}")).StatusCode);
+    }
 
     [Fact]
     public async Task LightShowSectionSavePreservesOtherSections()

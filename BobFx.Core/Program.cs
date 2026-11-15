@@ -22,6 +22,9 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<DRgbService>());
 builder.Services.AddSingleton<SoundService>();
 builder.Services.AddSingleton<RgbAndSoundControlService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RgbAndSoundControlService>());
+builder.Services.AddSingleton<BoardFrameMonitor>();
+builder.Services.AddSingleton<BoardMonitorService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<BoardMonitorService>());
 builder.Services.AddSingleton<InstallationOutputService>();
 builder.Services.AddSingleton<IWLedFrameTransport, WLedFrameTransport>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<InstallationOutputService>());
@@ -90,7 +93,7 @@ app.MapGet("/api/installation/status", (InstallationOutputService output) => Res
 app.MapGet("/api/installation/controllers/status", (BusyBarService busy) => Results.Ok(busy.Statuses));
 app.MapControllers();
 app.MapHub<UiHub>("/hubs/ui");
-foreach (var route in new[] { "/", "/game/fullscreen", "/countdown", "/lights", "/drgb", "/wled", "/layout", "/controllers" })
+foreach (var route in new[] { "/", "/game/fullscreen", "/countdown", "/lights", "/drgb", "/wled", "/layout", "/boards", "/controllers" })
     app.MapGet(route, async (HttpContext context) =>
     {
         context.Response.Headers.CacheControl = "no-cache";

@@ -70,7 +70,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                 hosts = [];
             }
             if (settings is not null)
-                hosts = hosts.Concat(settings.Snapshot.Devices.Select(d => new WLedAdvertisement(d.Address, d.HttpPort, d.Name))).DistinctBy(h => (h.Address, h.Port)).ToArray();
+                hosts = hosts.Concat(settings.Snapshot.Devices.Where(d => !d.Simulated).Select(d => new WLedAdvertisement(d.Address, d.HttpPort, d.Name))).DistinctBy(h => (h.Address, h.Port)).ToArray();
             using var http = httpFactory.CreateClient("wled");
             await Parallel.ForEachAsync(hosts.Take(MaxDevices), new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
                 async (host, token) =>
@@ -115,7 +115,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                 {
                     if (!online.TryGetValue(saved.Mac, out var found)) return saved;
                     var count = found.Info!.Leds.Count;
-                    if (s.Boards.Any(b => b.DeviceMac == saved.Mac && b.Edges.Any(e => (long)e.Start + e.Count > count))) count = saved.LedCount;
+                    if (s.Boards.Any(b => b.DeviceMac == saved.Mac && !BoardMapping.Fits(b, count))) count = saved.LedCount;
                     return saved with { Address = found.Address.ToString(), HttpPort = found.Port, LedCount = count, UdpPort = found.Info.Udpport };
                 }
                 var snapshot = settings.Read();

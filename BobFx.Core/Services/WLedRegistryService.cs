@@ -7,6 +7,22 @@ public sealed class WLedRegistryService(InstallationSettingsStore settings, RgbA
     public Task SelectAsync(WLedDevice device, CancellationToken token = default) => control.ConfigureAsync(() =>
         settings.UpdateAsync(s => s with { Devices = s.Devices.Where(d => d.Mac != device.Mac).Append(new DeviceSettings(device.Mac,
             device.Name, device.Address.ToString(), device.Port, device.Info?.Leds?.Count ?? 0, device.Info?.Udpport ?? 21324)).ToList() }, token));
+    /// <summary>Registers a controller that exists only in BobFX, with the LEDs of a standard board. It takes
+    /// part in layout, calibration, tests and games like a real one, and the live view shows its frames.</summary>
+    public async Task<DeviceSettings> AddSimulatedAsync(CancellationToken token = default)
+    {
+        DeviceSettings? added = null;
+        await control.ConfigureAsync(() => settings.UpdateAsync(s =>
+        {
+            // A locally administered MAC range that no real WLED controller reports.
+            static string Mac(int number) => $"02b0bf{number:x6}";
+            var number = 1;
+            while (s.Devices.Any(d => d.Mac == Mac(number))) number++;
+            added = new(Mac(number), $"Simulated board {number}", "169.254.0.1", 80, BoardMapping.LedsPerBoard, 21324, Simulated: true);
+            return s with { Devices = [.. s.Devices, added] };
+        }, token));
+        return added!;
+    }
     public Task AddManualAsync(string address, int port, CancellationToken token = default) => control.ConfigureAsync(async () =>
     {
         if (!InstallationSettingsStore.LocalAddress(address) || port is < 1 or > 65535)

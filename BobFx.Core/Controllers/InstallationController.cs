@@ -90,6 +90,14 @@ public sealed class InstallationController(InstallationSettingsStore settings, R
     });
     [HttpPost("devices/manual")]
     public Task<IActionResult> AddManual(ManualDeviceRequest request, CancellationToken token) => Execute(() => registry.AddManualAsync(request.Address, request.Port, token));
+    /// <summary>Adds a simulated controller and returns it, so a page can assign it to a board at once.</summary>
+    [HttpPost("devices/simulated")]
+    public async Task<IActionResult> AddSimulated(CancellationToken token)
+    {
+        DeviceSettings? added = null;
+        var result = await Execute(async () => added = await registry.AddSimulatedAsync(token));
+        return result is OkResult ? Ok(added) : result;
+    }
     [HttpPost("devices/{mac}/locate")]
     public Task<IActionResult> Locate(string mac, CancellationToken token) => Execute(() => output.LocateAsync(mac, token));
     [HttpPost("calibration")]
@@ -121,7 +129,8 @@ public sealed class InstallationController(InstallationSettingsStore settings, R
         catch (InvalidOperationException ex) { return Problem(ex.Message, statusCode: 409); }
         catch (HttpRequestException) { return Problem("Device could not be reached.", statusCode: 502); }
         catch (OperationCanceledException) { return Problem("Operation timed out or was cancelled.", statusCode: 504); }
-        catch (IOException) { return Problem("Settings could not be saved; check data-volume permissions.", statusCode: 503); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { return Problem("Settings could not be saved; check data-volume permissions.", statusCode: 503); }
     }
 }
 public sealed record ManualDeviceRequest(string Address, int Port = 80);

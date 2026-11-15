@@ -13,7 +13,7 @@ public sealed record LightShowTestRequest(string Segment, LightShowSettings Ligh
 
 public sealed class InstallationOutputService(InstallationSettingsStore settings, WLedDiscoveryService discovery,
     RgbAndSoundControlService control, DRgbService rgb, IHttpClientFactory httpFactory, TimeProvider clock,
-    ILogger<InstallationOutputService> logger, IWLedFrameTransport transport) : BackgroundService
+    ILogger<InstallationOutputService> logger, IWLedFrameTransport transport, BoardFrameMonitor? monitor = null) : BackgroundService
 {
     private readonly ConcurrentDictionary<string, string> errors = new();
     public IReadOnlyDictionary<string, string> Errors => new Dictionary<string, string>(errors);
@@ -173,8 +173,7 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
             var device = Resolve(saved);
             try
             {
-                if (board.Edges.Any(e => (long)e.Start + e.Count > device.LedCount))
-                    throw new ArgumentException("LED count changed; update this board's edge mapping.");
+                if (!BoardMapping.Fits(board, device.LedCount)) throw new ArgumentException(BoardSceneRenderer.MappingChanged);
                 await SendAsync(device, BoardSceneRenderer.Render(scene, board, device.LedCount, phase, elapsed, preparation), token);
                 errors.TryRemove(device.Mac, out _);
             }
@@ -182,9 +181,12 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
             { errors[device.Mac] = ex.Message; }
         }
     }
+    /// <summary>Every frame leaves through here. A simulated controller has no network side, so its frame
+    /// goes to the monitor only; a real controller's frame is sent and mirrored there.</summary>
     private async Task SendAsync(DeviceSettings device, byte[] pixels, CancellationToken token)
     {
-        await transport.SendAsync(device, pixels, token);
+        if (!device.Simulated) await transport.SendAsync(device, pixels, token);
+        monitor?.Record(device.Mac, pixels);
         Volatile.Write(ref lastSendTicks, clock.GetUtcNow().UtcTicks);
     }
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -235,8 +237,8 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
                         {
                             try
                             {
-                                if (snapshot.Boards.FirstOrDefault(b => b.DeviceMac == d.Mac) is { } board && board.Edges.Any(e => (long)e.Start + e.Count > d.LedCount))
-                                    throw new ArgumentException("LED count changed; update this board's edge mapping.");
+                                if (snapshot.Boards.FirstOrDefault(b => b.DeviceMac == d.Mac) is { } board && !BoardMapping.Fits(board, d.LedCount))
+                                    throw new ArgumentException(BoardSceneRenderer.MappingChanged);
                                 await SendAsync(d, BoardSceneRenderer.Resample(manual, d.LedCount), stoppingToken);
                                 errors.TryRemove(d.Mac, out _);
                             }
@@ -311,7 +313,7 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
             foreach (var removed in oldMembers.Except(newMembers))
             {
                 var saved = s.Devices.FirstOrDefault(d => d.Mac == removed);
-                if (saved is null) continue;
+                if (saved is null || saved.Simulated) continue;
                 var d = Resolve(saved);
                 try
                 {
@@ -331,7 +333,8 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
         var masterDevice = Resolve(s.Devices.First(d => d.Mac == s.IdleSync.MasterMac));
         var idleState = new Dictionary<string, object?> { ["live"] = false };
         var masterRead = false;
-        try
+        // A simulated controller has no WLED to ask or configure; its followers get the plain idle state.
+        if (!masterDevice.Simulated) try
         {
             using var client = httpFactory.CreateClient("wled");
             using var response = await client.GetAsync($"http://{masterDevice.Address}:{masterDevice.HttpPort}/json/state", token);
@@ -359,6 +362,7 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
         foreach (var mac in members)
         {
             var saved = s.Devices.First(d => d.Mac == mac);
+            if (saved.Simulated) { errors.TryRemove(mac, out _); continue; }
             if (KnownOffline(saved)) continue;
             var d = Resolve(saved);
             var master = mac == s.IdleSync.MasterMac;

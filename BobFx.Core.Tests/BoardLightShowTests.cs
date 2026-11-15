@@ -9,12 +9,14 @@ public sealed class BoardLightShowTests
     private const int Leds = 40, Preparation = 3;
     private static readonly string[] Macs = ["001122334455", "aabbccddeeff"];
 
-    /// <summary>Two boards side by side, ten LEDs per edge.</summary>
+    private const int Strip = Leds / 2;
+
+    /// <summary>Two boards side by side, twenty LEDs per strip.</summary>
     private static InstallationSettings Row(LightShowSettings? show = null) => new()
     {
         Devices = Macs.Select(mac => new DeviceSettings(mac, "Board", "192.168.1.20", 80, Leds, 21324)).ToList(),
         Boards = Macs.Select((mac, index) => new BoardSettings { Id = index == 0 ? "a" : "b", Name = "Board", DeviceMac = mac,
-            Edges = [new(0, 10), new(10, 10), new(20, 10), new(30, 10)] }).ToList(),
+            Left = new(0, Strip), Right = new(Strip, Strip) }).ToList(),
         LightShow = show ?? new()
     };
 
@@ -138,35 +140,46 @@ public sealed class BoardLightShowTests
         Assert.True(Dimmest(1.02) > Dimmest(0.02));
         Assert.True(Dimmest(2.02) > Dimmest(1.02));
 
-        bool Lit(byte[] frame, int board, int edge) => Enumerable.Range(0, 10).All(p => frame.Skip((board * Leds + edge * 10 + p) * 3).Take(3).Max() > 0);
-        bool Dark(byte[] frame, int board, int edge) => Enumerable.Range(0, 10).All(p => frame.Skip((board * Leds + edge * 10 + p) * 3).Take(3).Max() == 0);
+        // A strip of a board (left 0, right 1) as its pixels from the near end to the far end.
+        byte[][] StripOf(byte[] frame, int board, int side) => Pixels(frame).Skip(board * Leds + side * Strip).Take(Strip).ToArray();
+        bool Lit(byte[] frame, int board, int side) => StripOf(frame, board, side).All(pixel => pixel.Max() > 0);
+        bool Dark(byte[] frame, int board, int side) => StripOf(frame, board, side).All(pixel => pixel.Max() == 0);
         // Scanner: half a second after a count it has reached the far end of the row.
         var scanner = Frame(settings, GamePhase.PreCountdown, 0.5);
-        Assert.True(Dark(scanner, 0, 3)); Assert.True(Lit(scanner, 1, 1));
-        // From 60 % only the player edges pulse, from 80 % a chase runs round every edge.
-        var players = Frame(settings, GamePhase.PreCountdown, 2.35);
+        Assert.True(Dark(scanner, 0, 0)); Assert.True(Lit(scanner, 1, 1));
+        // A strip sits at one place across the row, so the scanner lights it evenly along its length.
+        Assert.Single(StripOf(scanner, 1, 1).Select(pixel => (pixel[0], pixel[1], pixel[2])).Distinct());
+        // From 60 % pulses run in from the two player ends of every strip and meet in the middle.
         foreach (var board in new[] { 0, 1 })
+        foreach (var side in new[] { 0, 1 })
         {
-            Assert.True(Lit(players, board, 0)); Assert.True(Lit(players, board, 2));
-            Assert.True(Dark(players, board, 1)); Assert.True(Dark(players, board, 3));
+            Assert.True(Lit(Frame(settings, GamePhase.PreCountdown, 2.35), board, side));
+            // Both halves of a strip mirror each other, and a crest moves from the end towards the middle.
+            // Only the inner part of the half is searched, so a second crest entering at the end is not picked.
+            double Crest(double time)
+            {
+                var strip = StripOf(Frame(settings, GamePhase.PreCountdown, time), board, side);
+                Assert.All(Enumerable.Range(0, Strip / 2), p => Assert.Equal(strip[p], strip[Strip - 1 - p]));
+                return Enumerable.Range(4, 6).MaxBy(p => strip[p].Sum(value => value));
+            }
+            Assert.True(Crest(2.32) < Crest(2.36), $"Board {board} side {side}: the pulse did not move inwards.");
         }
+        // From 80 % a chase runs up one strip and down the other.
         var chase = Frame(settings, GamePhase.PreCountdown, 2.5);
         Assert.All(Pixels(chase), pixel => Assert.True(pixel.Max() > 0));
+        Assert.NotEqual(StripOf(chase, 0, 0)[0], StripOf(chase, 0, 0)[Strip - 1]);
     }
 
     [Fact]
     public void GoBurstRacesOutFromRowCentre()
     {
         var settings = Row();
-        // Distance from the row centre of the whitest LED on the first board's top edge.
-        double Front(double time)
-        {
-            var frame = Frame(settings, GamePhase.Running, time);
-            var whitest = Enumerable.Range(0, 10).MaxBy(p => frame.Skip(p * 3).Take(3).Min());
-            return 1 - (whitest + 0.5) / 10;
-        }
-        Assert.True(Front(0.05) < Front(0.15));
-        Assert.True(Front(0.15) < Front(0.25));
+        // How white a strip is; the four strips sit 0.85, 0.15, 0.15 and 0.85 boards from the row centre.
+        int White(double time, int strip) => Pixels(Frame(settings, GamePhase.Running, time)).ElementAt(strip * Strip).Min();
+        // The white front passes the two inner strips first and reaches the outer ones as the burst ends.
+        Assert.True(White(0.03, 1) > White(0.03, 0) + 50);
+        Assert.Equal(White(0.03, 1), White(0.03, 2)); Assert.Equal(White(0.03, 0), White(0.03, 3));
+        Assert.True(White(0.24, 0) > White(0.24, 1) + 50);
         // Afterwards the burst has passed and play takes over without a flash.
         Assert.True(Frame(settings, GamePhase.Running, 1.6).Max() <= 91);
     }
@@ -218,9 +231,14 @@ public sealed class BoardLightShowTests
         var preview = LightShowPreviewRenderer.Render(empty, new("gameOver", new(), new()));
         Assert.True(preview.ExampleBoards);
         Assert.Equal(2, preview.Boards.Count);
-        Assert.All(preview.Boards, board => { Assert.Equal(60, board.LedCount); Assert.False(board.Assigned); });
+        // Example boards are standard boards: 51 LEDs down each side.
+        Assert.All(preview.Boards, board =>
+        {
+            Assert.Equal(102, board.LedCount); Assert.False(board.Assigned);
+            Assert.Equal((new StripSettings(0, 51), new StripSettings(51, 51)), (board.Left, board.Right));
+        });
         Assert.Equal(100, preview.Frames.Count);
-        Assert.Equal(2 * 60 * 3, Convert.FromBase64String(preview.Frames[0]).Length);
+        Assert.Equal(2 * 102 * 3, Convert.FromBase64String(preview.Frames[0]).Length);
         Assert.Throws<ArgumentException>(() => LightShowPreviewRenderer.Render(empty, new("idle", new(), new())));
         Assert.Throws<ArgumentException>(() => LightShowPreviewRenderer.Render(empty, new("playing", new() { Brightness = 0 }, new())));
         Assert.Throws<ArgumentException>(() => LightShowPreviewRenderer.Render(empty, new("playing", null!, new())));
@@ -231,15 +249,14 @@ public sealed class BoardLightShowTests
     {
         // One real board in the middle of three slots, as when only one controller is at hand.
         var real = Row();
-        var layout = real with { Boards = [new() { Id = "left", Name = "Left" }, real.Boards[0], new() { Id = "right", Name = "Right", Rotation = 90 }] };
+        var layout = real with { Boards = [new() { Id = "left", Name = "Left" }, real.Boards[0], new() { Id = "right", Name = "Right" }] };
         var preview = LightShowPreviewRenderer.Render(layout, new("gameOver", new(), new()));
         Assert.False(preview.ExampleBoards);
         Assert.Equal(["left", "a", "right"], preview.Boards.Select(b => b.Id));
         Assert.Equal([false, true, false], preview.Boards.Select(b => b.Assigned));
-        // Boards without a controller copy the real board's LED count and mapping, but keep their own rotation.
+        // Boards without a controller copy the real board's LED count and strip mapping.
         Assert.Equal([Leds, Leds, Leds], preview.Boards.Select(b => b.LedCount));
-        Assert.All(preview.Boards, b => Assert.Equal(real.Boards[0].Edges, b.Edges));
-        Assert.Equal([0, 0, 90], preview.Boards.Select(b => b.Rotation));
+        Assert.All(preview.Boards, b => Assert.Equal((real.Boards[0].Left, real.Boards[0].Right), (b.Left, b.Right)));
         Assert.Equal(3 * Leds * 3, Convert.FromBase64String(preview.Frames[0]).Length);
         // The comet runs the whole row, so every board is lit at some point after the flares.
         var lit = new bool[3];
@@ -252,9 +269,9 @@ public sealed class BoardLightShowTests
         Assert.All(lit, Assert.True);
         // The saved settings are not touched: games still skip the empty slots.
         Assert.Single(BoardSceneRenderer.AssignedBoards(layout));
-        // With no controller anywhere, slots fall back to 60 LEDs.
+        // With no controller anywhere, slots fall back to a standard board of 102 LEDs.
         var none = LightShowPreviewRenderer.Render(new InstallationSettings { Boards = [new() { Id = "x", Name = "X" }] }, new("playing", new(), new()));
-        Assert.Equal(60, Assert.Single(none.Boards).LedCount);
+        Assert.Equal(102, Assert.Single(none.Boards).LedCount);
         Assert.False(none.ExampleBoards);
     }
 

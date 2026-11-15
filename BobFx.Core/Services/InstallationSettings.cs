@@ -6,7 +6,9 @@ namespace BobFx.Core.Services;
 
 public sealed record InstallationSettings
 {
-    public int Version { get; init; } = 1;
+    /// <summary>Version 2 maps each board as a left and a right strip; version 1 files are migrated on load.</summary>
+    public const int CurrentVersion = 2;
+    public int Version { get; init; } = CurrentVersion;
     public List<DeviceSettings> Devices { get; init; } = [];
     public List<BoardSettings> Boards { get; init; } = [];
     public IdleSyncSettings IdleSync { get; init; } = new();
@@ -20,16 +22,43 @@ public sealed record CountdownSettings(int DurationSeconds, int DeviationSeconds
 {
     public bool IsValid() => DurationSeconds is >= 1 and <= 86400 && DeviationSeconds >= 0 && DeviationSeconds < DurationSeconds;
 }
-public sealed record DeviceSettings(string Mac, string Name, string Address, int HttpPort, int LedCount, int UdpPort, bool Selected = true);
-public sealed record EdgeSettings(int Start, int Count, bool Reversed = false);
+/// <summary>A WLED controller. A simulated one has no network side: its frames go to the live view only.</summary>
+public sealed record DeviceSettings(string Mac, string Name, string Address, int HttpPort, int LedCount, int UdpPort, bool Selected = true, bool Simulated = false);
+/// <summary>One LED strip along a side of a board. Its first LED is at the near end unless <see cref="Reversed"/>.</summary>
+public sealed record StripSettings(int Start, int Count, bool Reversed = false);
 public sealed record BoardSettings
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public string Name { get; init; } = "Board";
     public string? DeviceMac { get; init; }
-    public int Rotation { get; init; }
-    // Physical edges clockwise before rotation. Top/bottom in the preview face the players.
-    public List<EdgeSettings> Edges { get; init; } = [];
+    // A board has a strip down its left side and one down its right, as seen from the near end. Both are null until mapped.
+    public StripSettings? Left { get; init; }
+    public StripSettings? Right { get; init; }
+}
+/// <summary>How a controller's LEDs lie on a board: two strips of <see cref="LedsPerStrip"/>, left then right.</summary>
+public static class BoardMapping
+{
+    public const int LedsPerStrip = 51, LedsPerBoard = LedsPerStrip * 2;
+    public const int Left = 0, Right = 1;
+    /// <summary>The first half of the controller's LEDs on the left strip and the second half on the right, both
+    /// starting at the near end. An odd LED at the end stays dark. Null when there are too few LEDs for two strips.</summary>
+    public static (StripSettings Left, StripSettings Right)? Default(int ledCount)
+    {
+        var half = ledCount / 2;
+        return half < 1 ? null : (new(0, half), new(half, half));
+    }
+    public static BoardSettings WithDefault(BoardSettings board, int ledCount) =>
+        Default(ledCount) is { } strips ? board with { Left = strips.Left, Right = strips.Right } : board with { Left = null, Right = null };
+    public static StripSettings? Strip(BoardSettings board, int side) => side == Left ? board.Left : board.Right;
+    public static bool Fits(BoardSettings board, int ledCount) =>
+        new[] { board.Left, board.Right }.All(strip => strip is null || (long)strip.Start + strip.Count <= ledCount);
+    /// <summary>LED indices of one strip in the order they lie on the board, from the near end to the far end.</summary>
+    public static int[] StripPixels(BoardSettings board, int side)
+    {
+        if (Strip(board, side) is not { } strip) return [];
+        var pixels = Enumerable.Range(strip.Start, strip.Count);
+        return (strip.Reversed ? pixels.Reverse() : pixels).ToArray();
+    }
 }
 public sealed record IdleSyncSettings
 {
@@ -85,8 +114,8 @@ public sealed class InstallationSettingsStore
         DirectoryPath = Path.GetFullPath(configuration["Settings:DataPath"] ?? Path.Join(AppContext.BaseDirectory, "data"));
         Directory.CreateDirectory(DirectoryPath);
         var path = Path.Join(DirectoryPath, "settings.json");
-        current = File.Exists(path) ? JsonSerializer.Deserialize<InstallationSettings>(File.ReadAllText(path), JsonOptions)
-            ?? throw new InvalidDataException("Settings file is empty.") : new();
+        current = Migrate(File.Exists(path) ? JsonSerializer.Deserialize<InstallationSettings>(File.ReadAllText(path), JsonOptions)
+            ?? throw new InvalidDataException("Settings file is empty.") : new());
         Validate(current);
     }
     public InstallationSettings Snapshot => Clone(Volatile.Read(ref current));
@@ -99,7 +128,7 @@ public sealed class InstallationSettingsStore
         var temporary = Path.Join(DirectoryPath, "settings." + Guid.NewGuid().ToString("N") + ".tmp");
         try
         {
-            var value = Clone(update(Snapshot));
+            var value = Migrate(Clone(update(Snapshot)));
             Validate(value);
             await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
             {
@@ -119,9 +148,27 @@ public sealed class InstallationSettingsStore
             gate.Release();
         }
     }
+    /// <summary>Brings version 1 settings up to date. They mapped a board as four edges, which cannot be translated
+    /// to two side strips, so a board without strips gets the default mapping for its controller. A board whose
+    /// controller is unknown or too small becomes unassigned rather than failing the load.</summary>
+    public static InstallationSettings Migrate(InstallationSettings value)
+    {
+        if (value.Version != 1 || value.Boards is null || value.Devices is null) return value;
+        return value with
+        {
+            Version = InstallationSettings.CurrentVersion,
+            Boards = value.Boards.Select(board =>
+            {
+                if (board?.DeviceMac is null || (board.Left is not null && board.Right is not null)) return board!;
+                var device = value.Devices.FirstOrDefault(d => d?.Mac == board.DeviceMac);
+                var mapped = device is null ? board : BoardMapping.WithDefault(board, device.LedCount);
+                return mapped.Left is null ? mapped with { DeviceMac = null } : mapped;
+            }).ToList()
+        };
+    }
     public static void Validate(InstallationSettings value)
     {
-        if (value.Version != 1) throw new ArgumentException("Unsupported settings version; restore a compatible backup.");
+        if (value.Version != InstallationSettings.CurrentVersion) throw new ArgumentException("Unsupported settings version; restore a compatible backup.");
         if (value.Devices is null || value.Boards is null || value.Controllers is null || value.Animation is null || value.IdleSync is null || value.LightShow is null)
             throw new ArgumentException("Settings sections cannot be null.");
         if (value.Devices.Any(d => d is null) || value.Boards.Any(b => b is null) || value.Controllers.Any(c => c is null))
@@ -137,20 +184,22 @@ public sealed class InstallationSettingsStore
             throw new ArgumentException("Each board needs a unique ID and WLED device.");
         foreach (var b in value.Boards)
         {
-            if (string.IsNullOrWhiteSpace(b.Id) || string.IsNullOrWhiteSpace(b.Name) || b.Rotation is not (0 or 90 or 180 or 270) || b.Edges is null ||
-                (b.Edges.Count != 4 && !(b.DeviceMac is null && b.Edges.Count == 0)))
-                throw new ArgumentException("Boards require a name, rotation 0/90/180/270 and four mapped edges when assigned.");
+            if (string.IsNullOrWhiteSpace(b.Id) || string.IsNullOrWhiteSpace(b.Name)) throw new ArgumentException("Boards require an ID and a name.");
             DeviceSettings? d = null;
             if (b.DeviceMac is not null && (!devices.TryGetValue(b.DeviceMac, out d) || !d.Selected))
                 throw new ArgumentException("Assigned boards require a selected WLED device.");
-            var used = new HashSet<int>();
-            foreach (var edge in b.Edges)
+            if (b.DeviceMac is not null && (b.Left is null || b.Right is null))
+                throw new ArgumentException($"{b.Name}: map both the left and the right strip.");
+            foreach (var (side, strip) in new[] { ("left", b.Left), ("right", b.Right) })
             {
-                if (edge is null || edge.Start < 0 || edge.Count < 1 || (long)edge.Start + edge.Count > (d?.LedCount ?? 65535))
-                    throw new ArgumentException($"{b.Name}: edge lies outside the device LED count.");
-                for (var i = edge.Start; i < edge.Start + edge.Count; i++)
-                    if (!used.Add(i)) throw new ArgumentException($"{b.Name}: edge mappings overlap.");
+                if (strip is null) continue;
+                if (strip.Start < 0 || strip.Count < 1 || (long)strip.Start + strip.Count > 65535)
+                    throw new ArgumentException($"{b.Name}: the {side} strip needs a first LED of 0 or more and at least one LED.");
+                if (d is not null && strip.Start + strip.Count > d.LedCount)
+                    throw new ArgumentException($"{b.Name}: the {side} strip uses LEDs {strip.Start}–{strip.Start + strip.Count - 1}, but {d.Name} has {d.LedCount} LEDs (0–{d.LedCount - 1}).");
             }
+            if (b.Left is { } left && b.Right is { } right && left.Start < right.Start + right.Count && right.Start < left.Start + left.Count)
+                throw new ArgumentException($"{b.Name}: the left and right strips use the same LEDs.");
         }
         var idle = value.IdleSync;
         if (idle.Followers is null || idle.Group is < 1 or > 8 || idle.Followers.Distinct().Count() != idle.Followers.Count || idle.Followers.Contains(idle.MasterMac ?? "") ||

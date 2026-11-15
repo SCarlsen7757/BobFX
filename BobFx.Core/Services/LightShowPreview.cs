@@ -2,7 +2,7 @@ namespace BobFx.Core.Services;
 
 /// <summary>One board in a preview, with what the browser needs to place its LEDs. <see cref="Assigned"/> is
 /// false for a board drawn as an example because it has no controller yet.</summary>
-public sealed record LightShowPreviewBoard(string Id, string Name, int Rotation, List<EdgeSettings> Edges, int LedCount, bool Assigned);
+public sealed record LightShowPreviewBoard(string Id, string Name, StripSettings? Left, StripSettings? Right, int LedCount, bool Assigned);
 
 /// <summary>Frames of one test segment as the boards would receive them. Each frame is the RGB bytes of every
 /// board in row order, base64 encoded. <see cref="ExampleBoards"/> is true when the layout has no boards at all.</summary>
@@ -15,7 +15,7 @@ public static class LightShowPreviewRenderer
     internal const int FramesPerSecond = 20;
     // Keeps a response a few megabytes even for large installations.
     private const long MaxBytes = 8_000_000;
-    internal const int ExampleLeds = 60;
+    internal const int ExampleLeds = BoardMapping.LedsPerBoard;
 
     public static LightShowPreview Render(InstallationSettings saved, LightShowTestRequest request)
     {
@@ -49,22 +49,21 @@ public static class LightShowPreviewRenderer
             frames.Add(Convert.ToBase64String(buffer));
         }
         return new(FramesPerSecond, seconds, example,
-            boards.Select((b, i) => new LightShowPreviewBoard(b.Id, b.Name, b.Rotation, b.Edges, counts[i], !example && assigned.Contains(b.Id))).ToList(), frames);
+            boards.Select((b, i) => new LightShowPreviewBoard(b.Id, b.Name, b.Left, b.Right, counts[i], !example && assigned.Contains(b.Id))).ToList(), frames);
     }
 
     /// <summary>The whole row as the layout lists it. Real games skip boards without a controller; the preview
     /// stands in an example controller for each, so the show can be judged across the full row before the
     /// hardware is there. Assigned boards keep their real controller and mapping. A board without one copies the
-    /// LED count and edge mapping of the first board that has one, keeping its own rotation, so it looks like the
-    /// hardware already in use; with no controller anywhere it gets 60 LEDs in the two-strip mapping.</summary>
+    /// LED count and strip mapping of the first board that has one, so it looks like the hardware already in use;
+    /// with no controller anywhere it gets the standard two strips of 51 LEDs.</summary>
     private static (InstallationSettings Row, HashSet<string> Assigned) PreviewRow(IReadOnlyList<BoardSettings> layout, List<DeviceSettings> devices)
     {
         var real = devices.Where(d => d.Selected).ToDictionary(d => d.Mac);
-        const int edge = ExampleLeds / 4;
-        var template = layout.Where(b => b.DeviceMac is { } mac && real.ContainsKey(mac))
-            .Select(b => (Leds: real[b.DeviceMac!].LedCount, b.Edges)).FirstOrDefault();
-        if (template.Edges is null)
-            template = (ExampleLeds, [new(0, edge), new(edge, edge), new(edge * 3, edge, true), new(edge * 2, edge, true)]);
+        var standard = BoardMapping.Default(ExampleLeds)!.Value;
+        var template = layout.Where(b => b.DeviceMac is { } mac && real.ContainsKey(mac) && b.Left is not null && b.Right is not null)
+            .Select(b => (Leds: real[b.DeviceMac!].LedCount, Left: b.Left!, Right: b.Right!))
+            .DefaultIfEmpty((Leds: ExampleLeds, standard.Left, standard.Right)).First();
         var assigned = new HashSet<string>();
         var rowDevices = new List<DeviceSettings>();
         var rowBoards = new List<BoardSettings>();
@@ -83,7 +82,7 @@ public static class LightShowPreviewRenderer
             while (devices.Any(d => d.Mac == $"f{number:x11}")) number += layout.Count;
             var example = $"f{number:x11}";
             rowDevices.Add(new(example, $"Example {i + 1}", "192.168.0.1", 80, template.Leds, 21324));
-            rowBoards.Add(board with { DeviceMac = example, Edges = template.Edges.ToList() });
+            rowBoards.Add(board with { DeviceMac = example, Left = template.Left, Right = template.Right });
         }
         return (new InstallationSettings { Devices = rowDevices, Boards = rowBoards }, assigned);
     }

@@ -16,7 +16,7 @@ public sealed class InstallationTests
 {
     private static DeviceSettings Device(string mac = "001122334455") => new(mac, "Board", "192.168.1.20", 80, 16, 21324);
     private static BoardSettings Board(string mac = "001122334455", string id = "a") => new() { Id = id, Name = id, DeviceMac = mac,
-        Edges = [new(0, 4), new(4, 4), new(8, 4), new(12, 4)] };
+        Left = new(0, 8), Right = new(8, 8) };
     private static InstallationSettings Installation() => new() { Devices = [Device()], Boards = [Board()] };
     private static InstallationSettingsStore Store(string path) => new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Settings:DataPath"] = path }).Build());
 
@@ -30,7 +30,7 @@ public sealed class InstallationTests
         await store.SaveAsync(Installation() with { Boards = [first, Board(), second] });
         var saved = Store(path).Snapshot;
         Assert.Equal(3, saved.Boards.Count);
-        Assert.Null(saved.Boards[0].DeviceMac); Assert.Empty(saved.Boards[0].Edges);
+        Assert.Null(saved.Boards[0].DeviceMac); Assert.Null(saved.Boards[0].Left); Assert.Null(saved.Boards[0].Right);
         Assert.Equal("001122334455", saved.Boards[1].DeviceMac);
         Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(saved with { Boards = [first, first] }));
         Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(saved with { Boards = [first with { DeviceMac = "001122334455" }] }));
@@ -52,23 +52,24 @@ public sealed class InstallationTests
         Assert.All(BoardSceneRenderer.Render(withGaps, withGaps.Boards[0], 16, GamePhase.Running, 1, 5), value => Assert.Equal(0, value));
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(90)]
-    [InlineData(180)]
-    [InlineData(270)]
-    public void CalibrationColorsFollowVisualEdgesAndMarkerTravelsClockwise(int rotation)
+    [Fact]
+    public void CalibrationColorsTheTwoStripsAndRunsADotFromTheNearEndOfEach()
     {
-        var board = Board() with { Rotation = rotation, Edges = [new(0, 4), new(4, 4), new(12, 4, true), new(8, 4, true)] };
-        byte[][] colors = [[0, 96, 160], [0, 128, 64], [160, 96, 0], [144, 0, 96]];
-        for (var side = 0; side < 4; side++)
+        // The right strip is wired from the far end, so its near end is its last LED.
+        var board = Board() with { Right = new(8, 8, true) };
+        Assert.Equal(15, BoardMapping.StripPixels(board, BoardMapping.Right)[0]);
+        byte[][] colors = [[0, 96, 160], [160, 96, 0]];
+        // The dot takes two seconds from the near end to the far end of a strip.
+        foreach (var (time, step) in new[] { (0d, 0), (0.25, 1), (1.75, 7), (2d, 0) })
         {
-            var frame = BoardSceneRenderer.Calibration(board, 16, side);
-            var marker = BoardSceneRenderer.EdgePixels(board, side)[0];
-            Assert.Equal(new byte[] { 220, 220, 220 }, frame[(marker * 3)..(marker * 3 + 3)]);
-            for (var edge = 0; edge < 4; edge++)
-            foreach (var pixel in BoardSceneRenderer.EdgePixels(board, edge).Where(p => p != marker))
-                Assert.Equal(colors[edge], frame[(pixel * 3)..(pixel * 3 + 3)]);
+            var frame = BoardSceneRenderer.Calibration(board, 16, time);
+            for (var side = 0; side < 2; side++)
+            {
+                var pixels = BoardMapping.StripPixels(board, side);
+                Assert.Equal(new byte[] { 220, 220, 220 }, frame[(pixels[step] * 3)..(pixels[step] * 3 + 3)]);
+                foreach (var pixel in pixels.Where(p => p != pixels[step]))
+                    Assert.Equal(colors[side], frame[(pixel * 3)..(pixel * 3 + 3)]);
+            }
         }
         Assert.Throws<ArgumentException>(() => BoardSceneRenderer.Calibration(board, 15, 0));
     }
@@ -93,9 +94,9 @@ public sealed class InstallationTests
         await Eventually(() => output.IsReady);
         await Assert.ThrowsAsync<ArgumentException>(() => output.StartCalibrationAsync(new(saved.Boards, saved.Boards[1].Id)));
         Assert.False(control.IsCalibrating);
-        var initialDraft = saved.Boards.Select(b => b with { Edges = b.Edges.ToList() }).ToList();
+        var initialDraft = saved.Boards.ToList();
         await output.StartCalibrationAsync(new(initialDraft, "a"));
-        initialDraft[0].Edges[0] = new(60000, 1); // Session must own a validated copy of the draft.
+        initialDraft[0] = initialDraft[0] with { Left = new(60000, 1) }; // Session must own a validated copy of the draft.
         var id = output.Calibration!.SessionId;
         Assert.True(control.IsCalibrating);
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartGameAsync());
@@ -109,12 +110,12 @@ public sealed class InstallationTests
         await Eventually(() => transport.Frames.Count >= 2);
         Assert.Contains(transport.Frames, f => f.Mac == "001122334455" && f.Pixels.Any(p => p != 0));
         Assert.Contains(transport.Frames, f => f.Mac == "aabbccddeeff" && f.Pixels.All(p => p == 0));
-        var reordered = new List<BoardSettings> { saved.Boards[2] with { Rotation = 90 }, saved.Boards[0], saved.Boards[1] };
+        var reordered = new List<BoardSettings> { saved.Boards[2] with { Left = new(8, 8), Right = new(0, 8) }, saved.Boards[0], saved.Boards[1] };
         clock.Advance(TimeSpan.FromSeconds(9));
         await output.UpdateCalibrationAsync(id, new(reordered, "b"));
         Assert.Equal("b", output.Calibration!.ActiveBoardId);
         Assert.Equal("a", store.Snapshot.Boards[0].Id);
-        Assert.Equal(0, store.Snapshot.Boards[2].Rotation);
+        Assert.Equal(new StripSettings(0, 8), store.Snapshot.Boards[2].Left); // The swapped draft is previewed, not saved.
         await Assert.ThrowsAsync<ArgumentException>(() => output.UpdateCalibrationAsync(id, new([saved.Boards[0]], "a")));
         transport.FailMac = "001122334455";
         var count = transport.Frames.Count;
@@ -176,7 +177,7 @@ public sealed class InstallationTests
         var copy = store.Snapshot; copy.Devices.Clear();
         Assert.Single(store.Snapshot.Devices);
         var before = await File.ReadAllTextAsync(Path.Combine(path, "settings.json"));
-        await Assert.ThrowsAsync<ArgumentException>(() => store.SaveAsync(store.Snapshot with { Version = 2 }));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SaveAsync(store.Snapshot with { Version = 3 }));
         Assert.Equal(before, await File.ReadAllTextAsync(Path.Combine(path, "settings.json")));
         Assert.Single(Store(path).Snapshot.Boards);
         Assert.Empty(Directory.GetFiles(path, "*.tmp"));
@@ -192,26 +193,134 @@ public sealed class InstallationTests
         Assert.Single(store.Snapshot.Devices); Assert.Equal(20, store.Snapshot.Animation.FramesPerSecond);
     }
     [Fact]
-    public void EdgeMappingRejectsOverlapBoundsAndDuplicateAssignment()
+    public void StripMappingRejectsOverlapBoundsAndDuplicateAssignmentAndSaysWhichStrip()
     {
         var original = Installation();
         var board = original.Boards[0];
-        Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(original with { Boards = [board with { Edges = [new(0, 4), new(3, 4), new(8, 4), new(12, 4)] }] }));
-        Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(original with { Boards = [board with { Edges = [new(0, 4), new(4, 4), new(8, 4), new(15, 4)] }] }));
+        void Rejected(BoardSettings changed, string because) => Assert.Contains(because,
+            Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(original with { Boards = [changed] })).Message);
+        Rejected(board with { Right = new(7, 8) }, "a: the left and right strips use the same LEDs.");
+        Rejected(board with { Right = new(8, 9) }, "a: the right strip uses LEDs 8–16, but Board has 16 LEDs (0–15).");
+        Rejected(board with { Left = new(0, 0) }, "a: the left strip needs a first LED of 0 or more and at least one LED.");
+        Rejected(board with { Left = new(-1, 4) }, "a: the left strip needs");
+        Rejected(board with { Right = null }, "a: map both the left and the right strip.");
         Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(original with { Boards = [board, board with { Id = "b" }] }));
         Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(original with { Devices = [Device() with { Selected = false }] }));
-        Assert.Equal(new[] { 3, 2, 1, 0 }, BoardSceneRenderer.EdgePixels(board with { Edges = [new(0, 4, true), new(4, 4), new(8, 4), new(12, 4)] }, 0));
-        Assert.Equal(new[] { 12, 13, 14, 15 }, BoardSceneRenderer.EdgePixels(board with { Rotation = 90 }, 0));
+        // Strips may leave LEDs unused and sit anywhere on the controller.
+        InstallationSettingsStore.Validate(original with { Boards = [board with { Left = new(10, 3), Right = new(2, 5, true) }] });
+
+        // Pixels are listed from the near end, whichever end the strip is wired from.
+        Assert.Equal(new[] { 7, 6, 5, 4, 3, 2, 1, 0 }, BoardMapping.StripPixels(board with { Left = new(0, 8, true) }, BoardMapping.Left));
+        Assert.Equal(Enumerable.Range(8, 8), BoardMapping.StripPixels(board, BoardMapping.Right));
+        Assert.Empty(BoardMapping.StripPixels(new BoardSettings(), BoardMapping.Left));
+        Assert.True(BoardMapping.Fits(board, 16)); Assert.False(BoardMapping.Fits(board, 15));
+
+        // A standard board has 51 LEDs a side: the first half of the controller on the left, the rest on the right.
+        Assert.Equal((new StripSettings(0, 51), new StripSettings(51, 51)), BoardMapping.Default(BoardMapping.LedsPerBoard));
+        Assert.Equal((new StripSettings(0, 8), new StripSettings(8, 8)), BoardMapping.Default(17));
+        Assert.Null(BoardMapping.Default(1));
     }
     [Fact]
-    public void PreparationLightsPlayerEdgesThenRemainingEdgesAndGo()
+    public async Task VersionOneSettingsWithFourEdgesMigrateToTheDefaultTwoStrips()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        await File.WriteAllTextAsync(Path.Combine(path, "settings.json"), """
+            { "version": 1,
+              "devices": [ { "mac": "001122334455", "name": "Left table", "address": "192.168.1.20", "httpPort": 80, "ledCount": 102, "udpPort": 21324, "selected": true } ],
+              "boards": [
+                { "id": "a", "name": "A", "deviceMac": "001122334455", "rotation": 90,
+                  "edges": [ { "start": 0, "count": 25 }, { "start": 25, "count": 25 }, { "start": 75, "count": 25, "reversed": true }, { "start": 50, "count": 25, "reversed": true } ] },
+                { "id": "b", "name": "B", "deviceMac": null, "rotation": 0, "edges": [] } ] }
+            """);
+        var store = Store(path);
+        var saved = store.Snapshot;
+        Assert.Equal(2, saved.Version);
+        Assert.Equal((new StripSettings(0, 51), new StripSettings(51, 51)), (saved.Boards[0].Left, saved.Boards[0].Right));
+        Assert.Equal("001122334455", saved.Boards[0].DeviceMac);
+        Assert.Null(saved.Boards[1].Left); Assert.Null(saved.Boards[1].DeviceMac);
+        Assert.False(saved.Devices[0].Simulated);
+        await store.SaveAsync(saved);
+        var file = await File.ReadAllTextAsync(Path.Combine(path, "settings.json"));
+        Assert.DoesNotContain("edges", file); Assert.DoesNotContain("rotation", file); Assert.Contains("\"version\": 2", file);
+
+        // A version 1 backup restored through the API migrates too, and strips that are already there are kept.
+        await store.SaveAsync(saved with { Version = 1, Boards = [saved.Boards[0] with { Left = new(51, 51), Right = new(0, 51) }] });
+        Assert.Equal(2, store.Snapshot.Version);
+        Assert.Equal(new StripSettings(51, 51), store.Snapshot.Boards[0].Left);
+        // A board whose controller is gone cannot be mapped and becomes unassigned instead of failing the load.
+        var orphan = InstallationSettingsStore.Migrate(new InstallationSettings { Version = 1, Boards = [new() { Id = "x", Name = "X", DeviceMac = "aabbccddeeff" }] });
+        Assert.Null(orphan.Boards[0].DeviceMac);
+        InstallationSettingsStore.Validate(orphan);
+    }
+    [Fact]
+    public async Task SimulatedControllersShowTheirFramesWithoutTouchingTheNetwork()
+    {
+        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        var clock = new FakeTimeProvider();
+        var options = Options.Create(new WLedOptions());
+        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
+        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
+        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
+        var clients = new SyncClients();
+        var registry = new WLedRegistryService(store, control, clients);
+        var first = await registry.AddSimulatedAsync();
+        var second = await registry.AddSimulatedAsync();
+        Assert.Equal(("02b0bf000001", "Simulated board 1", BoardMapping.LedsPerBoard, true, true), (first.Mac, first.Name, first.LedCount, first.Simulated, first.Selected));
+        Assert.Equal("02b0bf000002", second.Mac);
+        Assert.Equal([first, second], store.Snapshot.Devices);
+        var board = BoardMapping.WithDefault(new BoardSettings { Id = "a", Name = "A", DeviceMac = first.Mac }, first.LedCount);
+        await store.UpdateAsync(s => s with { Boards = [board],
+            IdleSync = new IdleSyncSettings { Enabled = true, MasterMac = first.Mac, Followers = [second.Mac] } });
+
+        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery(), store);
+        var transport = new RecordingTransport();
+        var monitor = new BoardFrameMonitor(clock);
+        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, transport, monitor);
+        await output.StartAsync(CancellationToken.None);
+        await Eventually(() => output.IsReady);
+        Assert.Null(monitor.Current(first.Mac));
+        await output.StartCalibrationAsync(new([board], "a"));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Eventually(() => monitor.Current(first.Mac) is not null);
+        // The monitor holds what a real board would show: left strip blue, right strip amber.
+        var frame = monitor.Current(first.Mac)!;
+        Assert.Equal(BoardMapping.LedsPerBoard * 3, frame.Length);
+        Assert.Equal(new byte[] { 0, 96, 160 }, frame[(10 * 3)..(10 * 3 + 3)]);
+        Assert.Equal(new byte[] { 160, 96, 0 }, frame[(61 * 3)..(61 * 3 + 3)]);
+        await output.StopCalibrationAsync(output.Calibration!.SessionId);
+        // Like WLED, a simulated board drops back to idle a second after the last frame.
+        clock.Advance(BoardFrameMonitor.Lease + TimeSpan.FromMilliseconds(100));
+        Assert.Null(monitor.Current(first.Mac));
+
+        // Locate and a manual effect reach it the same way.
+        using var locateCancel = new CancellationTokenSource();
+        var locating = output.LocateAsync(second.Mac, locateCancel.Token);
+        await Eventually(() => monitor.Current(second.Mac) is not null);
+        locateCancel.Cancel(); await Assert.ThrowsAnyAsync<OperationCanceledException>(() => locating);
+
+        // Nothing went out over UDP or HTTP, discovery does not probe it, and no device error is reported.
+        await output.ApplyIdleSyncAsync();
+        await discovery.ScanAsync();
+        Assert.Empty(transport.Sent); Assert.Empty(clients.Requests); Assert.Empty(clients.Gets); Assert.Empty(output.Errors);
+        await output.StopAsync(CancellationToken.None);
+    }
+    [Fact]
+    public void PreparationPulsesInFromThePlayerEndsThenChasesAndGo()
     {
         var settings = Installation(); var board = settings.Boards[0];
         static byte Peak(byte[] frame, int pixel) => frame[(pixel * 3)..(pixel * 3 + 3)].Max();
         // Sampled half a second after a count, when the white pop has faded.
         var player = BoardSceneRenderer.Render(settings, board, 16, GamePhase.PreCountdown, 3.5, 5);
-        Assert.All(Enumerable.Range(0, 4).Concat(Enumerable.Range(8, 4)), i => Assert.True(Peak(player, i) > 100));
-        Assert.All(Enumerable.Range(4, 4).Concat(Enumerable.Range(12, 4)), i => Assert.Equal(0, Peak(player, i)));
+        Assert.All(Enumerable.Range(0, 16), i => Assert.True(Peak(player, i) > 100));
+        // Both strips show the same picture, mirrored about the middle of the board, and it is not flat.
+        foreach (var strip in new[] { 0, 8 })
+        {
+            for (var p = 0; p < 4; p++)
+                Assert.Equal(player[((strip + p) * 3)..((strip + p) * 3 + 3)], player[((strip + 7 - p) * 3)..((strip + 7 - p) * 3 + 3)]);
+            Assert.NotEqual(player[(strip * 3)..(strip * 3 + 3)], player[((strip + 3) * 3)..((strip + 3) * 3 + 3)]);
+        }
+        Assert.Equal(player[..24], player[24..]);
         var all = BoardSceneRenderer.Render(settings, board, 16, GamePhase.PreCountdown, 4.5, 5);
         Assert.All(Enumerable.Range(0, 16), i => Assert.True(Peak(all, i) > 100));
         // GO floods every board in the accent colour with white, never the old pure green.
@@ -556,12 +665,14 @@ public sealed class InstallationTests
     private sealed class SyncClients : IHttpClientFactory
     {
         public List<(string Path, JsonElement Body)> Requests { get; } = [];
-        public HttpClient CreateClient(string name) => new(new SyncHandler(Requests));
+        public ConcurrentQueue<string> Gets { get; } = new();
+        public HttpClient CreateClient(string name) => new(new SyncHandler(Requests, Gets));
     }
-    private sealed class SyncHandler(List<(string Path, JsonElement Body)> requests) : HttpMessageHandler
+    private sealed class SyncHandler(List<(string Path, JsonElement Body)> requests, ConcurrentQueue<string> gets) : HttpMessageHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
+            if (request.Method == HttpMethod.Get) gets.Enqueue(request.RequestUri!.AbsolutePath);
             if (request.Method == HttpMethod.Get) return new(HttpStatusCode.OK) { Content = new StringContent("""{"on":false,"bri":100,"mainseg":0,"seg":[{"id":0,"start":0,"stop":16,"fx":7,"col":[[0,0,255]]}]}""", System.Text.Encoding.UTF8, "application/json") };
             requests.Add((request.RequestUri!.AbsolutePath, await request.Content!.ReadFromJsonAsync<JsonElement>(token)));
             return new(HttpStatusCode.OK) { Content = JsonContent.Create(new { success = true }) };

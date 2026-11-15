@@ -4,40 +4,41 @@ namespace BobFx.Core.Services;
 
 public static class BoardSceneRenderer
 {
+    private const double StripInset = BoardLightShow.StripInset;
+    private const double CalibrationLapSeconds = 2;
+    internal const string MappingChanged = "LED count changed; update this board's strip mapping.";
+
     public static List<BoardSettings> AssignedBoards(InstallationSettings settings) => settings.Boards
         .Where(b => b.DeviceMac is not null && settings.Devices.Any(d => d.Mac == b.DeviceMac && d.Selected)).ToList();
 
+    /// <summary>The left strip blue and the right strip amber, each with a white dot running from the near end
+    /// to the far end, so an operator can see which strip is which and which way it runs.</summary>
     public static byte[] Calibration(BoardSettings board, int count, double elapsed)
     {
         var output = new byte[count * 3];
-        (byte R, byte G, byte B)[] colors = [(0, 96, 160), (0, 128, 64), (160, 96, 0), (144, 0, 96)];
-        var perimeter = new List<int>();
-        for (var side = 0; side < 4; side++)
+        (byte R, byte G, byte B)[] colors = [(0, 96, 160), (160, 96, 0)];
+        for (var side = 0; side < 2; side++)
         {
             var color = colors[side];
-            foreach (var pixel in EdgePixels(board, side))
+            var pixels = BoardMapping.StripPixels(board, side);
+            foreach (var pixel in pixels)
             {
-                if (pixel < 0 || pixel >= count) throw new ArgumentException("LED count changed; update this board's edge mapping.");
+                if (pixel < 0 || pixel >= count) throw new ArgumentException(MappingChanged);
                 output[pixel * 3] = color.R; output[pixel * 3 + 1] = color.G; output[pixel * 3 + 2] = color.B;
-                perimeter.Add(pixel);
             }
-        }
-        if (perimeter.Count > 0)
-        {
-            var marker = perimeter[(int)(elapsed % 4 / 4 * perimeter.Count)];
+            if (pixels.Length == 0) continue;
+            var marker = pixels[(int)(elapsed % CalibrationLapSeconds / CalibrationLapSeconds * pixels.Length)];
             output[marker * 3] = output[marker * 3 + 1] = output[marker * 3 + 2] = 220;
         }
         return output;
     }
-    public static int[] EdgePixels(BoardSettings board, int visualEdge)
-    {
-        var edge = board.Edges[(visualEdge - board.Rotation / 90 + 4) % 4];
-        var pixels = Enumerable.Range(edge.Start, edge.Count);
-        return (edge.Reversed ? pixels.Reverse() : pixels).ToArray();
-    }
 
-    // Traverse each neighboring square in the opposite direction. Begin/end near the
-    // neighboring edges, so the single dot crosses between square perimeter loops.
+    /// <summary>A board's LEDs as one loop: up the left strip from the near end, then back down the right.</summary>
+    private static int[] Loop(BoardSettings board) =>
+        [.. BoardMapping.StripPixels(board, BoardMapping.Left), .. BoardMapping.StripPixels(board, BoardMapping.Right).Reverse()];
+
+    // Traverse each neighboring board in the opposite direction. Begin/end in the middle of the
+    // strips that face a neighbor, so the single dot crosses between board loops.
     public static List<(string BoardId, int Pixel)> DotPath(IReadOnlyList<BoardSettings> boards)
     {
         var path = new List<(string, int)>();
@@ -45,21 +46,23 @@ public static class BoardSceneRenderer
         for (var i = 0; i < assigned.Count; i++)
         {
             var b = assigned[i];
-            var perimeter = Enumerable.Range(0, 4).SelectMany(e => EdgePixels(b, e)).ToArray();
-            var join = EdgePixels(b, i == 0 ? 1 : 3);
-            var origin = Array.IndexOf(perimeter, join[join.Length / 2]);
-            for (var p = 0; p < perimeter.Length; p++)
-                path.Add((b.Id, perimeter[(origin + (i % 2 == 0 ? p : -p) + perimeter.Length) % perimeter.Length]));
-            // An interior square is entered on its left and must leave on its right.
-            // Continue along its perimeter after the full loop to the handoff point.
+            var loop = Loop(b);
+            var join = BoardMapping.StripPixels(b, i == 0 ? BoardMapping.Right : BoardMapping.Left);
+            if (join.Length == 0) continue;
+            var origin = Array.IndexOf(loop, join[join.Length / 2]);
+            for (var p = 0; p < loop.Length; p++)
+                path.Add((b.Id, loop[(origin + (i % 2 == 0 ? p : -p) + loop.Length) % loop.Length]));
+            // An interior board is entered on its left and must leave on its right.
+            // Continue along its loop after the full lap to the handoff point.
             if (i > 0 && i < assigned.Count - 1)
             {
-                var exit = EdgePixels(b, 1);
-                var destination = Array.IndexOf(perimeter, exit[exit.Length / 2]);
-                for (var p = 0; p < perimeter.Length; p++)
+                var exit = BoardMapping.StripPixels(b, BoardMapping.Right);
+                if (exit.Length == 0) continue;
+                var destination = Array.IndexOf(loop, exit[exit.Length / 2]);
+                for (var p = 0; p < loop.Length; p++)
                 {
-                    var current = (origin + (i % 2 == 0 ? p : -p) + perimeter.Length) % perimeter.Length;
-                    path.Add((b.Id, perimeter[current]));
+                    var current = (origin + (i % 2 == 0 ? p : -p) + loop.Length) % loop.Length;
+                    path.Add((b.Id, loop[current]));
                     if (current == destination) break;
                 }
             }
@@ -103,14 +106,14 @@ public static class BoardSceneRenderer
                 if (behind < tail && (!trail.TryGetValue(path[step].Pixel, out var nearest) || behind < nearest)) trail[path[step].Pixel] = behind;
             }
         }
-        for (var edge = 0; edge < 4; edge++)
+        for (var side = 0; side < 2; side++)
         {
-            var pixels = EdgePixels(board, edge);
+            var pixels = BoardMapping.StripPixels(board, side);
             for (var p = 0; p < pixels.Length; p++)
             {
-                var fraction = (p + 0.5) / pixels.Length;
-                var x = index + (edge == 0 ? fraction : edge == 1 ? 1 : edge == 2 ? 1 - fraction : 0);
-                var at = new BoardLightShow.Spot(x, boards.Count, edge, index, (edge + fraction) / 4);
+                var along = (p + 0.5) / pixels.Length;
+                var x = index + (side == BoardMapping.Left ? StripInset : 1 - StripInset);
+                var at = new BoardLightShow.Spot(x, boards.Count, side, index, along, side == BoardMapping.Left ? along / 2 : 1 - along / 2);
                 Set(pixels[p], phase switch
                 {
                     GamePhase.PreCountdown => BoardLightShow.Countdown(colors, at, elapsed, preparationSeconds),
