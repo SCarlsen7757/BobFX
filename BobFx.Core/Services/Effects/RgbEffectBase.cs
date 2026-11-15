@@ -15,9 +15,9 @@ public abstract class RgbEffectBase : IRgbEffect
     protected TimeProvider Clock { get; private set; } = TimeProvider.System;
     protected int LedCount { get; private set; }
 
-    public virtual void Initialize(int ledCount, TimeProvider? clock = null)
+    public virtual void Initialize(int ledCount, TimeProvider clock)
     {
-        Clock = clock ?? TimeProvider.System;
+        Clock = clock;
         LedCount = ledCount;
         Reset();
     }

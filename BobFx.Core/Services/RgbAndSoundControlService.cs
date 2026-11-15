@@ -8,6 +8,7 @@ public sealed class RgbAndSoundControlService(
     ILogger<RgbAndSoundControlService> logger, InstallationSettingsStore? settings = null) : BackgroundService
 {
     private readonly SemaphoreSlim commands = new(1, 1);
+    private static readonly TimeSpan ShutdownWait = TimeSpan.FromSeconds(5);
     private int phase;
     private int ready;
     public bool IsReady => Volatile.Read(ref ready) != 0;
@@ -193,9 +194,11 @@ public sealed class RgbAndSoundControlService(
         finally
         {
             Volatile.Write(ref ready, 0);
-            await commands.WaitAsync();
+            // A command that is stuck on an unreachable device must not keep the host from stopping.
+            var held = await commands.WaitAsync(ShutdownWait);
+            if (!held) logger.LogWarning("A command was still running at shutdown; the lights are released without waiting for it");
             try { countdown.Stop(); EnterIdle(); }
-            finally { commands.Release(); }
+            finally { if (held) commands.Release(); }
             logger.LogInformation("Game coordinator stopped");
         }
     }

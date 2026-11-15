@@ -12,7 +12,7 @@ public sealed class ControllerCredentialsTests
     [Fact]
     public async Task PasswordsPersistProtectedAndAreSeparateFromExportedSettings()
     {
-        var path = Path.Combine(Path.GetTempPath(), "bobfx-credentials-" + Guid.NewGuid().ToString("N"));
+        var path = TestPaths.NewDataPath();
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Settings:DataPath"] = path }).Build();
         var settings = new InstallationSettingsStore(config);
         var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30" };
@@ -39,7 +39,7 @@ public sealed class ControllerCredentialsTests
     public async Task LocalHttpConnectionTestUsesSavedPasswordWithoutEnablingDevice()
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        { ["Settings:DataPath"] = Path.Combine(Path.GetTempPath(), "bobfx-credentials-" + Guid.NewGuid().ToString("N")) }).Build();
+        { ["Settings:DataPath"] = TestPaths.NewDataPath() }).Build();
         var settings = new InstallationSettingsStore(config);
         var credentials = new ControllerCredentials(settings);
         var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30" };
@@ -73,7 +73,7 @@ public sealed class ControllerCredentialsTests
     public async Task EnabledControllerReconnectsWhenItsSavedPasswordChanges()
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        { ["Settings:DataPath"] = Path.Combine(Path.GetTempPath(), "bobfx-credentials-" + Guid.NewGuid().ToString("N")) }).Build();
+        { ["Settings:DataPath"] = TestPaths.NewDataPath() }).Build();
         var settings = new InstallationSettingsStore(config);
         var credentials = new ControllerCredentials(settings);
         var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30", Enabled = true };

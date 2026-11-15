@@ -6,9 +6,12 @@ import { newer } from './revisions';
 import type { BoardFrame, Defaults, DiscoveryState, EffectState, GameState, InstallationState, SoundEvent, UiState, Versioned } from './contracts';
 
 export const queryClient = new QueryClient({ defaultOptions: {
-  queries: { staleTime: Infinity, retry: 1, refetchOnWindowFocus: false },
+  queries: { retry: 1, refetchOnWindowFocus: false },
   mutations: { retry: false },
 } });
+// These four are filled by the hub and never fetched, so they never go stale. Anything read over HTTP, such as a
+// device's details, is fetched again each time it is shown.
+for (const key of ['game', 'effect', 'discovery', 'installation']) queryClient.setQueryDefaults([key], { staleTime: Infinity });
 export const connectionStatus = ref<'connecting' | 'syncing' | 'connected' | 'disconnected'>('connecting');
 export const connected = computed(() => connectionStatus.value === 'connected');
 export const defaults = ref<Defaults>();
@@ -23,6 +26,7 @@ let stopped = false;
 let previewWanted = false;
 let startTask: Promise<void> | undefined;
 let syncTask: Promise<void> | undefined;
+let syncAgain = false;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
 let buffered: Array<() => void> = [];
 let onSound: ((event: SoundEvent) => void) | undefined;
@@ -56,11 +60,13 @@ connection.on('SoundRequested', (event: SoundEvent) => {
 });
 
 export function synchronize(): Promise<void> {
-  if (syncTask) return syncTask;
+  // The snapshot being fetched may predate what this caller just did, so it is fetched once more before it is used.
+  if (syncTask) { syncAgain = true; return syncTask; }
   const generation = connectionGeneration;
   syncTask = (async () => {
     syncing = true; connectionStatus.value = 'syncing'; buffered = [];
-    const snapshot = await api<UiState>('/api/ui/state');
+    let snapshot: UiState;
+    do { syncAgain = false; snapshot = await api<UiState>('/api/ui/state'); } while (syncAgain);
     if (generation !== connectionGeneration || connection.state !== HubConnectionState.Connected || stopped || document.hidden) return;
     instance = snapshot.game.serverInstanceId;
     apply('game', snapshot.game); apply('effect', snapshot.effect); apply('discovery', snapshot.discovery);
@@ -116,7 +122,8 @@ export function startSession(sound: (event: SoundEvent) => void) {
   window.addEventListener('online', online);
   return () => {
     stopped = true; onSound = undefined;
-    if (retryTimer) clearTimeout(retryTimer);
+    // Cleared as well as cancelled: a session started again must be able to schedule its own retry.
+    clearTimeout(retryTimer); retryTimer = undefined;
     window.removeEventListener('offline', offline);
     window.removeEventListener('online', online);
     document.removeEventListener('visibilitychange', resume); void connection.stop();

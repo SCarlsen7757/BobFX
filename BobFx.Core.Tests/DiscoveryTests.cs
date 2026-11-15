@@ -11,7 +11,7 @@ public sealed class DiscoveryTests
     [Fact]
     public async Task RegisteredEndpointsRefreshOnDiskAndManualProbingSurvivesMdnsFailure()
     {
-        var path = Path.Combine(Path.GetTempPath(), "bobfx-discovery-" + Guid.NewGuid().ToString("N"));
+        var path = TestPaths.NewDataPath();
         var store = new InstallationSettingsStore(new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["Settings:DataPath"] = path }).Build());
         await store.SaveAsync(new() { Devices = [new("aabbccddeeff", "lamp", "192.168.1.5", 80, 16, 21324)] });

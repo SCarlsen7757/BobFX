@@ -36,6 +36,7 @@ const stripColors: Record<Side, string> = { left: '#ffad66', right: '#b18cff' };
 const checkColors: Record<Side, string> = { left: '#3a9ee6', right: '#e6a03a' };
 let beforeCalibration: { boards: Board[]; idleSync: IdleSync } | undefined;
 let heartbeat: ReturnType<typeof setInterval> | undefined;
+let left = false;
 let previewQueue: Promise<void> = Promise.resolve();
 
 const problems = computed(() => draft.value ? boardProblems(draft.value.boards, devices.value) : []);
@@ -177,6 +178,8 @@ const mutation = useMutation({ mutationFn: async (action: 'save' | 'start' | 'fi
     const request = previewRequest();
     beforeCalibration = clone(draft.value!);
     const session = await calibrationCommand<CalibrationSession>('/api/installation/calibration', 'POST', request);
+    // The page may have been left while the check was starting; nothing would stop that check or its heartbeat.
+    if (left) { release(session.sessionId); return; }
     sessionId.value = session.sessionId;
     heartbeat = setInterval(preview, 5000);
     await synchronize();
@@ -212,13 +215,17 @@ onBeforeRouteLeave(async () => {
   try { await stopCalibration(); }
   catch { clearSession(); /* The server lease releases output if navigation loses the connection. */ }
 });
+/** Ends a check without waiting for the answer, so it also works while the page is going away. */
+function release(id: string) {
+  void fetch(`/api/installation/calibration/${id}`, { method: 'DELETE', credentials: 'same-origin', keepalive: true }).catch(() => {});
+}
 function leaving() {
   const id = sessionId.value;
   clearSession();
-  if (id) void fetch(`/api/installation/calibration/${id}`, { method: 'DELETE', credentials: 'same-origin', keepalive: true }).catch(() => {});
+  if (id) release(id);
 }
 window.addEventListener('pagehide', leaving);
-onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); leaving(); });
+onBeforeUnmount(() => { left = true; window.removeEventListener('pagehide', leaving); leaving(); });
 </script>
 
 <template>

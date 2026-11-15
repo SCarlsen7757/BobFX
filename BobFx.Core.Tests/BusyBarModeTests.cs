@@ -52,7 +52,7 @@ public sealed class BusyBarModeTests
     public async Task ServiceMonitorsSelectorWithoutRemoteControlsAndPausesOnLeaveOrStreamLoss(bool remoteEnabled, bool failedHeartbeat, string api)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        { ["Settings:DataPath"] = Path.Combine(Path.GetTempPath(), "bobfx-mode-" + Guid.NewGuid().ToString("N")) }).Build();
+        { ["Settings:DataPath"] = TestPaths.NewDataPath() }).Build();
         var settings = new InstallationSettingsStore(config);
         var credentials = new ControllerCredentials(settings);
         var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30", Enabled = true, RemoteEnabled = remoteEnabled };
@@ -132,7 +132,7 @@ public sealed class BusyBarModeTests
     public async Task UnreviewedApiVersionsGetNoUploadsDrawsOrInputStream(string api)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        { ["Settings:DataPath"] = Path.Combine(Path.GetTempPath(), "bobfx-mode-" + Guid.NewGuid().ToString("N")) }).Build();
+        { ["Settings:DataPath"] = TestPaths.NewDataPath() }).Build();
         var settings = new InstallationSettingsStore(config);
         var credentials = new ControllerCredentials(settings);
         var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30", Enabled = true, RemoteEnabled = true };

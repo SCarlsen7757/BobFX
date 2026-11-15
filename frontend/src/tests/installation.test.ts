@@ -126,10 +126,10 @@ describe('light show draft', () => {
     expect(() => validateLightShow(lightShow, { ...animation, dotSeconds: Number.NaN })).toThrow('Comet seconds');
     expect(() => validateLightShow(lightShow, { ...animation, dotLapsPerSecond: 21 })).toThrow('Comet laps');
   });
-  it('checks custom colors only when the custom theme is chosen', () => {
+  it('checks custom colors whatever the theme, as the server does', () => {
     const { lightShow, animation } = draft();
     const black = { ...lightShow.custom, accent: '#000000' };
-    expect(() => validateLightShow({ ...lightShow, custom: black }, animation)).not.toThrow();
+    expect(() => validateLightShow({ ...lightShow, custom: black }, animation)).toThrow('black');
     expect(() => validateLightShow({ ...lightShow, theme: 'custom', custom: black }, animation)).toThrow('black');
     expect(() => validateLightShow({ ...lightShow, theme: 'custom', custom: { ...lightShow.custom, primary: 'red' } }, animation)).toThrow('#RRGGBB');
     expect(() => validateLightShow({ ...lightShow, theme: 'custom' }, animation)).not.toThrow();

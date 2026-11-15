@@ -18,9 +18,9 @@ public interface IRgbEffect
     TimeSpan Speed { get; set; }
 
     /// <summary>
-    /// Initialize the effect before first render.
+    /// Initialize the effect before first render. The clock is the renderer's, so timed effects follow it.
     /// </summary>
-    void Initialize(int ledCount, TimeProvider? clock = null);
+    void Initialize(int ledCount, TimeProvider clock);
 
     /// <summary>
     /// Apply the effect to the LED array.

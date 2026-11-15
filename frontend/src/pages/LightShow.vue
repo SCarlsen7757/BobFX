@@ -17,7 +17,7 @@ import type { AnimationSettings, LightShowColors, LightShowSegment, LightShowSet
 const installation = useInstallation();
 // A running test does not block this page: the next test replaces it and Save stops it first.
 const lightsFree = useCanConfigure(true);
-const { data: themes } = useQuery({ queryKey: ['light-show-themes'], queryFn: () => api<LightShowTheme[]>('/api/installation/light-show/themes') });
+const { data: themes } = useQuery({ queryKey: ['light-show-themes'], queryFn: () => api<LightShowTheme[]>('/api/installation/light-show/themes'), staleTime: Infinity });
 const draft = ref<{ lightShow: LightShowSettings; animation: AnimationSettings }>();
 const message = ref('');
 const advanced = ref(false);

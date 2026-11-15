@@ -12,7 +12,7 @@ builder.Services.AddSingleton<ControllerCredentials>();
 builder.Services.AddOptions<WLedOptions>().BindConfiguration("WLed")
     .Validate(options => options.IsValid(), "WLED requires 1–490 LEDs and a 5–3600s discovery interval.").ValidateOnStart();
 builder.Services.AddOptions<CountdownOptions>().BindConfiguration("Countdown")
-    .Validate(options => options.IsValid(), "Countdown requires 0–60s pre-duration, 1–86400s duration, and deviation smaller than duration.").ValidateOnStart();
+    .Validate(options => options.IsValid(), "Countdown requires 1–86400s duration, and deviation smaller than duration.").ValidateOnStart();
 builder.Services.AddOptions<SecurityOptions>().BindConfiguration("Security")
     .Validate(options => builder.Environment.IsDevelopment() || options.IsValid(), "Production requires explicit Security:AllowedClientNetworks CIDRs.").ValidateOnStart();
 builder.Services.AddSingleton<IRgbEffectFactory, RgbEffectFactory>();

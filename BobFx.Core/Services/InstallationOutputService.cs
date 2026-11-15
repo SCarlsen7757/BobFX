@@ -21,7 +21,9 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
     public DateTimeOffset? LastSendUtc => Volatile.Read(ref lastSendTicks) is var ticks && ticks > 0 ? new DateTimeOffset(ticks, TimeSpan.Zero) : null;
     private int ready;
     public bool IsReady => Volatile.Read(ref ready) != 0;
-    public string? LastError { get; private set; }
+    private string? lastError;
+    /// <summary>Written by the output loop and read by health requests on other threads.</summary>
+    public string? LastError { get => Volatile.Read(ref lastError); private set => Volatile.Write(ref lastError, value); }
     private IdleSyncSettings? appliedSync;
     private readonly CancellationTokenSource locateStop = new();
     private Task? locateTask;
@@ -191,10 +193,17 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
     }
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var wasActive = false;
         try { await control.ConfigureAsync(() => ApplyIdleSyncAsync(stoppingToken)); }
         catch (InvalidOperationException) { /* Output already belongs to an operator. */ }
         Volatile.Write(ref ready, 1);
+        // Shutdown may cancel the loop's retry delay; the service must still report that it is no longer ready.
+        try { await RunOutputLoopAsync(stoppingToken); }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { /* Host shutdown cancels the retry delay. */ }
+        finally { Volatile.Write(ref ready, 0); }
+    }
+    private async Task RunOutputLoopAsync(CancellationToken stoppingToken)
+    {
+        var wasActive = false;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -258,7 +267,6 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
                 await Task.Delay(TimeSpan.FromSeconds(1), clock, stoppingToken);
             }
         }
-        Volatile.Write(ref ready, 0);
     }
     public Task LocateAsync(string mac, CancellationToken token = default) => LocateDeviceAsync(
         settings.Snapshot.Devices.FirstOrDefault(d => d.Mac == mac) ?? throw new ArgumentException("Register this device first."), token);

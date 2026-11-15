@@ -12,6 +12,7 @@ import Devices from './pages/Devices.vue';
 import BoardLayout from './pages/BoardLayout.vue';
 import Boards from './pages/Boards.vue';
 import Controllers from './pages/Controllers.vue';
+import NotFound from './pages/NotFound.vue';
 import { queryClient } from './lib/session';
 
 const router = createRouter({
@@ -26,7 +27,7 @@ const router = createRouter({
     { path: '/layout', component: BoardLayout, meta: { title: 'Board layout' } },
     { path: '/boards', component: Boards, meta: { title: 'Live boards' } },
     { path: '/controllers', component: Controllers, meta: { title: 'Remote controllers' } },
-    { path: '/:pathMatch(.*)*', component: { template: '<h1>Page not found</h1><p><a href="/">Return to the game</a></p>' } },
+    { path: '/:pathMatch(.*)*', component: NotFound },
   ],
   scrollBehavior: () => ({ top: 0 }),
 });

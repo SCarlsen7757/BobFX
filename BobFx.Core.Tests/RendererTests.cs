@@ -29,6 +29,20 @@ public sealed class RendererTests
     }
 
     [Fact]
+    public async Task SpeedChangeKeepsTheEffectOnTheInjectedClock()
+    {
+        var clock = new FakeTimeProvider();
+        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions { Led = new() { LedCount = 1 } }), new RgbEffectFactory(), clock);
+        await rgb.StartAsync(CancellationToken.None);
+        await Eventually(() => rgb.IsReady);
+        await rgb.StartEffectAsync(new FadeInEffect { TargetColor = Vector3.One, FadeDuration = TimeSpan.FromSeconds(2) });
+        rgb.SetSpeed(TimeSpan.FromMilliseconds(10)); // Restarts the fade; it must keep following the renderer's clock.
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await Eventually(() => rgb.GetSnapshot()[0] == Vector3.One);
+        await rgb.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task NaturalGameEndEmitsOneSoundAndReturnsToIdleAfterFiveSeconds()
     {
         var clock = new FakeTimeProvider();

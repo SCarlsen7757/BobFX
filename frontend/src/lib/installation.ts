@@ -17,11 +17,11 @@ export function validateLightShow(show: LightShowSettings, animation: AnimationS
   if (!Number.isInteger(show.brightness) || !between(show.brightness, 20, 100)) throw new Error('Brightness must be 20–100%.');
   if (!Number.isInteger(show.speed) || !between(show.speed, 25, 200)) throw new Error('Drift speed must be 25–200%.');
   if (!['calm', 'balanced', 'lively'].includes(show.intensity)) throw new Error('Choose an intensity.');
-  if (show.theme === 'custom')
-    for (const color of [show.custom.primary, show.custom.secondary, show.custom.tertiary, show.custom.accent]) {
-      if (!/^#[0-9a-f]{6}$/i.test(color)) throw new Error('Custom colors must be #RRGGBB.');
-      if (Math.max(...[1, 3, 5].map(at => parseInt(color.slice(at, at + 2), 16))) < 0x30) throw new Error('Custom colors must not be black or nearly black.');
-    }
+  // Checked whatever the theme: the server stores the custom colors with every save and refuses unusable ones.
+  for (const color of [show.custom.primary, show.custom.secondary, show.custom.tertiary, show.custom.accent]) {
+    if (!/^#[0-9a-f]{6}$/i.test(color)) throw new Error('Custom colors must be #RRGGBB.');
+    if (Math.max(...[1, 3, 5].map(at => parseInt(color.slice(at, at + 2), 16))) < 0x30) throw new Error('Custom colors must not be black or nearly black.');
+  }
   if (!Number.isInteger(animation.framesPerSecond) || !between(animation.framesPerSecond, 10, 60)) throw new Error('Frames per second must be 10–60.');
   if (!between(animation.flashSeconds, 1, 10)) throw new Error('Flare seconds must be 1–10.');
   if (!between(animation.dotSeconds, 1, 30)) throw new Error('Comet seconds must be 1–30.');

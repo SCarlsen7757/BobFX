@@ -322,7 +322,7 @@ public sealed class HttpTests
             {
                 ["AllowedHosts"] = "localhost",
                 ["Security:AllowedClientNetworks:0"] = "127.0.0.0/8",
-                ["Settings:DataPath"] = Path.Combine(Path.GetTempPath(), "bobfx-http-" + Guid.NewGuid().ToString("N")),
+                ["Settings:DataPath"] = TestPaths.NewDataPath(),
             }));
             builder.ConfigureTestServices(services =>
             {

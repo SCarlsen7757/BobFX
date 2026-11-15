@@ -40,6 +40,11 @@ public sealed class BoardMonitorService(BoardFrameMonitor monitor, InstallationS
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        try { await RunAsync(stoppingToken); }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { /* Host shutdown cancels the retry delay. */ }
+    }
+    private async Task RunAsync(CancellationToken stoppingToken)
+    {
         BoardFrame[] sent = [];
         while (!stoppingToken.IsCancellationRequested)
         {

@@ -56,7 +56,7 @@ public sealed class DRgbService : BackgroundService
         {
             if (currentEffect is null) return;
             var candidate = currentEffect.Clone(); update(candidate); Validate(candidate);
-            candidate.Initialize(leds.Length); currentEffect = candidate; completed = false;
+            candidate.Initialize(leds.Length, clock); currentEffect = candidate; completed = false;
         }
     }
     public RgbStatus GetStatus() { lock (sync) return new(currentEffect?.EffectType ?? RgbEffect.Off, currentEffect?.Speed ?? TimeSpan.FromMilliseconds(100), leds.Length, IsUdpActive, LastError); }

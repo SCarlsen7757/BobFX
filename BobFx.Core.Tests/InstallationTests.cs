@@ -23,7 +23,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task UnassignedSlotsPersistAndOnlyAssignedDevicesMustBeUnique()
     {
-        var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
+        var path = TestPaths.NewDataPath();
         var store = Store(path);
         var first = new BoardSettings { Name = "Waiting one" };
         var second = new BoardSettings { Name = "Waiting two" };
@@ -77,7 +77,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task CalibrationPreviewsDraftOwnsOutputRenewsExpiresAndReleasesOnShutdown()
     {
-        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        var store = Store(TestPaths.NewDataPath());
         var saved = Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }],
             Boards = [Board(), new(), Board("aabbccddeeff", "b")] };
         await store.SaveAsync(saved);
@@ -143,7 +143,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task GameOutputUsesOnlyAssignedBoardsWhileManualOutputStillUsesAllSelectedDevices()
     {
-        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        var store = Store(TestPaths.NewDataPath());
         await store.SaveAsync(Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }], Boards = [new(), Board(), new()] });
         var clock = new FakeTimeProvider();
         var options = Options.Create(new WLedOptions());
@@ -168,7 +168,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task SaveReloadRejectsInvalidAndDoesNotShareMutableCollections()
     {
-        var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
+        var path = TestPaths.NewDataPath();
         var store = Store(path);
         var settings = Installation();
         await store.SaveAsync(settings);
@@ -187,7 +187,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task ConcurrentSectionUpdatesPreserveBothSections()
     {
-        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        var store = Store(TestPaths.NewDataPath());
         await Task.WhenAll(store.UpdateAsync(s => s with { Devices = [Device()] }),
             store.UpdateAsync(s => s with { Animation = s.Animation with { FramesPerSecond = 20 } }));
         Assert.Single(store.Snapshot.Devices); Assert.Equal(20, store.Snapshot.Animation.FramesPerSecond);
@@ -223,7 +223,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task VersionOneSettingsWithFourEdgesMigrateToTheDefaultTwoStrips()
     {
-        var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
+        var path = TestPaths.NewDataPath();
         Directory.CreateDirectory(path);
         await File.WriteAllTextAsync(Path.Combine(path, "settings.json"), """
             { "version": 1,
@@ -256,7 +256,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task SimulatedControllersShowTheirFramesWithoutTouchingTheNetwork()
     {
-        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        var store = Store(TestPaths.NewDataPath());
         var clock = new FakeTimeProvider();
         var options = Options.Create(new WLedOptions());
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
@@ -402,7 +402,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task SettingsSavedWithTheRemovedBusyBarTimerOptionStillLoad()
     {
-        var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
+        var path = TestPaths.NewDataPath();
         Directory.CreateDirectory(path);
         await File.WriteAllTextAsync(Path.Combine(path, "settings.json"), """
             { "version": 1, "controllers": [ { "id": "remote", "name": "Family remote", "address": "192.168.1.30", "port": 80,
@@ -441,7 +441,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task DeviceFailureDoesNotPreventOtherFramesAndLocateUsesOnlyTarget()
     {
-        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        var store = Store(TestPaths.NewDataPath());
         await store.SaveAsync(Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }], Boards = [Board(), Board("aabbccddeeff", "b")] });
         var clock = new FakeTimeProvider();
         var options = Options.Create(new WLedOptions());
@@ -467,7 +467,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task SettingsWithoutLightShowLoadDefaultsAndInvalidValuesAreRejected()
     {
-        var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
+        var path = TestPaths.NewDataPath();
         Directory.CreateDirectory(path);
         await File.WriteAllTextAsync(Path.Combine(path, "settings.json"), """{ "version": 1, "animation": { "framesPerSecond": 20 } }""");
         var store = Store(path);
@@ -493,7 +493,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task SavedCountdownSurvivesReloadOverridesConfigurationAndIsValidated()
     {
-        var path = Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N"));
+        var path = TestPaths.NewDataPath();
         var store = Store(path);
         var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions { DurationSeconds = 600, DeviationSeconds = 120 }),
             new FakeTimeProvider(), store);
@@ -508,7 +508,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task LightTestPlaysUnsavedDraftEndsByItselfAndConflictsCleanly()
     {
-        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        var store = Store(TestPaths.NewDataPath());
         var saved = Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }],
             Boards = [Board(), new(), Board("aabbccddeeff", "b")] };
         await store.SaveAsync(saved);
@@ -589,7 +589,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task GameWithoutBoardsSendsNoFramesButManualOutputStillDoes()
     {
-        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        var store = Store(TestPaths.NewDataPath());
         await store.SaveAsync(Installation() with { Boards = [new()] });
         var clock = new FakeTimeProvider();
         var options = Options.Create(new WLedOptions());
@@ -636,7 +636,7 @@ public sealed class InstallationTests
     [Fact]
     public async Task IdleSyncUsesNativeConfigKeysAndMirrorsEffectsWithoutCopyingBoundsOrTurningOnMaster()
     {
-        var store = Store(Path.Combine(Path.GetTempPath(), "bobfx-tests-" + Guid.NewGuid().ToString("N")));
+        var store = Store(TestPaths.NewDataPath());
         await store.SaveAsync(Installation() with { Devices = [Device(), Device("aabbccddeeff")], Boards = [],
             IdleSync = new IdleSyncSettings { Enabled = true, MasterMac = "001122334455", Followers = ["aabbccddeeff"], Group = 2 } });
         var clock = new FakeTimeProvider(); var options = Options.Create(new WLedOptions());

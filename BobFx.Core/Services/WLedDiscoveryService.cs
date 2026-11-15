@@ -63,8 +63,9 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
             IReadOnlyList<WLedAdvertisement> hosts;
             try { hosts = await discoverySource.ResolveAsync(cancellationToken); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception)
+            catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
             {
+                logger.LogDebug(ex, "mDNS resolution failed");
                 Volatile.Write(ref lastError, "mDNS resolution failed");
                 if (settings is null || settings.Read().Devices.Count == 0) { AgeDevices(scanGeneration); Notify(); throw; }
                 hosts = [];
