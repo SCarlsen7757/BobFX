@@ -2,7 +2,7 @@
 
 BobFX provides light and sound effects for **Bob**, a board game related to Carrom. A shared game countdown drives RGB effects on selected WLED devices, with persistent board mappings and optional BUSY Bar display/start/stop integration. The application uses ASP.NET Core on .NET 10 LTS with a Vue/TypeScript frontend and a SignalR realtime connection; browsers control one shared game, and the server sends WLED realtime RGB frames over UDP to selected devices.
 
-When realtime output stops, WLED's realtime lease expires and the devices resume their configured idle playlist. Board layout also supports native WLED idle synchronization, and the Light show page sets the color theme, brightness and pace of the game lights and can test them on the boards.
+When realtime output stops, WLED's realtime lease expires and the devices resume their configured idle playlist. Board layout also supports native WLED idle synchronization, and the Light show page sets the color theme, brightness and pace of the game lights and can test them on the boards. A board has an LED strip down its left side and one down its right, 51 LEDs each. Without hardware, add simulated boards in Board layout and watch them on the Live boards page, which draws the frames BobFX is sending.
 
 ## Run locally
 
@@ -20,13 +20,13 @@ Open http://localhost:5159. Running game state exists in memory; restarting rese
 
 The neon-sunset Game page is sized for portrait and landscape tablets, with large Start/Stop controls. Select **Full screen** to open `/game/fullscreen` without the navigation bar; **Exit full screen** restores navigation. Supported browsers also enter native fullscreen after the tap. The dedicated URL works without native fullscreen support and can be bookmarked or reloaded. Changing views preserves the shared game and the browser's audio opt-in; reloading still resets audio. Remaining game time stays hidden during play.
 
-Configure selected WLED devices, board mappings, idle sync and BUSY Bar controllers through the web interface. See [installation and controller setup](docs/installation.md).
+Configure selected WLED devices, board mappings, idle sync and BUSY Bar controllers through the web interface. See [installation and controller setup](docs/installation.md), which also covers simulated boards and the live view.
 
 For frontend hot reload, run the backend on port 5159 and `npm --prefix frontend run dev`, then open the Vite URL. The animated background respects system reduced-motion settings. See [frontend architecture](docs/frontend-architecture.md) for API, realtime, and build details.
 
 ## Browser regression tests
 
-Playwright tests in [e2e](e2e) drive the published Vue frontend using TypeScript and Chromium, with additional game and installation tests in iPad WebKit emulation. They exercise every registered LED effect, Strobe's two color controls, invalid input, game ownership, keyboard pre-countdown Stop, navigation, and full reload. Game tests cover portrait/landscape tablet sizing, fullscreen entry/exit, audio continuity, and browsers without native fullscreen. Tests check realtime synchronization across screens, offline recovery, system reduced motion, and WebGL fallback. Unexpected HTTP errors, JavaScript errors, and a lingering connection banner fail the tests. Installation tests cover board mapping/order/rotation, overlap validation, controller password preservation, configuration ownership and the Game page during Locate. Frontend unit tests cover audio cleanup and state revision ordering.
+Playwright tests in [e2e](e2e) drive the published Vue frontend using TypeScript and Chromium, with additional game and installation tests in iPad WebKit emulation. They exercise every registered LED effect, Strobe's two color controls, invalid input, game ownership, keyboard pre-countdown Stop, navigation, and full reload. Game tests cover portrait/landscape tablet sizing, fullscreen entry/exit, audio continuity, and browsers without native fullscreen. Tests check realtime synchronization across screens, offline recovery, system reduced motion, and WebGL fallback. Unexpected HTTP errors, JavaScript errors, and a lingering connection banner fail the tests. Installation tests cover board order and strip mapping, mapping problems shown before saving, simulated boards on the live view, checking boards, controller password preservation, configuration ownership and the Game page during Locate. Frontend unit tests cover the strip mapping, audio cleanup and state revision ordering.
 
 From the repository root, restore .NET packages, then install and run the browser tests:
 
