@@ -4,11 +4,11 @@ BobFX uses Vue, TypeScript, Vue Router, TanStack Vue Query, and an ASP.NET Core 
 
 ## Development and builds
 
-Install Node 26 and the .NET SDK in global.json. `dotnet build` installs the locked frontend packages when needed and builds Vue into `BobFx.Core/wwwroot/ui` (ignored by Git). `dotnet publish` includes those assets. Docker uses a pinned Node build stage and copies the result into the .NET publish stage.
+Install the Node version in `.nvmrc` and the .NET SDK in global.json. `dotnet build` installs the locked frontend packages when needed and builds Vue into `BobFx.Core/wwwroot/ui` (ignored by Git). `dotnet publish` includes those assets. Docker uses a pinned Node build stage and copies the result into the .NET publish stage.
 
 For hot reload, start the backend on http://127.0.0.1:5159 and run `npm --prefix frontend run dev`. Open the Vite URL, normally http://127.0.0.1:5173. Vite proxies `/api`, `/hubs`, and sound files while preserving Host/Origin. Production remains same-origin and retains the existing trusted-network restrictions.
 
-Run `npm --prefix frontend test` for audio and revision-ordering tests. Playwright tests in `e2e` exercise the published application in Chromium and iPad WebKit. A physical iPad is still required for final Safari/audio/fullscreen and sustained GPU checks.
+Run `npm --prefix frontend test` for the audio, revision-ordering and installation draft tests. The frontend stays on TypeScript 6 while `vue-tsc` needs the JavaScript compiler; the browser tests, which use plain `tsc`, are on TypeScript 7. Playwright tests in `e2e` exercise the published application in Chromium and iPad WebKit. A physical iPad is still required for final Safari/audio/fullscreen and sustained GPU checks.
 
 ## State and commands
 
@@ -52,7 +52,7 @@ Application routes are explicitly served by .NET. Missing API, hub, health, and 
 
 ## Device branch integration
 
-The installation backend from `codex/dev-next-version` (9019a12) is retained with Vue pages at `/layout`, `/boards` and `/controllers`, plus registration/selection/Locate actions on `/wled`. `InstallationOutputService` replaced the legacy broadcast worker, which has been removed along with its `WLed:Udp` settings: only selected registered WLED devices receive output. WLED discovery refreshes saved metadata and probes saved endpoints even when mDNS fails; simulated controllers are never probed.
+The installation backend has Vue pages at `/layout`, `/boards` and `/controllers`, plus registration/selection/Locate actions on `/wled`. `InstallationOutputService` replaced the legacy broadcast worker, which has been removed along with its `WLed:Udp` settings: only selected registered WLED devices receive output. WLED discovery refreshes saved metadata and probes saved endpoints even when mDNS fails; simulated controllers are never probed.
 
 `PUT /api/installation/layout` saves boards and idle sync while preserving the other sections. `PUT /api/installation/light-show` saves the light show look and the animation timing the same way. `PUT /api/installation/controllers` saves controller settings plus write-only password replacements while preserving all other sections. `POST /api/installation/controllers/test` authenticates an unsaved draft without enabling integration. Device registration, Locate, selection and removal use `/api/installation/devices`. Existing full-settings and password endpoints remain available.
 

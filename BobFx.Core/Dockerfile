@@ -10,7 +10,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0.403-noble@sha256:de4fe90a98845d75910b9769
 ARG BUILD_CONFIGURATION=Release
 ARG VERSION=0.0.0-local
 WORKDIR /src
-COPY global.json ./
+COPY global.json Directory.Build.props Directory.Packages.props ./
 COPY BobFx.Core/BobFx.Core.csproj BobFx.Core/
 COPY BobFx.Core/packages.lock.json BobFx.Core/
 RUN dotnet restore BobFx.Core/BobFx.Core.csproj --locked-mode

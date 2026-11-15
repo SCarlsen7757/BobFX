@@ -1,0 +1,14 @@
+<Project>
+
+  <!-- Shared by the application and its tests. The Docker Compose project is not a C# project and is left alone. -->
+  <PropertyGroup Condition="'$(MSBuildProjectExtension)' == '.csproj'">
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <!-- CI builds with warnings as errors; a local build must fail for the same reasons. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

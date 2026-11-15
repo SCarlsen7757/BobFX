@@ -19,10 +19,8 @@ public sealed class DRgbService : BackgroundService
     public bool IsReady => Volatile.Read(ref ready) != 0;
     private string? lastError;
     public string? LastError => Volatile.Read(ref lastError);
-    public int LedCount => leds.Length;
     public bool IsUdpActive { get => Volatile.Read(ref udpActive) != 0; internal set => Volatile.Write(ref udpActive, value ? 1 : 0); }
     public RgbEffect CurrentEffect { get { lock (sync) return currentEffect?.EffectType ?? RgbEffect.Off; } }
-    public TimeSpan Speed { get { lock (sync) return currentEffect?.Speed ?? TimeSpan.FromMilliseconds(100); } }
     public DRgbService(ILogger<DRgbService> logger, IOptions<WLedOptions> options, IRgbEffectFactory factory, TimeProvider clock)
     {
         this.logger = logger; this.factory = factory; this.clock = clock;

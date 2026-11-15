@@ -20,7 +20,6 @@ const lightsFree = useCanConfigure(true);
 const { data: themes } = useQuery({ queryKey: ['light-show-themes'], queryFn: () => api<LightShowTheme[]>('/api/installation/light-show/themes'), staleTime: Infinity });
 const draft = ref<{ lightShow: LightShowSettings; animation: AnimationSettings }>();
 const message = ref('');
-const advanced = ref(false);
 const colorRoles: Array<{ key: keyof LightShowColors; label: string }> = [
   { key: 'primary', label: 'Main color' }, { key: 'secondary', label: 'Second color' },
   { key: 'tertiary', label: 'Third color' }, { key: 'accent', label: 'GO and accent color' }];
@@ -114,7 +113,7 @@ onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); });
           <div><label for="dot-speed">Comet laps per second</label><input id="dot-speed" v-model.number="draft.animation.dotLapsPerSecond" type="number" min="1" max="20" step="0.1" /></div>
         </div>
       </fieldset>
-      <details class="settings-section layout-advanced" :open="advanced" @toggle="advanced = ($event.target as HTMLDetailsElement).open">
+      <details class="settings-section layout-advanced">
         <summary>Advanced settings</summary>
         <fieldset :disabled="busy"><legend>Output</legend>
           <div class="parameters"><div><label for="fps">Frames per second</label><input id="fps" v-model.number="draft.animation.framesPerSecond" type="number" min="10" max="60" /></div></div>

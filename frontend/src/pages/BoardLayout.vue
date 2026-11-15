@@ -29,7 +29,6 @@ const selectedPosition = computed(() => draft.value?.boards.findIndex(b => b.id 
 const step = computed(() => assigned.value.findIndex(b => b.id === selectedId.value));
 const sessionId = ref<string>();
 const message = ref('');
-const advanced = ref(false);
 const sideNames: Record<Side, string> = { left: 'Left', right: 'Right' };
 const stripColors: Record<Side, string> = { left: '#ffad66', right: '#b18cff' };
 // On screen the calibration colors are brighter than the dim blue and amber the LEDs are sent.
@@ -301,7 +300,7 @@ onBeforeUnmount(() => { left = true; window.removeEventListener('pagehide', leav
         </div>
       </section>
 
-      <details class="settings-section layout-advanced" :open="advanced" @toggle="advanced = ($event.target as HTMLDetailsElement).open">
+      <details class="settings-section layout-advanced">
         <summary>Advanced settings</summary>
         <section v-if="editing && editing.left && editing.right" class="settings-section" aria-label="LED numbers">
           <h2>LED numbers · {{ editing.name }}</h2>

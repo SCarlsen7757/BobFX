@@ -45,7 +45,7 @@ public sealed class WLedRegistryService(InstallationSettingsStore settings, RgbA
         var mac = info?.Mac?.Replace(":", "").ToLowerInvariant() ?? "";
         if (info?.Brand != "WLED" || !InstallationSettingsStore.ValidMac(mac) || info.Leds is null)
             throw new ArgumentException("This endpoint did not identify as WLED.");
-        var device = new DeviceSettings(mac, info.Name, address, port, info.Leds.Count, info.Udpport);
+        var device = new DeviceSettings(mac, info.Name ?? address, address, port, info.Leds.Count, info.Udpport);
         await settings.UpdateAsync(s => s with { Devices = s.Devices.Where(d => d.Mac != mac).Append(device).ToList() }, token);
     });
 }

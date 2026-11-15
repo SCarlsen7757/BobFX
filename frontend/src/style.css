@@ -227,7 +227,6 @@ input[aria-invalid='true'] { border-color: var(--danger); }
 .live-status .failed { color: var(--danger); }
 .live-status .failed .live-dot { background: var(--danger); box-shadow: none; }
 .live-status .active strong { color: var(--pink); }
-.add-board { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .strip-editors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 40px; max-width: 760px; }
 fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 /* A floated legend sits below the section's divider line like an h2, instead of breaking the line. */
@@ -271,5 +270,4 @@ legend + * { clear: both; }
   .registered-device { align-items: flex-start; flex-wrap: wrap; }
   .registered-device .device-actions { flex-wrap: wrap; }
   .controller-editor .parameters > div { grid-template-columns: 1fr; gap: 8px; }
-  .add-board { align-items: stretch; flex-direction: column; }
 }

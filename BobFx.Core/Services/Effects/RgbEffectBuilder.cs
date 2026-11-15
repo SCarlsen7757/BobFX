@@ -31,28 +31,11 @@ public class RgbEffectBuilder
     }
 
     /// <summary>
-    /// Set the effect speed.
-    /// </summary>
-    public RgbEffectBuilder WithSpeed(TimeSpan speed)
-    {
-        this.speed = speed;
-        return this;
-    }
-
-    /// <summary>
     /// Set the effect speed in milliseconds.
     /// </summary>
     public RgbEffectBuilder WithSpeed(int milliseconds)
     {
-        return WithSpeed(TimeSpan.FromMilliseconds(milliseconds));
-    }
-
-    /// <summary>
-    /// Add a color using Vector3.
-    /// </summary>
-    public RgbEffectBuilder WithColor(Vector3 color)
-    {
-        colors.Add(color);
+        speed = TimeSpan.FromMilliseconds(milliseconds);
         return this;
     }
 
@@ -66,38 +49,11 @@ public class RgbEffectBuilder
     }
 
     /// <summary>
-    /// Add multiple colors.
-    /// </summary>
-    public RgbEffectBuilder WithColors(params string[] hexColors)
-    {
-        foreach (var hex in hexColors)
-            WithColor(hex);
-        return this;
-    }
-
-    /// <summary>
-    /// Set fade duration for fade effects.
-    /// </summary>
-    public RgbEffectBuilder WithFadeDuration(TimeSpan duration)
-    {
-        fadeDuration = duration;
-        return this;
-    }
-
-    /// <summary>
-    /// Set fade duration in seconds.
+    /// Set fade duration in seconds for fade effects.
     /// </summary>
     public RgbEffectBuilder WithFadeDuration(double seconds)
     {
-        return WithFadeDuration(TimeSpan.FromSeconds(seconds));
-    }
-
-    /// <summary>
-    /// Set breath duration for breathing effects.
-    /// </summary>
-    public RgbEffectBuilder WithBreathDuration(TimeSpan duration)
-    {
-        breathDuration = duration;
+        fadeDuration = TimeSpan.FromSeconds(seconds);
         return this;
     }
 
@@ -106,15 +62,7 @@ public class RgbEffectBuilder
     /// </summary>
     public RgbEffectBuilder WithBreathDuration(double seconds)
     {
-        return WithBreathDuration(TimeSpan.FromSeconds(seconds));
-    }
-
-    /// <summary>
-    /// Set minimum brightness for breathing effects (0.0 to 1.0).
-    /// </summary>
-    public RgbEffectBuilder WithMinBrightness(float brightness)
-    {
-        minBrightness = brightness;
+        breathDuration = TimeSpan.FromSeconds(seconds);
         return this;
     }
 
@@ -123,15 +71,7 @@ public class RgbEffectBuilder
     /// </summary>
     public RgbEffectBuilder WithMinBrightness(double brightness)
     {
-        return WithMinBrightness((float)brightness);
-    }
-
-    /// <summary>
-    /// Set maximum brightness for breathing effects (0.0 to 1.0).
-    /// </summary>
-    public RgbEffectBuilder WithMaxBrightness(float brightness)
-    {
-        maxBrightness = brightness;
+        minBrightness = (float)brightness;
         return this;
     }
 
@@ -140,7 +80,8 @@ public class RgbEffectBuilder
     /// </summary>
     public RgbEffectBuilder WithMaxBrightness(double brightness)
     {
-        return WithMaxBrightness((float)brightness);
+        maxBrightness = (float)brightness;
+        return this;
     }
 
     /// <summary>

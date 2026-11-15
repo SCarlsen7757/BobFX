@@ -47,7 +47,7 @@ watch(() => route.path, async () => {
     <header v-if="!immersive" class="app-header">
       <RouterLink to="/" class="brand" aria-label="BobFX home">BobFX</RouterLink>
       <nav aria-label="Main navigation">
-        <RouterLink to="/" aria-label="Game" title="Game" :class="{ active: route.path === '/' }"><Gamepad2 /></RouterLink>
+        <RouterLink to="/" aria-label="Game" title="Game"><Gamepad2 /></RouterLink>
         <RouterLink to="/countdown" aria-label="Countdown settings" title="Countdown settings"><Timer /></RouterLink>
         <RouterLink to="/lights" aria-label="Light show" title="Light show"><Sparkles /></RouterLink>
         <RouterLink to="/drgb" aria-label="LED effects" title="LED effects"><WandSparkles /></RouterLink>

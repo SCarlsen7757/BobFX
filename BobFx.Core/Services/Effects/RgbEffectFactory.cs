@@ -11,11 +11,6 @@ public interface IRgbEffectFactory
     IRgbEffect Create(RgbEffect effectType);
 
     /// <summary>
-    /// Check if an effect type is registered.
-    /// </summary>
-    bool IsRegistered(RgbEffect effectType);
-
-    /// <summary>
     /// Get all registered effect types.
     /// </summary>
     IEnumerable<RgbEffect> GetRegisteredEffects();
@@ -34,22 +29,7 @@ public class RgbEffectFactory : IRgbEffectFactory
         RegisterDefaults();
     }
 
-    /// <summary>
-    /// Register a factory function for an effect type.
-    /// </summary>
-    public void Register(RgbEffect effectType, Func<IRgbEffect> factory)
-    {
-        _factories[effectType] = factory;
-    }
-
-    /// <summary>
-    /// Register an effect using its default constructor.
-    /// </summary>
-    public void Register<T>() where T : IRgbEffect, new()
-    {
-        var effect = new T();
-        _factories[effect.EffectType] = () => new T();
-    }
+    private void Register<T>() where T : IRgbEffect, new() => _factories[new T().EffectType] = () => new T();
 
     public IRgbEffect Create(RgbEffect effectType)
     {
@@ -61,11 +41,6 @@ public class RgbEffectFactory : IRgbEffectFactory
         }
 
         throw new InvalidOperationException($"No factory registered for effect type: {effectType}");
-    }
-
-    public bool IsRegistered(RgbEffect effectType)
-    {
-        return _factories.ContainsKey(effectType);
     }
 
     public IEnumerable<RgbEffect> GetRegisteredEffects()

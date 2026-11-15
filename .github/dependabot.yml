@@ -4,7 +4,11 @@ updates:
     directory: /frontend
     labels: [chore, dependencies, web]
     ignore:
+      # The Node types move with the Node runtime in .nvmrc; newer major types can expose unavailable APIs.
       - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # vue-tsc loads the JavaScript compiler, which TypeScript 7 no longer ships. Move when vue-tsc supports it.
+      - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
     schedule:
       interval: weekly
@@ -12,7 +16,7 @@ updates:
   - package-ecosystem: npm
     directory: /e2e
     labels: [chore, dependencies, web]
-    # Keep the Node 24 type definitions until they are deliberately moved with the Node runtime; newer major types can expose unavailable APIs.
+    # The Node types move with the Node runtime in .nvmrc; newer major types can expose unavailable APIs.
     ignore:
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]

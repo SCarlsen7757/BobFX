@@ -1,5 +1,7 @@
 # Modernization review
 
+> **Historical.** This records the modernization of October 2026, when the frontend was still Blazor. The frontend has since been rewritten in Vue ([frontend architecture](frontend-architecture.md)); the Blazor pages, components and audio interop named here no longer exist, and the test counts are those of that time.
+
 Review baseline: `b369a2e1fcc522cc030bad7e01d40b827e4b0753`.
 This implementation updates the backend, Blazor frontend, deployment, and maintenance tooling together. The supported deployment is a Linux host on the WLED LAN with explicitly trusted operator networks. WLED idle playlists remain unchanged.
 
@@ -58,13 +60,13 @@ Local validation on 2026-10-13 passed 16 release-policy/category tests, actionli
 
 Issues #12/#19 remain open until a trusted stable-tag release validates the GHCR publication and downloadable evidence. Local registry validation and unit tests do not establish a production release. Merge the application follow-up and release follow-up PRs before tagging `v0.7.0`; retain the remaining Linux LAN hardware/audio rollout checks.
 
-## GitHub publication
-
 ## Remaining application follow-ups (2026-10-13)
 
 The effect start API now preserves descriptor speeds for omitted/null `speedMs` (#14). WLED page disposal cancels and awaits its manual scan, refresh loop, and dialog operations, including late JavaScript imports. Home reads one run-associated countdown snapshot rather than queueing detached event updates (#15). `BobFx.slnx` is the sole cross-platform solution; the standalone Visual Studio Docker project is retained.
 
 Validation: locked restore and analyzer build passed with zero warnings/errors; 68 .NET tests, four Node audio tests, seven Chromium tests, TypeScript checks, and both Compose validations passed. The new tests cover scan cancellation/unsubscription, late module cleanup, snapshot timestamps, rapid game transitions, and HTTP default/explicit speed behavior. Container release promotion and physical LAN acceptance remain separate evidence.
+
+## GitHub publication
 
 The maintainer ran the label and issue publication scripts. Public GitHub API reads on 2026-10-13 verified all 20 catalog labels, [tracker #6](https://github.com/SCarlsen7757/BobFX/issues/6), and findings #7–#21. The tracker links every finding.
 

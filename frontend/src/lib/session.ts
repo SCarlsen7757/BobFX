@@ -167,10 +167,12 @@ async function synchronizeBoards() {
     else await connection.invoke('UnsubscribeBoards');
   } while (requested !== boardWatchers > 0);
 }
-export function useGame() { return useQuery({ queryKey: ['game'], queryFn: async () => (await api<UiState>('/api/ui/state')).game, enabled: false }); }
-export function useEffect() { return useQuery({ queryKey: ['effect'], queryFn: async () => (await api<UiState>('/api/ui/state')).effect, enabled: false }); }
-export function useDiscovery() { return useQuery({ queryKey: ['discovery'], queryFn: async () => (await api<UiState>('/api/ui/state')).discovery, enabled: false }); }
-export function useInstallation() { return useQuery({ queryKey: ['installation'], queryFn: async () => (await api<UiState>('/api/ui/state')).installation, enabled: false }); }
+/** State the hub keeps up to date. It is never fetched by the query itself, which only exposes what `apply` stored. */
+function useHubState<T>(key: string) { return useQuery<Versioned<T>>({ queryKey: [key], enabled: false }); }
+export function useGame() { return useHubState<GameState>('game'); }
+export function useEffect() { return useHubState<EffectState>('effect'); }
+export function useDiscovery() { return useHubState<DiscoveryState>('discovery'); }
+export function useInstallation() { return useHubState<InstallationState>('installation'); }
 export async function command(path: string, body?: unknown, method = 'POST') {
   if (!connected.value) throw new Error('Reconnect before sending a command.');
   try { await api(path, method, body); await synchronize(); }

@@ -28,9 +28,8 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private const int MaxDevices = 256;
     private const int MaxResponseBytes = 64 * 1024;
-    public event Action<IReadOnlyList<WLedDevice>>? DevicesUpdated;
     public IReadOnlyList<WLedDevice> Devices => devices.Values.OrderBy(d => d.Name).ThenBy(d => d.Address.ToString()).ToArray();
-    public void Clear() { lock (mutation) { generation++; devices.Clear(); } Notify(); }
+    public void Clear() { lock (mutation) { generation++; devices.Clear(); } }
     public bool RemoveOffline(string mac)
     {
         lock (mutation)
@@ -40,17 +39,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
             generation++;
             devices.TryRemove(mac, out _);
         }
-        Notify();
         return true;
-    }
-    public void Remove(IPAddress address)
-    {
-        lock (mutation)
-        {
-            generation++;
-            foreach (var device in devices.Values.Where(d => d.Address.Equals(address))) devices.TryRemove(device.Mac, out _);
-        }
-        Notify();
     }
     public async Task ScanAsync(CancellationToken cancellationToken = default)
     {
@@ -67,7 +56,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
             {
                 logger.LogDebug(ex, "mDNS resolution failed");
                 Volatile.Write(ref lastError, "mDNS resolution failed");
-                if (settings is null || settings.Read().Devices.Count == 0) { AgeDevices(scanGeneration); Notify(); throw; }
+                if (settings is null || settings.Read().Devices.Count == 0) { AgeDevices(scanGeneration); throw; }
                 hosts = [];
             }
             if (settings is not null)
@@ -96,12 +85,12 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                             buffer.Write(chunk, 0, read);
                         }
                         var info = JsonSerializer.Deserialize<Models.WLED.Info>(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), JsonOptions);
-                        if (info is null || info.Brand != "WLED" || !ValidMac(info.Mac)) return;
-                        var key = info.Mac.Replace(":", "").ToLowerInvariant();
+                        if (info is not { Brand: "WLED", Mac: { } mac } || !ValidMac(mac)) return;
+                        var key = mac.Replace(":", "").ToLowerInvariant();
                         lock (mutation)
                         {
                             if (generation != scanGeneration || (!devices.ContainsKey(key) && devices.Count >= MaxDevices)) return;
-                            devices[key] = new(address, host.Port, info.Name, host.HostName, key, info.Ver, DateTime.UtcNow, true, info);
+                            devices[key] = new(address, host.Port, info.Name ?? host.HostName, host.HostName, key, info.Ver ?? "", DateTime.UtcNow, true, info);
                         }
                     }
                     catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
@@ -115,7 +104,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                 DeviceSettings Refresh(DeviceSettings saved, InstallationSettings s)
                 {
                     if (!online.TryGetValue(saved.Mac, out var found)) return saved;
-                    var count = found.Info!.Leds.Count;
+                    var count = found.Info!.Leds!.Count;
                     if (s.Boards.Any(b => b.DeviceMac == saved.Mac && !BoardMapping.Fits(b, count))) count = saved.LedCount;
                     return saved with { Address = found.Address.ToString(), HttpPort = found.Port, LedCount = count, UdpPort = found.Info.Udpport };
                 }
@@ -124,7 +113,6 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                     await settings.UpdateAsync(s => s with { Devices = s.Devices.Select(d => Refresh(d, s)).ToList() }, cancellationToken);
             }
             Volatile.Write(ref lastError, null);
-            Notify();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex) { Volatile.Write(ref lastError, "WLED discovery scan failed"); logger.LogWarning(ex, "WLED discovery failed"); throw; }
@@ -160,13 +148,6 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
     {
         var normalized = mac?.Replace(":", "");
         return normalized is { Length: 12 } && normalized.All(Uri.IsHexDigit);
-    }
-    private void Notify()
-    {
-        var snapshot = Devices;
-        if (DevicesUpdated is null) return;
-        foreach (Action<IReadOnlyList<WLedDevice>> subscriber in DevicesUpdated.GetInvocationList())
-            try { subscriber(snapshot); } catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { logger.LogDebug(ex, "Discovery subscriber failed"); }
     }
     private async Task TryScanAsync(CancellationToken token)
     {

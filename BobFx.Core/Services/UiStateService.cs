@@ -125,11 +125,7 @@ public sealed class UiStateService(
                         await hub.Clients.All.SendAsync("SoundRequested", sound, stoppingToken);
                     if (!previewClients.IsEmpty)
                     {
-                        var pixels = rgb.GetSnapshot().Select(pixel =>
-                        {
-                            var (r, g, b) = ColorHelper.ToRgbBytes(pixel);
-                            return $"#{r:X2}{g:X2}{b:X2}";
-                        }).ToArray();
+                        var pixels = rgb.GetSnapshot().Select(ColorHelper.RgbToHex).ToArray();
                         await hub.Clients.Group(UiHub.PreviewGroup).SendAsync("LedPreviewChanged", pixels, stoppingToken);
                     }
                 }

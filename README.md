@@ -6,7 +6,7 @@ When realtime output stops, WLED's realtime lease expires and the devices resume
 
 ## Run locally
 
-Install Node.js 26 and the exact .NET SDK selected by [global.json](global.json), then run. SDK roll-forward is disabled. Update the SDK, Docker SDK image, and affected package locks together. The .NET build installs locked frontend dependencies and builds the Vue assets automatically:
+Install the Node.js version in [.nvmrc](.nvmrc) and the exact .NET SDK selected by [global.json](global.json), then run. SDK roll-forward is disabled. Update the SDK, Docker SDK image, and affected package locks together. The .NET build installs locked frontend dependencies and builds the Vue assets automatically:
 
 ```sh
 dotnet restore BobFx.slnx --locked-mode
@@ -80,7 +80,7 @@ Configuration uses normal ASP.NET Core precedence: appsettings, environment-spec
 
 | Environment key | Default / constraint |
 | --- | --- |
-| `WLed__Led__LedCount` | 30; 1–490 LEDs per realtime frame |
+| `WLed__Led__LedCount` | 30; 1–490 LEDs of the virtual strip that manual LED effects are drawn on. Each controller's own LED count comes from WLED |
 | `WLed__Discovery__UpdateIntervalSeconds` | 30; 5–3600 seconds |
 | `Countdown__DurationSeconds` | 720; 1–86400 seconds |
 | `Countdown__DeviationSeconds` | 120; nonnegative and below duration |
@@ -88,9 +88,10 @@ Configuration uses normal ASP.NET Core precedence: appsettings, environment-spec
 | `Security__AllowedClientNetworks__0` | Explicit trusted CIDR required in Production |
 | `ASPNETCORE_URLS` | Production Compose sets the required LAN bind address |
 | `Settings__DataPath` | Persistent installation/credential directory; Compose uses `/app/data` |
+| `BusyBar__SecretsPath` | `/run/secrets`; directory holding the BUSY Bar token files named by each controller's secret name |
 | `Logging__LogLevel__Default` | Information |
 
-Production Compose configures the bind address, allowed clients and persistent data path. WLED devices, LED counts, board mappings, idle sync and controllers are configured through the web interface. Outside Compose, use hierarchical application keys directly.
+Production Compose configures the bind address, allowed clients and persistent data path. It also reads the optional `WLED_DISCOVERY_INTERVAL_SECONDS`, `COUNTDOWN_DURATION_SECONDS` and `COUNTDOWN_DEVIATION_SECONDS` from `.env` and passes them on as the keys above; a countdown saved on the Countdown page takes precedence over both. WLED devices, LED counts, board mappings, idle sync and controllers are configured through the web interface. Outside Compose, use hierarchical application keys directly.
 
 Breaking migration changes:
 
@@ -123,7 +124,7 @@ Replace `bobfx.local` with a configured allowed hostname or the host LAN IP.
 - **403 / rejected control:** check the client's actual source address against the trusted CIDRs, hostnames against `AllowedHosts`, and use the application's own origin.
 - **No WLED devices:** check UDP 5353 multicast, same-LAN connectivity, Wi-Fi client isolation, and device HTTP reachability.
 - **Discovery works but LEDs do not:** verify realtime UDP is enabled, the device is selected in BobFX, its reported UDP port and LED count are correct, and its board mapping is valid. Discovery and realtime output are independent.
-- **One output goes black in realtime mode:** verify both physical WLED outputs have the correct start/count in WLED, scan again to refresh the reported LED total, and use Board layout calibration to check the two-strip mapping. Advanced settings provides strip swapping and manual edge ranges. Use Locate and WLED Peek to check which indices receive frames.
+- **One output goes black in realtime mode:** verify both physical WLED outputs have the correct start/count in WLED, scan again to refresh the reported LED total, and use **Check on the boards** in Board layout to check the two-strip mapping. The board's strip buttons swap and reverse the strips, and Advanced settings holds each strip's first LED and LED count. Use Locate and WLED Peek to check which indices receive frames.
 - **Unhealthy:** inspect logs and `docker inspect` health output. Confirm the bind IP exists on the host, is permitted by the CIDR, and has an allowed Host header.
 - **No sound:** tap the speaker icon in that browser and check mute/autoplay restrictions. Reenable after a visible playback error to retry.
 - **Restore changes unexpectedly:** use `--locked-mode`; deliberate dependency updates must regenerate and commit locks.
@@ -136,11 +137,11 @@ The effect start API preserves the selected effect's descriptor default when `sp
 
 See the [modernization review](docs/modernization-review.md) for findings, validation evidence, and remaining rollout checks.
 
-Pull requests and main pushes run locked restore, Release build with analyzers, .NET and JavaScript tests, Playwright browser tests, NuGet advisory checks, repository secret/configuration scans, and hardened image smoke tests for amd64 and arm64. CodeQL runs on pull requests/main and weekly. Dependabot checks NuGet, browser test npm dependencies, Docker images, and pinned GitHub Actions weekly.
+Pull requests and main pushes run locked restore, Release build with analyzers, .NET and JavaScript tests, Playwright browser tests, NuGet advisory checks, repository secret/configuration scans, and hardened image smoke tests for amd64 and arm64. CodeQL runs on pull requests/main and weekly. Dependabot checks NuGet, the frontend and browser test npm dependencies, Docker images, and pinned GitHub Actions weekly.
 
 Publishing is explicit: a trusted maintainer pushes a stable `vMAJOR.MINOR.PATCH` tag. The release waits for quality and image checks, publishes a versioned multi-architecture GHCR image with SBOM/provenance, and records the immutable production digest in release notes. Main pushes no longer automatically publish `latest` or create releases.
 
-Versions come directly from the stable tag: `v0.7.0` produces `ghcr.io/scarlsen7757/bobfx:0.7.0`, assembly version `0.7.0.0`, and OCI version `0.7.0`. The next planned release is `v0.7.0`; push it only after the application and release follow-ups merge and checks pass.
+Versions come directly from the stable tag: `v0.7.0` produces `ghcr.io/scarlsen7757/bobfx:0.7.0`, assembly version `0.7.0.0`, and OCI version `0.7.0`. Push a release tag only after the checks have passed on main.
 
 The release builds a unique candidate once, resolves its exact amd64/arm64 digests, scans each complete image, and smoke-tests the hardened runtime and extracted assembly version. It verifies OCI version/source revision and both platforms' SBOM/provenance before promoting the complete tested index to the stable tag. Promotion does not rebuild. The final stable digest must equal the verified candidate digest; release assets include reports, policy summaries, attestations, assembly versions, and health logs.
 

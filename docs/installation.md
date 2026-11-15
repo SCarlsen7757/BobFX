@@ -1,6 +1,6 @@
 # Board installation and remote controllers
 
-Next-version tracker: [#34](https://github.com/SCarlsen7757/BobFX/issues/34), with configuration #35, WLED #36, layout #37, scenes #38, BUSY Bar #39 and hardware acceptance #40. These changes must be built/published before deploying them; the existing v0.7.0 image does not contain them.
+Next-version tracker: [#34](https://github.com/SCarlsen7757/BobFX/issues/34), with configuration #35, WLED #36, layout #37, scenes #38, BUSY Bar #39 and hardware acceptance #40. They are part of v0.8.0 and later; the v0.7.0 image does not contain them.
 
 ## Devices and layout
 

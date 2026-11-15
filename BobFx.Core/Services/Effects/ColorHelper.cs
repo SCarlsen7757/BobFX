@@ -40,14 +40,6 @@ public static class ColorHelper
     }
 
     /// <summary>
-    /// Convert RGB bytes to normalized vector.
-    /// </summary>
-    public static Vector3 FromRgb(byte r, byte g, byte b)
-    {
-        return new Vector3(r / 255f, g / 255f, b / 255f);
-    }
-
-    /// <summary>
     /// Convert normalized RGB vector to bytes.
     /// </summary>
     public static (byte r, byte g, byte b) ToRgbBytes(Vector3 color)

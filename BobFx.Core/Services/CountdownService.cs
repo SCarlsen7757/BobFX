@@ -13,11 +13,8 @@ public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<
     private long startedAt;
     private TimeSpan phaseDuration;
     private TimeSpan gameDuration;
-    private long lastNotifiedSecond = -1;
-    public event Action? OnTick;
-    public event Action<TimeSpan>? OnStartOfEvent;
+    /// <summary>Raised when a running game ends, by itself or because it was stopped.</summary>
     public event Action? OnEndOfEvent;
-    public event Action<TimeSpan>? OnPreCountdown;
     public CountdownSnapshot Snapshot => Volatile.Read(ref snapshot);
     public bool IsRunning => Snapshot.IsRunning;
     public bool IsPreCountdownRunning => Snapshot.IsPreCountdownRunning;
@@ -44,9 +41,6 @@ public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<
         phaseDuration = preActive ? preDuration : gameDuration;
         Volatile.Write(ref snapshot, new(!preActive, preActive, preActive ? TimeSpan.Zero : gameDuration,
             preActive ? preDuration : TimeSpan.Zero, Snapshot.RunId + 1, preActive ? null : clock.GetUtcNow()));
-        lastNotifiedSecond = -1;
-        if (preActive) Notify(OnPreCountdown, preDuration); else Notify(OnStartOfEvent, gameDuration);
-        Notify(OnTick);
     }
 
     internal void Advance()
@@ -66,20 +60,15 @@ public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<
                 Volatile.Write(ref snapshot, state with { IsPreCountdownRunning = false, IsRunning = true,
                     PreCountdownRemaining = TimeSpan.Zero, Remaining = TimeSpan.FromTicks(Math.Max(0, phaseDuration.Ticks)),
                     StartedUtc = clock.GetUtcNow() - overshoot });
-                lastNotifiedSecond = -1;
-                Notify(OnStartOfEvent, gameDuration);
             }
             else
             {
                 Volatile.Write(ref snapshot, state with { IsRunning = false, Remaining = TimeSpan.Zero, EndedUtc = clock.GetUtcNow() + remaining });
                 Notify(OnEndOfEvent);
             }
-            Notify(OnTick);
             return;
         }
         Volatile.Write(ref snapshot, state.IsPreCountdownRunning ? state with { PreCountdownRemaining = remaining } : state with { Remaining = remaining });
-        var second = (long)Math.Ceiling(remaining.TotalSeconds);
-        if (second != lastNotifiedSecond) { lastNotifiedSecond = second; Notify(OnTick); }
     }
     internal void Stop()
     {
@@ -87,18 +76,11 @@ public sealed class CountdownService(ILogger<CountdownService> logger, IOptions<
         Volatile.Write(ref snapshot, old with { IsRunning = false, IsPreCountdownRunning = false, Remaining = TimeSpan.Zero,
             PreCountdownRemaining = TimeSpan.Zero, EndedUtc = old.IsRunning ? clock.GetUtcNow() : old.EndedUtc });
         if (old.IsRunning) Notify(OnEndOfEvent);
-        Notify(OnTick);
     }
     private void Notify(Action? handlers)
     {
         if (handlers is null) return;
         foreach (Action handler in handlers.GetInvocationList())
             try { handler(); } catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { logger.LogWarning(ex, "Countdown subscriber failed"); }
-    }
-    private void Notify(Action<TimeSpan>? handlers, TimeSpan value)
-    {
-        if (handlers is null) return;
-        foreach (Action<TimeSpan> handler in handlers.GetInvocationList())
-            try { handler(value); } catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { logger.LogWarning(ex, "Countdown subscriber failed"); }
     }
 }

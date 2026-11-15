@@ -57,7 +57,6 @@ public sealed class RgbAndSoundControlService(
         }
         finally { commands.Release(); }
     }
-    public double PhaseElapsedSeconds => clock.GetElapsedTime(phaseStarted).TotalSeconds;
     public double PreparationSeconds { get; private set; } = CountdownService.PreCountdownDuration.TotalSeconds;
     public (GamePhase Phase, double Elapsed, double Preparation) GetSceneFrame()
     {

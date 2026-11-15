@@ -18,7 +18,4 @@ public class ValidationResult
         IsValid = false;
         Errors.Add(error);
     }
-
-    public override string ToString() =>
-        IsValid ? "Valid" : $"Invalid: {string.Join(", ", Errors)}";
 }
