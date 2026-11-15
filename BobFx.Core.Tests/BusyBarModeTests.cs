@@ -7,7 +7,6 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
-using Xunit;
 
 namespace BobFx.Core.Tests;
 
@@ -35,11 +34,11 @@ public sealed class BusyBarModeTests
         var gate = new BusyBarModeGate(); var sent = 0;
         Task Send() { sent++; return Task.CompletedTask; }
         Assert.False(await gate.InAppsAsync(Send, CancellationToken.None));
-        await gate.SetAsync(BusyBarSelector.Apps);
+        await gate.SetAsync(BusyBarSelector.Apps, TestContext.Current.CancellationToken);
         Assert.True(await gate.InAppsAsync(Send, CancellationToken.None));
         foreach (var position in new[] { BusyBarSelector.Busy, BusyBarSelector.Custom, BusyBarSelector.Off, BusyBarSelector.Settings, BusyBarSelector.Unknown })
         {
-            await gate.SetAsync(position);
+            await gate.SetAsync(position, TestContext.Current.CancellationToken);
             Assert.False(await gate.InAppsAsync(Send, CancellationToken.None));
         }
         Assert.Equal(1, sent);
@@ -56,8 +55,8 @@ public sealed class BusyBarModeTests
         var settings = new InstallationSettingsStore(config);
         var credentials = new ControllerCredentials(settings);
         var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30", Enabled = true, RemoteEnabled = remoteEnabled };
-        await settings.SaveAsync(new() { Controllers = [bar] });
-        await credentials.SetAsync(bar.Id, Guid.NewGuid().ToString("N"));
+        await settings.SaveAsync(new() { Controllers = [bar] }, TestContext.Current.CancellationToken);
+        await credentials.SetAsync(bar.Id, Guid.NewGuid().ToString("N"), TestContext.Current.CancellationToken);
         var source = new StatusSource(); var clients = new Clients { Api = api };
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), TimeProvider.System);
         var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), TimeProvider.System);
@@ -67,7 +66,7 @@ public sealed class BusyBarModeTests
         try
         {
             await Eventually(() => source.Connected);
-            await Task.Delay(150);
+            await Task.Delay(150, TestContext.Current.CancellationToken);
             Assert.Empty(clients.DisplayRequests);
             Assert.Empty(clients.AssetRequests);
             // Buttons outside APPS must leave the native device's controls alone.
@@ -76,7 +75,7 @@ public sealed class BusyBarModeTests
             await Eventually(() => clients.DisplayRequests.Contains(HttpMethod.Post));
             Assert.Equal(5, clients.AssetRequests.Count);
             var posts = clients.DisplayRequests.Count(m => m == HttpMethod.Post);
-            await Task.Delay(350);
+            await Task.Delay(350, TestContext.Current.CancellationToken);
             Assert.InRange(clients.DisplayRequests.Count(m => m == HttpMethod.Post) - posts, 0, 1);
             Assert.Equal(5, clients.AssetRequests.Count); // Animation frames never trigger uploads.
             if (failedHeartbeat)
@@ -91,7 +90,7 @@ public sealed class BusyBarModeTests
             source.Messages.Writer.TryWrite(Selector(1));
             await Eventually(() => service.Statuses[bar.Id].Selector == BusyBarSelector.Custom);
             var paused = clients.DisplayRequests.Count;
-            await Task.Delay(200);
+            await Task.Delay(200, TestContext.Current.CancellationToken);
             Assert.Equal(paused, clients.DisplayRequests.Count);
             Assert.Equal(5, clients.AssetRequests.Count);
             source.Messages.Writer.TryWrite(Selector(3));
@@ -106,11 +105,11 @@ public sealed class BusyBarModeTests
                 Assert.Contains("-countdown3-", clients.Paths.Last());
                 // The bar counts down by itself: no command per second while the clip plays.
                 var duringCountdown = clients.DisplayRequests.Count;
-                await Task.Delay(1300);
+                await Task.Delay(1300, TestContext.Current.CancellationToken);
                 Assert.Equal(duringCountdown, clients.DisplayRequests.Count);
                 // BACK is ignored; pressing the wheel (OK, the protobuf default button) stops the game.
                 source.Messages.Writer.TryWrite([0x12, 6, 0x5a, 4, 0x0a, 2, 8, 1]);
-                await Task.Delay(400);
+                await Task.Delay(400, TestContext.Current.CancellationToken);
                 Assert.Equal(GamePhase.PreCountdown, control.Phase);
                 source.Messages.Writer.TryWrite([0x12, 4, 0x5a, 2, 0x0a, 0]);
                 await Eventually(() => control.Phase == GamePhase.Idle);
@@ -120,7 +119,7 @@ public sealed class BusyBarModeTests
             source.Messages.Writer.Complete();
             await Eventually(() => service.Statuses[bar.Id].Selector == BusyBarSelector.Unknown);
             var disconnected = clients.DisplayRequests.Count;
-            await Task.Delay(200);
+            await Task.Delay(200, TestContext.Current.CancellationToken);
             Assert.Equal(disconnected, clients.DisplayRequests.Count);
             Assert.DoesNotContain(HttpMethod.Delete, clients.DisplayRequests); // No gap exposing the clock.
         }
@@ -136,8 +135,8 @@ public sealed class BusyBarModeTests
         var settings = new InstallationSettingsStore(config);
         var credentials = new ControllerCredentials(settings);
         var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30", Enabled = true, RemoteEnabled = true };
-        await settings.SaveAsync(new() { Controllers = [bar] });
-        await credentials.SetAsync(bar.Id, Guid.NewGuid().ToString("N"));
+        await settings.SaveAsync(new() { Controllers = [bar] }, TestContext.Current.CancellationToken);
+        await credentials.SetAsync(bar.Id, Guid.NewGuid().ToString("N"), TestContext.Current.CancellationToken);
         var source = new StatusSource(); var clients = new Clients { Api = api };
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), TimeProvider.System);
         var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), TimeProvider.System);
@@ -147,7 +146,7 @@ public sealed class BusyBarModeTests
         try
         {
             await Eventually(() => service.Statuses.TryGetValue(bar.Id, out var status) && status.ApiVersion == api);
-            await Task.Delay(150);
+            await Task.Delay(150, TestContext.Current.CancellationToken);
             var paused = service.Statuses[bar.Id];
             Assert.Contains("output paused", paused.State);
             Assert.False(paused.InputSupported);

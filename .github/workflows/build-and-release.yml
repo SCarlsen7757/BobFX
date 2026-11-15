@@ -36,7 +36,7 @@ jobs:
       - name: Build with analyzers
         run: dotnet build BobFx.slnx --configuration Release --no-restore --warnaserror
       - name: Test
-        run: dotnet test BobFx.slnx --configuration Release --no-build --logger trx
+        run: dotnet test --solution BobFx.slnx --configuration Release --no-build --report-xunit-trx
       - name: Install browser test dependencies
         working-directory: e2e
         run: npm ci

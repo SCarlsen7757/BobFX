@@ -3,7 +3,6 @@ using Microsoft.Extensions.Configuration;
 using BobFx.Core.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using Xunit;
 namespace BobFx.Core.Tests;
 
 public sealed class DiscoveryTests
@@ -14,16 +13,16 @@ public sealed class DiscoveryTests
         var path = TestPaths.NewDataPath();
         var store = new InstallationSettingsStore(new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["Settings:DataPath"] = path }).Build());
-        await store.SaveAsync(new() { Devices = [new("aabbccddeeff", "lamp", "192.168.1.5", 80, 16, 21324)] });
+        await store.SaveAsync(new() { Devices = [new("aabbccddeeff", "lamp", "192.168.1.5", 80, 16, 21324)] }, TestContext.Current.CancellationToken);
         var source = new Source { Advertisements = [new("192.168.1.6", 81, "lamp")] };
         var clients = new Factory(new Handler(request => request.RequestUri!.Host == "192.168.1.5" ? new(HttpStatusCode.NotFound) :
             new(HttpStatusCode.OK) { Content = new StringContent("""{"brand":"WLED","name":"lamp","ver":"test","mac":"aabbccddeeff","leds":{"count":20},"udpport":21324}""") }));
         using var service = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, Options.Create(new WLedOptions()), clients, source, store);
-        await service.ScanAsync();
+        await service.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Equal("192.168.1.6", store.Snapshot.Devices.Single().Address);
         Assert.Equal(20, store.Snapshot.Devices.Single().LedCount);
         source.BeforeResolve = _ => throw new IOException("mDNS unavailable");
-        await service.ScanAsync();
+        await service.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Single(service.Devices, d => d.IsOnline);
         var reloaded = new InstallationSettingsStore(new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["Settings:DataPath"] = path }).Build());
@@ -34,9 +33,9 @@ public sealed class DiscoveryTests
     {
         var source = new Source { Advertisements = [new("192.168.1.5", 80, "lamp")] };
         using var service = Create(source, _ => Info());
-        await service.ScanAsync();
+        await service.ScanAsync(TestContext.Current.CancellationToken);
         source.Advertisements = [new("192.168.1.6", 81, "lamp")];
-        await service.ScanAsync();
+        await service.ScanAsync(TestContext.Current.CancellationToken);
         var device = Assert.Single(service.Devices);
         Assert.Equal(IPAddress.Parse("192.168.1.6"), device.Address);
         Assert.Equal(81, device.Port);
@@ -50,9 +49,9 @@ public sealed class DiscoveryTests
         var source = new Source { Advertisements = [new("192.168.1.5", 80, "lamp")], BeforeResolve = async token =>
             { entered.SetResult(); await release.Task.WaitAsync(token); } };
         using var service = Create(source, _ => Info());
-        var pending = service.ScanAsync();
+        var pending = service.ScanAsync(TestContext.Current.CancellationToken);
         await entered.Task;
-        await service.ScanAsync();
+        await service.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Equal(1, source.Calls);
         service.Clear();
         release.SetResult();
@@ -70,7 +69,7 @@ public sealed class DiscoveryTests
         var source = new Source { Advertisements = [new(address, port, "untrusted")] };
         var requests = 0;
         using var service = Create(source, _ => { requests++; return Info(); });
-        await service.ScanAsync();
+        await service.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Equal(0, requests);
         Assert.Empty(service.Devices);
     }
@@ -80,10 +79,10 @@ public sealed class DiscoveryTests
     {
         var source = new Source { Advertisements = [new("192.168.1.5", 80, "lamp")] };
         using var service = Create(source, _ => new(HttpStatusCode.OK) { Content = new StringContent(new string('x', 70 * 1024)) });
-        await service.ScanAsync();
+        await service.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Empty(service.Devices);
         using var redirect = Create(source, _ => new(HttpStatusCode.Redirect) { Headers = { Location = new Uri("http://8.8.8.8/") } });
-        await redirect.ScanAsync();
+        await redirect.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Empty(redirect.Devices);
     }
 
@@ -100,7 +99,7 @@ public sealed class DiscoveryTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
         source.BeforeResolve = null;
         source.Advertisements = [new("192.168.1.5", 80, "lamp")];
-        await service.ScanAsync();
+        await service.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Single(service.Devices);
     }
 
@@ -109,10 +108,10 @@ public sealed class DiscoveryTests
     {
         var source = new Source { Advertisements = [new("192.168.1.5", 80, "lamp")] };
         using var malformed = Create(source, _ => new(HttpStatusCode.OK) { Content = new StringContent("{invalid") });
-        await malformed.ScanAsync();
+        await malformed.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Empty(malformed.Devices);
         using var unexpected = Create(source, _ => throw new InvalidOperationException("Unexpected handler failure"));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => unexpected.ScanAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => unexpected.ScanAsync(TestContext.Current.CancellationToken));
         Assert.NotNull(unexpected.LastError);
     }
 
@@ -121,11 +120,11 @@ public sealed class DiscoveryTests
     {
         var source = new Source { BeforeResolve = _ => throw new InvalidOperationException("test scan failure") };
         using var service = Create(source, _ => Info());
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ScanAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ScanAsync(TestContext.Current.CancellationToken));
         Assert.NotNull(service.LastError);
         Assert.NotNull(service.LastScanUtc);
         source.BeforeResolve = null;
-        await service.ScanAsync();
+        await service.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Null(service.LastError);
     }
 
@@ -143,14 +142,14 @@ public sealed class DiscoveryTests
         };
         using var service = Create(source, _ => Info());
         await service.StartAsync(CancellationToken.None);
-        await first.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await first.Task.WaitAsync(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken);
         service.RequestScan(); service.RequestScan();
         Assert.True(service.IsScanning); Assert.Equal(1, source.Calls);
         release.SetResult();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
         while (service.IsScanning) await Task.Delay(10, deadline.Token);
         service.RequestScan();
-        await second.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await second.Task.WaitAsync(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken);
         Assert.Equal(2, source.Calls);
         await service.StopAsync(CancellationToken.None);
         Assert.False(service.IsScanning);
@@ -161,7 +160,7 @@ public sealed class DiscoveryTests
     {
         var source = new Source { Advertisements = [new("192.168.1.5", 80, "lamp")] };
         using var service = Create(source, _ => Info());
-        await service.ScanAsync();
+        await service.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Throws<InvalidOperationException>(() => service.RemoveOffline("aabbccddeeff"));
         Assert.Single(service.Devices);
         Assert.False(service.RemoveOffline("missing"));

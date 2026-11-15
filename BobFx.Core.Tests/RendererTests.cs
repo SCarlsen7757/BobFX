@@ -4,7 +4,6 @@ using BobFx.Core.Services.Effects;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
-using Xunit;
 namespace BobFx.Core.Tests;
 
 public sealed class RendererTests

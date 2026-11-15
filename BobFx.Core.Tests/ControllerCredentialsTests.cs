@@ -3,7 +3,6 @@ using BobFx.Core.Services.Effects;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using Xunit;
 
 namespace BobFx.Core.Tests;
 
@@ -16,23 +15,23 @@ public sealed class ControllerCredentialsTests
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Settings:DataPath"] = path }).Build();
         var settings = new InstallationSettingsStore(config);
         var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30" };
-        await settings.SaveAsync(new() { Controllers = [bar] });
+        await settings.SaveAsync(new() { Controllers = [bar] }, TestContext.Current.CancellationToken);
         var credentials = new ControllerCredentials(settings);
         var password = Guid.NewGuid().ToString("N");
         Assert.False(credentials.HasPassword(bar.Id));
-        await credentials.SetAsync(bar.Id, password);
+        await credentials.SetAsync(bar.Id, password, TestContext.Current.CancellationToken);
         Assert.True(credentials.HasPassword(bar.Id));
         Assert.Equal(1, credentials.Revision(bar.Id));
-        Assert.DoesNotContain(password, await File.ReadAllTextAsync(Path.Combine(path, "settings.json")));
+        Assert.DoesNotContain(password, await File.ReadAllTextAsync(Path.Combine(path, "settings.json"), TestContext.Current.CancellationToken));
         var protectedFile = Assert.Single(Directory.GetFiles(Path.Combine(path, "credentials"), "*.protected"));
-        Assert.DoesNotContain(password, await File.ReadAllTextAsync(protectedFile));
+        Assert.DoesNotContain(password, await File.ReadAllTextAsync(protectedFile, TestContext.Current.CancellationToken));
         var reopened = new ControllerCredentials(new InstallationSettingsStore(config));
         Assert.Equal(password, reopened.Read(bar.Id));
         Assert.Throws<FileNotFoundException>(() => reopened.Read("other-controller"));
-        await credentials.SetAsync(bar.Id, password + "-replacement");
+        await credentials.SetAsync(bar.Id, password + "-replacement", TestContext.Current.CancellationToken);
         Assert.Equal(2, credentials.Revision(bar.Id));
         Assert.Equal(password + "-replacement", credentials.Read(bar.Id));
-        await Assert.ThrowsAsync<ArgumentException>(() => credentials.SetAsync(bar.Id, "bad\r\nheader"));
+        await Assert.ThrowsAsync<ArgumentException>(() => credentials.SetAsync(bar.Id, "bad\r\nheader", TestContext.Current.CancellationToken));
         Assert.Equal(password + "-replacement", credentials.Read(bar.Id));
     }
     [Fact]
@@ -44,13 +43,13 @@ public sealed class ControllerCredentialsTests
         var credentials = new ControllerCredentials(settings);
         var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30" };
         var password = Guid.NewGuid().ToString("N");
-        await credentials.SetAsync(bar.Id, password);
+        await credentials.SetAsync(bar.Id, password, TestContext.Current.CancellationToken);
         var clients = new TestClients(password);
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), TimeProvider.System);
         var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), TimeProvider.System);
         using var control = new RgbAndSoundControlService(countdown, rgb, new SoundService(NullLogger<SoundService>.Instance), TimeProvider.System, NullLogger<RgbAndSoundControlService>.Instance);
         using var service = new BusyBarService(settings, control, clients, config, TimeProvider.System, credentials);
-        Assert.Equal("27.5.0", await service.TestConnectionAsync(bar));
+        Assert.Equal("27.5.0", await service.TestConnectionAsync(bar, token: TestContext.Current.CancellationToken));
         Assert.Equal(1, clients.Calls);
         Assert.Equal(GamePhase.Idle, control.Phase);
         Assert.False(bar.Enabled);
@@ -77,9 +76,9 @@ public sealed class ControllerCredentialsTests
         var settings = new InstallationSettingsStore(config);
         var credentials = new ControllerCredentials(settings);
         var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30", Enabled = true };
-        await settings.SaveAsync(new() { Controllers = [bar] });
+        await settings.SaveAsync(new() { Controllers = [bar] }, TestContext.Current.CancellationToken);
         var first = Guid.NewGuid().ToString("N"); var replacement = Guid.NewGuid().ToString("N");
-        await credentials.SetAsync(bar.Id, first);
+        await credentials.SetAsync(bar.Id, first, TestContext.Current.CancellationToken);
         var clients = new ReconnectClients();
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), TimeProvider.System);
         var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), TimeProvider.System);
@@ -90,7 +89,7 @@ public sealed class ControllerCredentialsTests
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             while (!clients.Passwords.Contains(first)) await Task.Delay(10, deadline.Token);
-            await credentials.SetAsync(bar.Id, replacement);
+            await credentials.SetAsync(bar.Id, replacement, TestContext.Current.CancellationToken);
             while (!clients.Passwords.Contains(replacement)) await Task.Delay(10, deadline.Token);
             Assert.Equal(GamePhase.Idle, control.Phase);
         }

@@ -2,7 +2,6 @@ using BobFx.Core.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
-using Xunit;
 
 namespace BobFx.Core.Tests;
 

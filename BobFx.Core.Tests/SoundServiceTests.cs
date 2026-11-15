@@ -1,6 +1,5 @@
 using BobFx.Core.Services;
 using Microsoft.Extensions.Logging.Abstractions;
-using Xunit;
 
 namespace BobFx.Core.Tests;
 

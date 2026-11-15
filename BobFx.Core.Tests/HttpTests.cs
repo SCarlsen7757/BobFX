@@ -10,7 +10,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
-using Xunit;
 
 namespace BobFx.Core.Tests;
 
@@ -22,19 +21,19 @@ public sealed class HttpTests
         await using var app = new TestApp();
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
         var settings = new InstallationSettings { Controllers = [new BusyBarSettings { Id = "remote", Address = "192.168.1.30" }] };
-        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", settings)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", settings, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
         var password = Guid.NewGuid().ToString("N");
         var endpoint = "/api/installation/controllers/remote/password";
-        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync(endpoint, new { password })).StatusCode);
-        Assert.Equal("{\"hasPassword\":true}", await client.GetStringAsync(endpoint));
-        Assert.DoesNotContain(password, await client.GetStringAsync("/api/installation"));
-        Assert.DoesNotContain(password, await client.GetStringAsync("/controllers"));
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync(endpoint, new { password = "bad\r\nheader" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync(endpoint, new { password }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal("{\"hasPassword\":true}", await client.GetStringAsync(endpoint, TestContext.Current.CancellationToken));
+        Assert.DoesNotContain(password, await client.GetStringAsync("/api/installation", TestContext.Current.CancellationToken));
+        Assert.DoesNotContain(password, await client.GetStringAsync("/controllers", TestContext.Current.CancellationToken));
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync(endpoint, new { password = "bad\r\nheader" }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
         using var foreign = new HttpRequestMessage(HttpMethod.Put, endpoint) { Content = JsonContent.Create(new { password = "replacement" }) };
         foreign.Headers.Add("Origin", "http://foreign.example");
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(foreign)).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, (await client.PutAsJsonAsync(endpoint, new { password = "replacement" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(foreign, TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PutAsJsonAsync(endpoint, new { password = "replacement" }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
     }
     [Theory]
     [InlineData(false)]
@@ -43,14 +42,14 @@ public sealed class HttpTests
     {
         await using var app = new TestApp();
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
-        var effects = await client.GetFromJsonAsync<JsonElement>("/api/drgb/effects");
+        var effects = await client.GetFromJsonAsync<JsonElement>("/api/drgb/effects", cancellationToken: TestContext.Current.CancellationToken);
         foreach (var descriptor in effects.EnumerateArray())
         {
             var name = descriptor.GetProperty("type").GetString();
             var body = new Dictionary<string, object?> { ["effect"] = name };
             if (explicitNull) body["speedMs"] = null;
-            Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", body)).StatusCode);
-            var status = await client.GetFromJsonAsync<JsonElement>("/api/drgb/status");
+            Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", body, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+            var status = await client.GetFromJsonAsync<JsonElement>("/api/drgb/status", cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(name, status.GetProperty("currentEffect").GetString());
             Assert.Equal(TimeSpan.Parse(descriptor.GetProperty("info").GetProperty("defaultSpeed").GetString()!,
                 System.Globalization.CultureInfo.InvariantCulture).TotalMilliseconds, status.GetProperty("speed").GetDouble());
@@ -64,11 +63,11 @@ public sealed class HttpTests
     {
         await using var app = new TestApp();
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Strobe", speedMs = speed })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Strobe", speedMs = speed }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
         foreach (var invalid in new[] { -1, 0, 9, 60001 })
         {
-            Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Rainbow", speedMs = invalid })).StatusCode);
-            var status = await client.GetFromJsonAsync<JsonElement>("/api/drgb/status");
+            Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Rainbow", speedMs = invalid }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+            var status = await client.GetFromJsonAsync<JsonElement>("/api/drgb/status", cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal("Strobe", status.GetProperty("currentEffect").GetString());
             Assert.Equal(speed, status.GetProperty("speed").GetDouble());
         }
@@ -83,21 +82,21 @@ public sealed class HttpTests
         using var startupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while ((await client.GetAsync("/health/ready", startupTimeout.Token)).StatusCode != HttpStatusCode.OK)
             await Task.Delay(10, startupTimeout.Token);
-        var diagnostics = await client.GetFromJsonAsync<JsonElement>("/health/status");
+        var diagnostics = await client.GetFromJsonAsync<JsonElement>("/health/status", cancellationToken: TestContext.Current.CancellationToken);
         Assert.True(diagnostics.GetProperty("renderer").GetProperty("ready").GetBoolean());
         Assert.Equal(0, diagnostics.GetProperty("discovery").GetProperty("devices").GetInt32());
 
         using var outsider = new HttpRequestMessage(HttpMethod.Get, "/health/live");
         outsider.Headers.Add("X-Test-Client-IP", "192.168.2.50");
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(outsider)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(outsider, TestContext.Current.CancellationToken)).StatusCode);
 
         using var foreignOrigin = new HttpRequestMessage(HttpMethod.Post, "/api/countdown/start") { Content = JsonContent.Create(new { }) };
         foreignOrigin.Headers.Add("Origin", "http://untrusted.example");
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(foreignOrigin)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(foreignOrigin, TestContext.Current.CancellationToken)).StatusCode);
 
         using var foreignHost = new HttpRequestMessage(HttpMethod.Get, "/health/live");
         foreignHost.Headers.Host = "untrusted.example";
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.SendAsync(foreignHost)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.SendAsync(foreignHost, TestContext.Current.CancellationToken)).StatusCode);
     }
 
     [Fact]
@@ -105,19 +104,19 @@ public sealed class HttpTests
     {
         await using var app = new TestApp();
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Solid", speedMs = 100 })).StatusCode);
-        Assert.True((await client.GetFromJsonAsync<JsonElement>("/api/drgb/status")).GetProperty("streaming").GetBoolean());
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Solid", speedMs = 100 }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        Assert.True((await client.GetFromJsonAsync<JsonElement>("/api/drgb/status", cancellationToken: TestContext.Current.CancellationToken)).GetProperty("streaming").GetBoolean());
 
-        var invalid = await client.PostAsJsonAsync("/api/drgb/start", new { effect = "999", speedMs = 100 });
+        var invalid = await client.PostAsJsonAsync("/api/drgb/start", new { effect = "999", speedMs = 100 }, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
         Assert.Equal("application/problem+json", invalid.Content.Headers.ContentType?.MediaType);
-        Assert.Equal("Solid", (await client.GetFromJsonAsync<JsonElement>("/api/drgb/status")).GetProperty("currentEffect").GetString());
+        Assert.Equal("Solid", (await client.GetFromJsonAsync<JsonElement>("/api/drgb/status", cancellationToken: TestContext.Current.CancellationToken)).GetProperty("currentEffect").GetString());
 
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 5, deviationSeconds = 5 })).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/drgb/speed", new { speedMs = 100 })).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/countdown/stop", null)).StatusCode);
-        var status = await client.GetFromJsonAsync<JsonElement>("/api/countdown/status");
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 5, deviationSeconds = 5 }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/drgb/speed", new { speedMs = 100 }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/countdown/stop", null, TestContext.Current.CancellationToken)).StatusCode);
+        var status = await client.GetFromJsonAsync<JsonElement>("/api/countdown/status", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("Idle", status.GetProperty("phase").GetString());
         Assert.False(status.GetProperty("running").GetBoolean());
         Assert.False(status.GetProperty("preCountdownRunning").GetBoolean());
@@ -128,19 +127,19 @@ public sealed class HttpTests
     {
         await using var app = new TestApp();
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
-        var effects = await client.GetFromJsonAsync<JsonElement>("/api/drgb/effects");
+        var effects = await client.GetFromJsonAsync<JsonElement>("/api/drgb/effects", cancellationToken: TestContext.Current.CancellationToken);
         Assert.True(effects.GetArrayLength() >= 10);
         foreach (var path in new[] { "/", "/game/fullscreen", "/countdown", "/lights", "/drgb", "/wled", "/ui/index.html", "/api/ui/state", "/api/wled/devices", "/sounds/game_over/game-over-yeah.mp3" })
         {
-            var response = await client.GetAsync(path);
+            var response = await client.GetAsync(path, TestContext.Current.CancellationToken);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
-        var html = await client.GetStringAsync("/");
+        var html = await client.GetStringAsync("/", TestContext.Current.CancellationToken);
         Assert.DoesNotContain("blazor", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("/ui/assets/", html);
         Assert.Contains("id=\"app\"", html);
         foreach (var path in new[] { "/api/missing", "/hubs/missing", "/health/missing", "/ui/assets/missing.js", "/_framework/blazor.web.js" })
-            Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(path)).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(path, TestContext.Current.CancellationToken)).StatusCode);
     }
 
     [Fact]
@@ -148,8 +147,7 @@ public sealed class HttpTests
     {
         await using var app = new TestApp();
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start",
-            new { effect = "Solid", colors = new[] { "#123456" } })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Solid", colors = new[] { "#123456" } }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
         var pixel = app.Services.GetRequiredService<DRgbService>().GetSnapshot()[0];
         Assert.Equal(0x12 / 255f, pixel.X); Assert.Equal(0x34 / 255f, pixel.Y); Assert.Equal(0x56 / 255f, pixel.Z);
         foreach (var invalid in new object[] {
@@ -161,12 +159,12 @@ public sealed class HttpTests
             new { effect = "Breathing", minBrightnessPercent = 80, maxBrightnessPercent = 20 },
         })
         {
-            Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/drgb/start", invalid)).StatusCode);
-            Assert.Equal("Solid", (await client.GetFromJsonAsync<JsonElement>("/api/drgb/status")).GetProperty("currentEffect").GetString());
+            Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/drgb/start", invalid, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+            Assert.Equal("Solid", (await client.GetFromJsonAsync<JsonElement>("/api/drgb/status", cancellationToken: TestContext.Current.CancellationToken)).GetProperty("currentEffect").GetString());
         }
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", new {
             effect = "Breathing", colors = new[] { "#ff00ff" }, breathDurationSeconds = 4, minBrightnessPercent = 15, maxBrightnessPercent = 75
-        })).StatusCode);
+        }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
     }
 
     [Fact]
@@ -174,11 +172,11 @@ public sealed class HttpTests
     {
         await using var app = new TestApp();
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
-        var first = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state")).GetProperty("game");
-        var same = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state")).GetProperty("game");
+        var first = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state", cancellationToken: TestContext.Current.CancellationToken)).GetProperty("game");
+        var same = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state", cancellationToken: TestContext.Current.CancellationToken)).GetProperty("game");
         Assert.Equal(first.GetProperty("revision").GetInt64(), same.GetProperty("revision").GetInt64());
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { })).StatusCode);
-        var changed = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state")).GetProperty("game");
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        var changed = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state", cancellationToken: TestContext.Current.CancellationToken)).GetProperty("game");
         Assert.Equal(first.GetProperty("serverInstanceId").GetString(), changed.GetProperty("serverInstanceId").GetString());
         Assert.True(changed.GetProperty("revision").GetInt64() > first.GetProperty("revision").GetInt64());
         Assert.Equal("PreCountdown", changed.GetProperty("value").GetProperty("phase").GetString());
@@ -195,39 +193,39 @@ public sealed class HttpTests
     {
         await using var app = new TestApp();
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
-        var added = await client.PostAsync("/api/installation/devices/simulated", null);
+        var added = await client.PostAsync("/api/installation/devices/simulated", null, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, added.StatusCode);
-        var device = await added.Content.ReadFromJsonAsync<JsonElement>();
+        var device = await added.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: TestContext.Current.CancellationToken);
         var mac = device.GetProperty("mac").GetString()!;
         Assert.True(device.GetProperty("simulated").GetBoolean());
         Assert.Equal(102, device.GetProperty("ledCount").GetInt32());
 
         object Layout(object right) => new { boards = new[] { new { id = "a", name = "Table 1", deviceMac = mac, left = new { start = 0, count = 51 }, right } }, idleSync = new { } };
         // A strip that does not fit is refused with a message that names the board, the strip and the limit.
-        var refused = await client.PutAsJsonAsync("/api/installation/layout", Layout(new { start = 51, count = 60 }));
+        var refused = await client.PutAsJsonAsync("/api/installation/layout", Layout(new { start = 51, count = 60 }), cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
         Assert.Equal("Table 1: the right strip uses LEDs 51–110, but Simulated board 1 has 102 LEDs (0–101).",
-            (await refused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("detail").GetString());
-        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation/layout", Layout(new { start = 51, count = 51 }))).StatusCode);
-        var saved = await client.GetFromJsonAsync<JsonElement>("/api/installation");
+            (await refused.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: TestContext.Current.CancellationToken)).GetProperty("detail").GetString());
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation/layout", Layout(new { start = 51, count = 51 }), cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        var saved = await client.GetFromJsonAsync<JsonElement>("/api/installation", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, saved.GetProperty("version").GetInt32());
         Assert.Equal(51, saved.GetProperty("boards")[0].GetProperty("right").GetProperty("start").GetInt32());
         Assert.False(saved.GetProperty("boards")[0].TryGetProperty("edges", out _));
 
         // Calibration lights the simulated board: the live view's source has a frame, and no device error appears.
-        var calibration = await client.PostAsJsonAsync("/api/installation/calibration", new { boards = saved.GetProperty("boards"), activeBoardId = "a" });
+        var calibration = await client.PostAsJsonAsync("/api/installation/calibration", new { boards = saved.GetProperty("boards"), activeBoardId = "a" }, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, calibration.StatusCode);
         var monitor = app.Services.GetRequiredService<BoardFrameMonitor>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (monitor.Current(mac) is null) await Task.Delay(10, deadline.Token);
         Assert.Equal(102 * 3, monitor.Current(mac)!.Length);
-        var session = (await calibration.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("sessionId").GetString();
-        Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync($"/api/installation/calibration/{session}")).StatusCode);
-        var state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state");
+        var session = (await calibration.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: TestContext.Current.CancellationToken)).GetProperty("sessionId").GetString();
+        Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync($"/api/installation/calibration/{session}", TestContext.Current.CancellationToken)).StatusCode);
+        var state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Empty(state.GetProperty("installation").GetProperty("value").GetProperty("outputErrors").EnumerateObject());
-        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/boards")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/boards", TestContext.Current.CancellationToken)).StatusCode);
         // A simulated controller is removed like any other once no board uses it.
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.DeleteAsync($"/api/installation/devices/{mac}")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.DeleteAsync($"/api/installation/devices/{mac}", TestContext.Current.CancellationToken)).StatusCode);
     }
 
     [Fact]
@@ -235,15 +233,14 @@ public sealed class HttpTests
     {
         await using var app = new TestApp();
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
-        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", OneBoard())).StatusCode);
-        var themes = await client.GetFromJsonAsync<JsonElement>("/api/installation/light-show/themes");
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", OneBoard(), cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        var themes = await client.GetFromJsonAsync<JsonElement>("/api/installation/light-show/themes", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(new[] { "neonSunset", "aurora", "ember" }, themes.EnumerateArray().Select(t => t.GetProperty("id").GetString()));
         Assert.Equal("#ff4fad", themes[0].GetProperty("primary").GetString());
 
         var animation = new { framesPerSecond = 25, flashSeconds = 2, dotSeconds = 4, dotLapsPerSecond = 3 };
-        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation/light-show",
-            new { lightShow = new { theme = "aurora", brightness = 60, speed = 150, intensity = "lively" }, animation })).StatusCode);
-        var saved = await client.GetFromJsonAsync<JsonElement>("/api/installation");
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation/light-show", new { lightShow = new { theme = "aurora", brightness = 60, speed = 150, intensity = "lively" }, animation }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        var saved = await client.GetFromJsonAsync<JsonElement>("/api/installation", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("aurora", saved.GetProperty("lightShow").GetProperty("theme").GetString());
         Assert.Equal(60, saved.GetProperty("lightShow").GetProperty("brightness").GetInt32());
         Assert.Equal("#ff4fad", saved.GetProperty("lightShow").GetProperty("custom").GetProperty("primary").GetString());
@@ -251,11 +248,9 @@ public sealed class HttpTests
         Assert.Equal(1, saved.GetProperty("boards").GetArrayLength());
 
         // Board layout no longer owns the animation timing, even when an old page still sends it.
-        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation/layout",
-            new { boards = OneBoard().Boards, idleSync = new IdleSyncSettings(), animation = new { framesPerSecond = 59 } })).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/api/installation/light-show",
-            new { lightShow = new { theme = "aurora", brightness = 5 }, animation })).StatusCode);
-        saved = await client.GetFromJsonAsync<JsonElement>("/api/installation");
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation/layout", new { boards = OneBoard().Boards, idleSync = new IdleSyncSettings(), animation = new { framesPerSecond = 59 } }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/api/installation/light-show", new { lightShow = new { theme = "aurora", brightness = 5 }, animation }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        saved = await client.GetFromJsonAsync<JsonElement>("/api/installation", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(25, saved.GetProperty("animation").GetProperty("framesPerSecond").GetInt32());
         Assert.Equal(60, saved.GetProperty("lightShow").GetProperty("brightness").GetInt32());
     }
@@ -265,18 +260,17 @@ public sealed class HttpTests
     {
         await using var app = new TestApp();
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
-        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", OneBoard())).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
-        var response = await client.PostAsJsonAsync("/api/installation/light-show/preview", new { segment = "playing", lightShow = new { theme = "aurora" }, animation = new { } });
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", OneBoard(), cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        var response = await client.PostAsJsonAsync("/api/installation/light-show/preview", new { segment = "playing", lightShow = new { theme = "aurora" }, animation = new { } }, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var preview = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var preview = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(600, preview.GetProperty("frames").GetArrayLength());
         Assert.Equal(16, preview.GetProperty("boards")[0].GetProperty("ledCount").GetInt32());
         Assert.False(preview.GetProperty("exampleBoards").GetBoolean());
-        var state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state");
+        var state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(JsonValueKind.Null, state.GetProperty("installation").GetProperty("value").GetProperty("lightShowTest").ValueKind);
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/installation/light-show/preview",
-            new { segment = "playing", lightShow = new { brightness = 5 }, animation = new { } })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/installation/light-show/preview", new { segment = "playing", lightShow = new { brightness = 5 }, animation = new { } }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
     }
 
     [Fact]
@@ -286,31 +280,31 @@ public sealed class HttpTests
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
         var test = new { segment = "playing", lightShow = new { theme = "ember" }, animation = new { } };
         // Nothing to test on before a board is assigned.
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/installation/light-show/test", test)).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", OneBoard())).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/installation/light-show/test", test, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", OneBoard(), cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
 
-        var started = await client.PostAsJsonAsync("/api/installation/light-show/test", test);
+        var started = await client.PostAsJsonAsync("/api/installation/light-show/test", test, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, started.StatusCode);
-        Assert.Equal("playing", (await started.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("segment").GetString());
-        var state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state");
+        Assert.Equal("playing", (await started.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: TestContext.Current.CancellationToken)).GetProperty("segment").GetString());
+        var state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("playing", state.GetProperty("installation").GetProperty("value").GetProperty("lightShowTest").GetProperty("segment").GetString());
         Assert.Equal("neonSunset", state.GetProperty("installation").GetProperty("value").GetProperty("settings").GetProperty("lightShow").GetProperty("theme").GetString());
 
-        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Solid" })).StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, (await client.PutAsJsonAsync("/api/installation/light-show", new { lightShow = new { }, animation = new { } })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Solid" }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PutAsJsonAsync("/api/installation/light-show", new { lightShow = new { }, animation = new { } }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
         // Another segment replaces the running test; an unknown one is rejected and changes nothing.
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/installation/light-show/test", new { segment = "gameOver", lightShow = new { }, animation = new { } })).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/installation/light-show/test", new { segment = "idle", lightShow = new { }, animation = new { } })).StatusCode);
-        state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state");
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/installation/light-show/test", new { segment = "gameOver", lightShow = new { }, animation = new { } }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/installation/light-show/test", new { segment = "idle", lightShow = new { }, animation = new { } }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("gameOver", state.GetProperty("installation").GetProperty("value").GetProperty("lightShowTest").GetProperty("segment").GetString());
 
-        Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync("/api/installation/light-show/test")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync("/api/installation/light-show/test")).StatusCode);
-        state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state");
+        Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync("/api/installation/light-show/test", TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync("/api/installation/light-show/test", TestContext.Current.CancellationToken)).StatusCode);
+        state = await client.GetFromJsonAsync<JsonElement>("/api/ui/state", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(JsonValueKind.Null, state.GetProperty("installation").GetProperty("value").GetProperty("lightShowTest").ValueKind);
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 })).StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/installation/light-show/test", test)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/installation/light-show/test", test, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
     }
 
     private sealed class TestApp : WebApplicationFactory<Program>

@@ -11,7 +11,7 @@ Install the Node.js version in [.nvmrc](.nvmrc) and the exact .NET SDK selected 
 ```sh
 dotnet restore BobFx.slnx --locked-mode
 dotnet build BobFx.slnx --configuration Release --no-restore
-dotnet test BobFx.slnx --configuration Release --no-build
+dotnet test --solution BobFx.slnx --configuration Release --no-build
 npm --prefix frontend test
 dotnet run --project BobFx.Core --launch-profile http
 ```

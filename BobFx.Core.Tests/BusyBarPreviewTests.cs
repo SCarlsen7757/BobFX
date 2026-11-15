@@ -2,7 +2,6 @@ using BobFx.Core.Services;
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Text;
-using Xunit;
 
 namespace BobFx.Core.Tests;
 

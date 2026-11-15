@@ -8,7 +8,6 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Xunit;
 
 namespace BobFx.Core.Tests;
 
@@ -27,7 +26,7 @@ public sealed class InstallationTests
         var store = Store(path);
         var first = new BoardSettings { Name = "Waiting one" };
         var second = new BoardSettings { Name = "Waiting two" };
-        await store.SaveAsync(Installation() with { Boards = [first, Board(), second] });
+        await store.SaveAsync(Installation() with { Boards = [first, Board(), second] }, TestContext.Current.CancellationToken);
         var saved = Store(path).Snapshot;
         Assert.Equal(3, saved.Boards.Count);
         Assert.Null(saved.Boards[0].DeviceMac); Assert.Null(saved.Boards[0].Left); Assert.Null(saved.Boards[0].Right);
@@ -80,7 +79,7 @@ public sealed class InstallationTests
         var store = Store(TestPaths.NewDataPath());
         var saved = Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }],
             Boards = [Board(), new(), Board("aabbccddeeff", "b")] };
-        await store.SaveAsync(saved);
+        await store.SaveAsync(saved, TestContext.Current.CancellationToken);
         var clock = new FakeTimeProvider();
         var options = Options.Create(new WLedOptions());
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
@@ -101,7 +100,7 @@ public sealed class InstallationTests
         Assert.True(control.IsCalibrating);
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartGameAsync());
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.ConfigureAsync(() => Task.CompletedTask));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => output.LocateAsync("001122334455"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.LocateAsync("001122334455", TestContext.Current.CancellationToken));
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid)));
         await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartCalibrationAsync(new(saved.Boards, "b")));
         await Assert.ThrowsAsync<InvalidOperationException>(() => output.StopCalibrationAsync("other-session"));
@@ -144,7 +143,7 @@ public sealed class InstallationTests
     public async Task GameOutputUsesOnlyAssignedBoardsWhileManualOutputStillUsesAllSelectedDevices()
     {
         var store = Store(TestPaths.NewDataPath());
-        await store.SaveAsync(Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }], Boards = [new(), Board(), new()] });
+        await store.SaveAsync(Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }], Boards = [new(), Board(), new()] }, TestContext.Current.CancellationToken);
         var clock = new FakeTimeProvider();
         var options = Options.Create(new WLedOptions());
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
@@ -171,25 +170,26 @@ public sealed class InstallationTests
         var path = TestPaths.NewDataPath();
         var store = Store(path);
         var settings = Installation();
-        await store.SaveAsync(settings);
+        await store.SaveAsync(settings, TestContext.Current.CancellationToken);
         settings.Boards.Clear();
         Assert.Single(store.Snapshot.Boards);
         var copy = store.Snapshot; copy.Devices.Clear();
         Assert.Single(store.Snapshot.Devices);
-        var before = await File.ReadAllTextAsync(Path.Combine(path, "settings.json"));
-        await Assert.ThrowsAsync<ArgumentException>(() => store.SaveAsync(store.Snapshot with { Version = 3 }));
-        Assert.Equal(before, await File.ReadAllTextAsync(Path.Combine(path, "settings.json")));
+        var before = await File.ReadAllTextAsync(Path.Combine(path, "settings.json"), TestContext.Current.CancellationToken);
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SaveAsync(store.Snapshot with { Version = 3 }, TestContext.Current.CancellationToken));
+        Assert.Equal(before, await File.ReadAllTextAsync(Path.Combine(path, "settings.json"), TestContext.Current.CancellationToken));
         Assert.Single(Store(path).Snapshot.Boards);
         Assert.Empty(Directory.GetFiles(path, "*.tmp"));
-        await File.WriteAllTextAsync(Path.Combine(path, "settings.json"), "{broken");
+        await File.WriteAllTextAsync(Path.Combine(path, "settings.json"), "{broken", TestContext.Current.CancellationToken);
         Assert.Throws<JsonException>(() => Store(path));
     }
     [Fact]
     public async Task ConcurrentSectionUpdatesPreserveBothSections()
     {
         var store = Store(TestPaths.NewDataPath());
-        await Task.WhenAll(store.UpdateAsync(s => s with { Devices = [Device()] }),
-            store.UpdateAsync(s => s with { Animation = s.Animation with { FramesPerSecond = 20 } }));
+        var token = TestContext.Current.CancellationToken;
+        await Task.WhenAll(store.UpdateAsync(s => s with { Devices = [Device()] }, token),
+            store.UpdateAsync(s => s with { Animation = s.Animation with { FramesPerSecond = 20 } }, token));
         Assert.Single(store.Snapshot.Devices); Assert.Equal(20, store.Snapshot.Animation.FramesPerSecond);
     }
     [Fact]
@@ -232,7 +232,7 @@ public sealed class InstallationTests
                 { "id": "a", "name": "A", "deviceMac": "001122334455", "rotation": 90,
                   "edges": [ { "start": 0, "count": 25 }, { "start": 25, "count": 25 }, { "start": 75, "count": 25, "reversed": true }, { "start": 50, "count": 25, "reversed": true } ] },
                 { "id": "b", "name": "B", "deviceMac": null, "rotation": 0, "edges": [] } ] }
-            """);
+            """, TestContext.Current.CancellationToken);
         var store = Store(path);
         var saved = store.Snapshot;
         Assert.Equal(2, saved.Version);
@@ -240,12 +240,12 @@ public sealed class InstallationTests
         Assert.Equal("001122334455", saved.Boards[0].DeviceMac);
         Assert.Null(saved.Boards[1].Left); Assert.Null(saved.Boards[1].DeviceMac);
         Assert.False(saved.Devices[0].Simulated);
-        await store.SaveAsync(saved);
-        var file = await File.ReadAllTextAsync(Path.Combine(path, "settings.json"));
+        await store.SaveAsync(saved, TestContext.Current.CancellationToken);
+        var file = await File.ReadAllTextAsync(Path.Combine(path, "settings.json"), TestContext.Current.CancellationToken);
         Assert.DoesNotContain("edges", file); Assert.DoesNotContain("rotation", file); Assert.Contains("\"version\": 2", file);
 
         // A version 1 backup restored through the API migrates too, and strips that are already there are kept.
-        await store.SaveAsync(saved with { Version = 1, Boards = [saved.Boards[0] with { Left = new(51, 51), Right = new(0, 51) }] });
+        await store.SaveAsync(saved with { Version = 1, Boards = [saved.Boards[0] with { Left = new(51, 51), Right = new(0, 51) }] }, TestContext.Current.CancellationToken);
         Assert.Equal(2, store.Snapshot.Version);
         Assert.Equal(new StripSettings(51, 51), store.Snapshot.Boards[0].Left);
         // A board whose controller is gone cannot be mapped and becomes unassigned instead of failing the load.
@@ -264,14 +264,14 @@ public sealed class InstallationTests
         using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
         var clients = new SyncClients();
         var registry = new WLedRegistryService(store, control, clients);
-        var first = await registry.AddSimulatedAsync();
-        var second = await registry.AddSimulatedAsync();
+        var first = await registry.AddSimulatedAsync(TestContext.Current.CancellationToken);
+        var second = await registry.AddSimulatedAsync(TestContext.Current.CancellationToken);
         Assert.Equal(("02b0bf000001", "Simulated board 1", BoardMapping.LedsPerBoard, true, true), (first.Mac, first.Name, first.LedCount, first.Simulated, first.Selected));
         Assert.Equal("02b0bf000002", second.Mac);
         Assert.Equal([first, second], store.Snapshot.Devices);
         var board = BoardMapping.WithDefault(new BoardSettings { Id = "a", Name = "A", DeviceMac = first.Mac }, first.LedCount);
         await store.UpdateAsync(s => s with { Boards = [board],
-            IdleSync = new IdleSyncSettings { Enabled = true, MasterMac = first.Mac, Followers = [second.Mac] } });
+            IdleSync = new IdleSyncSettings { Enabled = true, MasterMac = first.Mac, Followers = [second.Mac] } }, TestContext.Current.CancellationToken);
 
         using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery(), store);
         var transport = new RecordingTransport();
@@ -300,8 +300,8 @@ public sealed class InstallationTests
         locateCancel.Cancel(); await Assert.ThrowsAnyAsync<OperationCanceledException>(() => locating);
 
         // Nothing went out over UDP or HTTP, discovery does not probe it, and no device error is reported.
-        await output.ApplyIdleSyncAsync();
-        await discovery.ScanAsync();
+        await output.ApplyIdleSyncAsync(TestContext.Current.CancellationToken);
+        await discovery.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Empty(transport.Sent); Assert.Empty(clients.Requests); Assert.Empty(clients.Gets); Assert.Empty(output.Errors);
         await output.StopAsync(CancellationToken.None);
     }
@@ -407,12 +407,12 @@ public sealed class InstallationTests
         await File.WriteAllTextAsync(Path.Combine(path, "settings.json"), """
             { "version": 1, "controllers": [ { "id": "remote", "name": "Family remote", "address": "192.168.1.30", "port": 80,
               "enabled": true, "showTimer": true, "remoteEnabled": true, "secretName": "busybar_token" } ] }
-            """);
+            """, TestContext.Current.CancellationToken);
         var store = Store(path);
         var bar = Assert.Single(store.Snapshot.Controllers);
         Assert.True(bar.Enabled); Assert.True(bar.RemoteEnabled); Assert.Equal("Family remote", bar.Name);
-        await store.SaveAsync(store.Snapshot);
-        Assert.DoesNotContain("showTimer", await File.ReadAllTextAsync(Path.Combine(path, "settings.json")));
+        await store.SaveAsync(store.Snapshot, TestContext.Current.CancellationToken);
+        Assert.DoesNotContain("showTimer", await File.ReadAllTextAsync(Path.Combine(path, "settings.json"), TestContext.Current.CancellationToken));
     }
     [Fact]
     public async Task LocateOwnsOutputAndRejectsGameManualAndOtherLocate()
@@ -442,7 +442,7 @@ public sealed class InstallationTests
     public async Task DeviceFailureDoesNotPreventOtherFramesAndLocateUsesOnlyTarget()
     {
         var store = Store(TestPaths.NewDataPath());
-        await store.SaveAsync(Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }], Boards = [Board(), Board("aabbccddeeff", "b")] });
+        await store.SaveAsync(Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }], Boards = [Board(), Board("aabbccddeeff", "b")] }, TestContext.Current.CancellationToken);
         var clock = new FakeTimeProvider();
         var options = Options.Create(new WLedOptions());
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
@@ -469,7 +469,7 @@ public sealed class InstallationTests
     {
         var path = TestPaths.NewDataPath();
         Directory.CreateDirectory(path);
-        await File.WriteAllTextAsync(Path.Combine(path, "settings.json"), """{ "version": 1, "animation": { "framesPerSecond": 20 } }""");
+        await File.WriteAllTextAsync(Path.Combine(path, "settings.json"), """{ "version": 1, "animation": { "framesPerSecond": 20 } }""", TestContext.Current.CancellationToken);
         var store = Store(path);
         var saved = store.Snapshot;
         Assert.Equal(new LightShowSettings(), saved.LightShow);
@@ -485,7 +485,7 @@ public sealed class InstallationTests
         })
             Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(saved with { LightShow = invalid }));
         Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(saved with { LightShow = null! }));
-        await store.UpdateAsync(s => s with { LightShow = new() { Theme = "custom", Brightness = 60, Speed = 150, Intensity = "lively", Custom = new() { Primary = "#00FF00" } } });
+        await store.UpdateAsync(s => s with { LightShow = new() { Theme = "custom", Brightness = 60, Speed = 150, Intensity = "lively", Custom = new() { Primary = "#00FF00" } } }, TestContext.Current.CancellationToken);
         var reloaded = Store(path).Snapshot;
         Assert.Equal(("custom", 60, 150, "lively", "#00FF00"), (reloaded.LightShow.Theme, reloaded.LightShow.Brightness, reloaded.LightShow.Speed, reloaded.LightShow.Intensity, reloaded.LightShow.Custom.Primary));
         Assert.Equal(20, reloaded.Animation.FramesPerSecond);
@@ -499,7 +499,7 @@ public sealed class InstallationTests
             new FakeTimeProvider(), store);
         Assert.Null(store.Snapshot.Countdown);
         Assert.Equal((600, 120), ((int)countdown.CountdownDuration.TotalSeconds, (int)countdown.CountdownDeviation.TotalSeconds)); // Configuration until saved.
-        await store.UpdateAsync(s => s with { Countdown = new(720, 30) });
+        await store.UpdateAsync(s => s with { Countdown = new(720, 30) }, TestContext.Current.CancellationToken);
         Assert.Equal((720, 30), ((int)countdown.CountdownDuration.TotalSeconds, (int)countdown.CountdownDeviation.TotalSeconds));
         Assert.Equal(new CountdownSettings(720, 30), Store(path).Snapshot.Countdown); // A restart reads the file again.
         foreach (var invalid in new CountdownSettings[] { new(0, 0), new(86401, 0), new(60, -1), new(60, 60) })
@@ -511,7 +511,7 @@ public sealed class InstallationTests
         var store = Store(TestPaths.NewDataPath());
         var saved = Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }],
             Boards = [Board(), new(), Board("aabbccddeeff", "b")] };
-        await store.SaveAsync(saved);
+        await store.SaveAsync(saved, TestContext.Current.CancellationToken);
         var clock = new FakeTimeProvider();
         var options = Options.Create(new WLedOptions());
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
@@ -539,7 +539,7 @@ public sealed class InstallationTests
         Assert.Equal(new LightShowSettings(), store.Snapshot.LightShow); // The draft is played, not saved.
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartGameAsync());
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.ConfigureAsync(() => Task.CompletedTask));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => output.LocateAsync("001122334455"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => output.LocateAsync("001122334455", TestContext.Current.CancellationToken));
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid)));
         await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartCalibrationAsync(new(saved.Boards, "a")));
         clock.Advance(TimeSpan.FromSeconds(1));
@@ -572,9 +572,9 @@ public sealed class InstallationTests
         Assert.False(control.IsTestingLights);
 
         // Without a board there is nothing to test on.
-        await store.UpdateAsync(s => s with { Boards = [new()] });
+        await store.UpdateAsync(s => s with { Boards = [new()] }, TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<ArgumentException>(() => output.StartLightShowTestAsync(Request("playing")));
-        await store.UpdateAsync(s => s with { Boards = saved.Boards });
+        await store.UpdateAsync(s => s with { Boards = saved.Boards }, TestContext.Current.CancellationToken);
 
         // Stopping is idempotent, and shutdown releases a running test.
         await output.StopLightShowTestAsync();
@@ -590,7 +590,7 @@ public sealed class InstallationTests
     public async Task GameWithoutBoardsSendsNoFramesButManualOutputStillDoes()
     {
         var store = Store(TestPaths.NewDataPath());
-        await store.SaveAsync(Installation() with { Boards = [new()] });
+        await store.SaveAsync(Installation() with { Boards = [new()] }, TestContext.Current.CancellationToken);
         var clock = new FakeTimeProvider();
         var options = Options.Create(new WLedOptions());
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
@@ -606,7 +606,7 @@ public sealed class InstallationTests
         for (var pass = 0; pass < 5; pass++)
         {
             clock.Advance(TimeSpan.FromMilliseconds(100));
-            await Task.Delay(20);
+            await Task.Delay(20, TestContext.Current.CancellationToken);
         }
         Assert.Empty(transport.Sent);
         // The same loop still mirrors a manual effect to the strip, so it was running all along.
@@ -638,7 +638,7 @@ public sealed class InstallationTests
     {
         var store = Store(TestPaths.NewDataPath());
         await store.SaveAsync(Installation() with { Devices = [Device(), Device("aabbccddeeff")], Boards = [],
-            IdleSync = new IdleSyncSettings { Enabled = true, MasterMac = "001122334455", Followers = ["aabbccddeeff"], Group = 2 } });
+            IdleSync = new IdleSyncSettings { Enabled = true, MasterMac = "001122334455", Followers = ["aabbccddeeff"], Group = 2 } }, TestContext.Current.CancellationToken);
         var clock = new FakeTimeProvider(); var options = Options.Create(new WLedOptions());
         using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
         var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
@@ -646,7 +646,7 @@ public sealed class InstallationTests
         var clients = new SyncClients();
         using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery());
         using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, new RecordingTransport());
-        await output.ApplyIdleSyncAsync();
+        await output.ApplyIdleSyncAsync(TestContext.Current.CancellationToken);
         var config = clients.Requests.First(r => r.Path == "/json/cfg").Body;
         Assert.True(config.GetProperty("if").GetProperty("sync").GetProperty("send").GetProperty("en").GetBoolean());
         Assert.Equal(2, config.GetProperty("if").GetProperty("sync").GetProperty("send").GetProperty("grp").GetInt32());
@@ -656,10 +656,10 @@ public sealed class InstallationTests
         Assert.Equal(7, states[1].Body.GetProperty("seg").GetProperty("fx").GetInt32());
         Assert.False(states[1].Body.GetProperty("seg").TryGetProperty("start", out _));
         clients.Requests.Clear();
-        await output.ApplyIdleSyncAsync(configure: false);
+        await output.ApplyIdleSyncAsync(TestContext.Current.CancellationToken, configure: false);
         Assert.DoesNotContain(clients.Requests, r => r.Path == "/json/cfg"); // Avoid flash writes every game.
-        await store.UpdateAsync(s => s with { IdleSync = s.IdleSync with { Enabled = false } });
-        clients.Requests.Clear(); await output.ApplyIdleSyncAsync();
+        await store.UpdateAsync(s => s with { IdleSync = s.IdleSync with { Enabled = false } }, TestContext.Current.CancellationToken);
+        clients.Requests.Clear(); await output.ApplyIdleSyncAsync(TestContext.Current.CancellationToken);
         Assert.All(clients.Requests.Where(r => r.Path == "/json/cfg"), r => Assert.False(r.Body.GetProperty("if").GetProperty("sync").GetProperty("send").GetProperty("en").GetBoolean()));
     }
     private sealed class SyncClients : IHttpClientFactory
