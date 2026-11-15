@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onErrorCaptured, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
+import { Columns3, Gamepad2, Joystick, MonitorPlay, Router, Sparkles, RotateCcw, Timer, WandSparkles, WifiOff } from '@lucide/vue';
 import SunsetBackground from './components/SunsetBackground.vue';
 import AudioControl from './components/AudioControl.vue';
 import { BrowserAudio } from './lib/audio';
@@ -46,19 +47,20 @@ watch(() => route.path, async () => {
     <header v-if="!immersive" class="app-header">
       <RouterLink to="/" class="brand" aria-label="BobFX home">BobFX</RouterLink>
       <nav aria-label="Main navigation">
-        <RouterLink to="/" :class="{ active: route.path === '/' }">Game</RouterLink>
-        <RouterLink to="/countdown">Countdown settings</RouterLink>
-        <RouterLink to="/lights">Light show</RouterLink>
-        <RouterLink to="/drgb">LED effects</RouterLink>
-        <RouterLink to="/wled">WLED devices</RouterLink>
-        <RouterLink to="/layout">Board layout</RouterLink>
-        <RouterLink to="/controllers">Remote controllers</RouterLink>
+        <RouterLink to="/" aria-label="Game" title="Game" :class="{ active: route.path === '/' }"><Gamepad2 /></RouterLink>
+        <RouterLink to="/countdown" aria-label="Countdown settings" title="Countdown settings"><Timer /></RouterLink>
+        <RouterLink to="/lights" aria-label="Light show" title="Light show"><Sparkles /></RouterLink>
+        <RouterLink to="/drgb" aria-label="LED effects" title="LED effects"><WandSparkles /></RouterLink>
+        <RouterLink to="/wled" aria-label="WLED devices" title="WLED devices"><Router /></RouterLink>
+        <RouterLink to="/layout" aria-label="Board layout" title="Board layout"><Columns3 /></RouterLink>
+        <RouterLink to="/boards" aria-label="Live boards" title="Live boards"><MonitorPlay /></RouterLink>
+        <RouterLink to="/controllers" aria-label="Remote controllers" title="Remote controllers"><Joystick /></RouterLink>
       </nav>
       <AudioControl :enabled="audioEnabled" :disabled="!audioReady || audioBusy" :status="audioStatus" @toggle="toggleAudio" />
     </header>
     <main id="main-content">
       <div v-if="!connected" class="connection-banner" role="status" data-testid="connection-status">
-        <span class="connection-dot"></span>{{ connectionStatus === 'disconnected' ? 'Connection lost. Reconnecting…' : 'Connecting to the game…' }}
+        <WifiOff />{{ connectionStatus === 'disconnected' ? 'Reconnecting…' : 'Connecting…' }}
       </div>
       <RouterView v-if="!fatalError" v-slot="{ Component }">
         <component :is="Component">
@@ -67,7 +69,7 @@ watch(() => route.path, async () => {
           </template>
         </component>
       </RouterView>
-      <section v-else class="error-message" role="alert"><h1>Unable to display this page</h1><p>Reload to reconnect to the shared game.</p><button @click="reload">Reload</button></section>
+      <section v-else class="error-message" role="alert"><h1>Unable to display this page</h1><button @click="reload"><RotateCcw />Reload</button></section>
     </main>
   </div>
 </template>

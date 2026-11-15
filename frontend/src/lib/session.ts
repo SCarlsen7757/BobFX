@@ -1,9 +1,9 @@
-import { computed, ref } from 'vue';
+import { computed, ref, shallowRef } from 'vue';
 import { QueryClient, useQuery } from '@tanstack/vue-query';
 import { HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr';
 import { api } from './api';
 import { newer } from './revisions';
-import type { Defaults, DiscoveryState, EffectState, GameState, InstallationState, SoundEvent, UiState, Versioned } from './contracts';
+import type { BoardFrame, Defaults, DiscoveryState, EffectState, GameState, InstallationState, SoundEvent, UiState, Versioned } from './contracts';
 
 export const queryClient = new QueryClient({ defaultOptions: {
   queries: { staleTime: Infinity, retry: 1, refetchOnWindowFocus: false },
@@ -14,6 +14,9 @@ export const connected = computed(() => connectionStatus.value === 'connected');
 export const defaults = ref<Defaults>();
 export const preview = ref<string[]>([]);
 export const suppressedRun = ref<string | null>(null);
+/** What every controller's LEDs show right now, by MAC: RGB bytes, or null while it receives no frames. Empty until a view watches. */
+export const boardFrames = shallowRef<Record<string, Uint8Array | null>>({});
+let boardWatchers = 0;
 let instance = '';
 let syncing = true;
 let stopped = false;
@@ -42,6 +45,11 @@ connection.on('EffectStateChanged', (value: Versioned<EffectState>) => receive('
 connection.on('DevicesChanged', (value: Versioned<DiscoveryState>) => receive('discovery', value));
 connection.on('InstallationChanged', (value: Versioned<InstallationState>) => receive('installation', value));
 connection.on('LedPreviewChanged', (value: string[]) => { if (connected.value && previewWanted) preview.value = value; });
+function showBoardFrames(frames: BoardFrame[]) {
+  boardFrames.value = Object.fromEntries(frames.map(frame =>
+    [frame.mac, frame.pixels === null ? null : Uint8Array.from(atob(frame.pixels), c => c.charCodeAt(0))]));
+}
+connection.on('BoardFramesChanged', (frames: BoardFrame[]) => { if (connected.value && boardWatchers > 0) showBoardFrames(frames); });
 connection.on('SoundRequested', (event: SoundEvent) => {
   const game = queryClient.getQueryData<Versioned<GameState>>(['game'])?.value;
   if (connected.value && !document.hidden && game?.runId === event.runId && game.phase === 'Ending') onSound?.(event);
@@ -61,6 +69,7 @@ export function synchronize(): Promise<void> {
     for (const update of buffered) update();
     buffered = []; syncing = false;
     await synchronizePreview();
+    await synchronizeBoards();
     connectionStatus.value = 'connected';
   })().catch(() => {
     connectionStatus.value = 'disconnected';
@@ -88,7 +97,7 @@ async function start() {
     .finally(() => { startTask = undefined; });
   return startTask;
 }
-connection.onreconnecting(() => { connectionGeneration++; syncing = true; connectionStatus.value = 'disconnected'; preview.value = []; });
+connection.onreconnecting(() => { connectionGeneration++; syncing = true; connectionStatus.value = 'disconnected'; preview.value = []; boardFrames.value = {}; });
 connection.onreconnected(() => synchronize());
 connection.onclose(() => { connectionGeneration++; connectionStatus.value = 'disconnected'; scheduleRetry(); });
 
@@ -100,7 +109,7 @@ export function startSession(sound: (event: SoundEvent) => void) {
   };
   document.addEventListener('visibilitychange', resume);
   const offline = () => {
-    connectionGeneration++; syncing = true; connectionStatus.value = 'disconnected'; preview.value = []; void connection.stop();
+    connectionGeneration++; syncing = true; connectionStatus.value = 'disconnected'; preview.value = []; boardFrames.value = {}; void connection.stop();
   };
   const online = () => { void start(); };
   window.addEventListener('offline', offline);
@@ -129,6 +138,27 @@ async function synchronizePreview() {
     requested = previewWanted;
     await connection.invoke(requested ? 'SubscribePreview' : 'UnsubscribePreview');
   } while (requested !== previewWanted);
+}
+/**
+ * Starts or stops the live board frames for one view. Views are counted, so the frames keep coming while any view
+ * still shows them. The call returns once the server has acknowledged the change.
+ */
+export async function watchBoards(watching: boolean) {
+  boardWatchers = Math.max(0, boardWatchers + (watching ? 1 : -1));
+  if (boardWatchers === 0) boardFrames.value = {};
+  if (connected.value) {
+    try { await synchronizeBoards(); }
+    catch { connectionStatus.value = 'disconnected'; scheduleRetry(); }
+  }
+}
+async function synchronizeBoards() {
+  // As with the preview, the wanted state may change while an invocation is pending.
+  let requested: boolean;
+  do {
+    requested = boardWatchers > 0;
+    if (requested) showBoardFrames(await connection.invoke<BoardFrame[]>('SubscribeBoards'));
+    else await connection.invoke('UnsubscribeBoards');
+  } while (requested !== boardWatchers > 0);
 }
 export function useGame() { return useQuery({ queryKey: ['game'], queryFn: async () => (await api<UiState>('/api/ui/state')).game, enabled: false }); }
 export function useEffect() { return useQuery({ queryKey: ['effect'], queryFn: async () => (await api<UiState>('/api/ui/state')).effect, enabled: false }); }

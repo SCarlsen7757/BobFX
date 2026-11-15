@@ -2,8 +2,8 @@ import type { APIRequestContext } from '@playwright/test';
 import { test, expect } from './fixtures';
 
 const device = { mac: '001122334455', name: 'North', address: '192.168.1.20', httpPort: 80, ledCount: 16, udpPort: 21324, selected: true };
-const board = { id: 'north', name: 'Board 1', deviceMac: '001122334455', rotation: 0,
-  edges: [0, 4, 8, 12].map(start => ({ start, count: 4, reversed: false })) };
+const board = { id: 'north', name: 'Board 1', deviceMac: '001122334455',
+  left: { start: 0, count: 8, reversed: false }, right: { start: 8, count: 8, reversed: false } };
 const defaults = { theme: 'neonSunset', brightness: 100, speed: 100, intensity: 'calm',
   custom: { primary: '#ff4fad', secondary: '#ffad66', tertiary: '#8c50ff', accent: '#96eddf' } };
 
@@ -165,4 +165,47 @@ test('the game page shows a light show test and cannot start a game during it', 
   } finally {
     await restore(request, original);
   }
+});
+
+test('unsaved changes keep Save in view and ask before the page is left', async ({ page, request }) => {
+  const original = await seed(request);
+  try {
+    await page.goto('/lights');
+    await expect(page.getByRole('button', { name: 'Enable audio', exact: true })).toBeEnabled();
+    const save = page.getByRole('button', { name: 'Save light show', exact: true });
+    const unsaved = page.locator('.save-bar .unsaved');
+    await expect(unsaved).toBeHidden();
+
+    // Changing something at the top of a long page: Save is on screen without scrolling, marked as unsaved.
+    await page.getByRole('radio', { name: 'Ember', exact: true }).check();
+    await expect(unsaved).toHaveText('Unsaved changes');
+    await expect(save).toBeInViewport();
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    // The navigation stays on screen too, however far the page is scrolled.
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
+    await expect(page.getByRole('link', { name: 'Board layout', exact: true })).toBeInViewport();
+    await expect(save).toBeInViewport();
+
+    // Declining the question stays on the page with the change intact.
+    page.once('dialog', dialog => { expect(dialog.message()).toBe('Leave without saving your changes?'); void dialog.dismiss(); });
+    await page.getByRole('link', { name: 'Game', exact: true }).click();
+    await expect(page).toHaveURL(/\/lights$/);
+    await expect(page.getByRole('radio', { name: 'Ember', exact: true })).toBeChecked();
+
+    // Saving clears the mark, and the page is then left without a question.
+    await save.click();
+    await expect(page.locator('.save-bar .save-note')).toHaveText('Light show saved.');
+    await expect(unsaved).toBeHidden();
+    await page.getByRole('link', { name: 'Game', exact: true }).click();
+    await expect(page).toHaveURL(/\/$/);
+
+    // Accepting the question leaves and drops the change.
+    await page.getByRole('link', { name: 'Light show', exact: true }).click();
+    await page.getByRole('radio', { name: 'Aurora', exact: true }).check();
+    page.once('dialog', dialog => { void dialog.accept(); });
+    await page.getByRole('link', { name: 'Game', exact: true }).click();
+    await expect(page).toHaveURL(/\/$/);
+    expect((await (await request.get('/api/installation')).json()).lightShow.theme).toBe('ember');
+  } finally { await restore(request, original); }
 });

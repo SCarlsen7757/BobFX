@@ -16,9 +16,12 @@ export interface UiState {
   game: Versioned<GameState>; effect: Versioned<EffectState>;
   discovery: Versioned<DiscoveryState>; installation: Versioned<InstallationState>; defaults: Defaults;
 }
-export interface SavedDevice { mac: string; name: string; address: string; httpPort: number; ledCount: number; udpPort: number; selected: boolean }
-export interface Edge { start: number; count: number; reversed: boolean }
-export interface Board { id: string; name: string; deviceMac: string | null; rotation: number; edges: Edge[] }
+/** A WLED controller. A simulated one exists only in BobFX: its frames are shown on the Live boards view. */
+export interface SavedDevice { mac: string; name: string; address: string; httpPort: number; ledCount: number; udpPort: number; selected: boolean; simulated: boolean }
+/** One LED strip along a side of a board. Its first LED is at the near end unless reversed. */
+export interface Strip { start: number; count: number; reversed: boolean }
+/** A board has a strip down its left side and one down its right, as seen from the near end; both are null until mapped. */
+export interface Board { id: string; name: string; deviceMac: string | null; left: Strip | null; right: Strip | null }
 export interface IdleSync { enabled: boolean; masterMac: string | null; followers: string[]; group: number }
 export interface AnimationSettings { framesPerSecond: number; flashSeconds: number; dotSeconds: number; dotLapsPerSecond: number }
 export interface RemoteController { id: string; name: string; address: string; port: number; enabled: boolean; remoteEnabled: boolean; secretName: string }
@@ -46,6 +49,8 @@ export interface DeviceDetails {
     architecture: string; coreVersion: string; freeHeap: number; uptimeSeconds: number;
     dataSourceType: string; dataSourceAddress: string } | null;
 }
-export interface LightShowPreviewBoard { id: string; name: string; rotation: number; edges: Edge[]; ledCount: number; assigned: boolean }
+export interface LightShowPreviewBoard { id: string; name: string; left: Strip | null; right: Strip | null; ledCount: number; assigned: boolean }
 /** Server-rendered frames of one segment: each frame is base64 RGB for every board in row order. */
 export interface LightShowPreview { framesPerSecond: number; seconds: number; exampleBoards: boolean; boards: LightShowPreviewBoard[]; frames: string[] }
+/** What a controller's LEDs show right now: base64 RGB bytes, or null when it receives no frames and is idle. */
+export interface BoardFrame { mac: string; pixels: string | null }

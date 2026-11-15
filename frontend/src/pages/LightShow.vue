@@ -2,10 +2,16 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import { useMutation, useQuery } from '@tanstack/vue-query';
+import { Square } from '@lucide/vue';
 import { api } from '../lib/api';
+import IconButton from '../components/IconButton.vue';
 import LightShowPreview from '../components/LightShowPreview.vue';
+import LiveBoards from '../components/LiveBoards.vue';
+import SaveBar from '../components/SaveBar.vue';
+import { useUnsavedGuard } from '../lib/unsaved';
 import { command, connected, useInstallation } from '../lib/session';
 import { clone, useCanConfigure, validateLightShow } from '../lib/installation';
+import { segments } from '../lib/segments';
 import type { AnimationSettings, LightShowColors, LightShowSegment, LightShowSettings, LightShowTheme } from '../lib/contracts';
 
 const installation = useInstallation();
@@ -15,8 +21,6 @@ const { data: themes } = useQuery({ queryKey: ['light-show-themes'], queryFn: ()
 const draft = ref<{ lightShow: LightShowSettings; animation: AnimationSettings }>();
 const message = ref('');
 const advanced = ref(false);
-const segments: Array<{ id: LightShowSegment; label: string }> = [
-  { id: 'countdown', label: 'Countdown + GO' }, { id: 'playing', label: 'Playing' }, { id: 'gameOver', label: 'Game over' }];
 const colorRoles: Array<{ key: keyof LightShowColors; label: string }> = [
   { key: 'primary', label: 'Main color' }, { key: 'secondary', label: 'Second color' },
   { key: 'tertiary', label: 'Third color' }, { key: 'accent', label: 'GO and accent color' }];
@@ -43,7 +47,8 @@ const mutation = useMutation({ mutationFn: async (action: LightShowSegment | 'sa
   if (action === 'save') {
     if (test.value) await stopTest();
     await command('/api/installation/light-show', draft.value, 'PUT');
-    message.value = 'Light show saved.';
+    // Continue from exactly what was saved, so the page reads as saved whatever the server tidied up.
+    reload(); message.value = 'Light show saved.';
   } else {
     await command('/api/installation/light-show/test', { segment: action, ...draft.value });
     startedHere = true;
@@ -52,10 +57,16 @@ const mutation = useMutation({ mutationFn: async (action: LightShowSegment | 'sa
 const busy = computed(() => !connected.value || mutation.isPending.value);
 const blocked = computed(() => busy.value || !lightsFree.value);
 const testStatus = computed(() => test.value
-  ? `Playing “${segments.find(segment => segment.id === test.value?.segment)?.label}” on the boards. It stops by itself.`
-  : !hasBoards.value ? 'Assign a controller to a board in Board layout to test on the boards.'
-  : !lightsFree.value && connected.value ? 'The lights are in use. Tests are available when the game and other output are idle.' : '');
+  ? `Playing “${segments.find(segment => segment.id === test.value?.segment)?.label}” on the boards`
+  : !hasBoards.value ? 'No board has a controller.'
+  : !lightsFree.value && connected.value ? 'The lights are in use.' : '');
 
+const dirty = computed(() => {
+  const saved = installation.data.value?.value.settings;
+  return !!draft.value && !!saved && JSON.stringify(draft.value) !== JSON.stringify({ lightShow: saved.lightShow, animation: saved.animation });
+});
+// Asked first: staying on the page keeps a running test going.
+useUnsavedGuard(dirty);
 onBeforeRouteLeave(async () => {
   if (!startedHere || !test.value) return;
   try { await stopTest(); } catch { /* The test ends by itself if the connection is lost. */ }
@@ -72,7 +83,6 @@ onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); });
 <template>
   <section class="settings-page light-show-page">
     <h1 tabindex="-1">Light show</h1>
-    <p>How the boards light up during a game. The countdown, GO and game over follow the BUSY Bar; while the game is playing the boards drift slowly so the lights stay easy on the eyes but never stand still.</p>
     <p v-if="message || mutation.error.value" role="status" :class="{ 'error-message': mutation.error.value }">{{ mutation.error.value?.message ?? message }}</p>
     <template v-if="draft">
       <fieldset class="settings-section" :disabled="busy"><legend>Look</legend>
@@ -91,7 +101,7 @@ onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); });
           <div><label for="brightness">Brightness</label><input id="brightness" v-model.number="draft.lightShow.brightness" type="range" min="20" max="100" step="5" /><output for="brightness">{{ draft.lightShow.brightness }}%</output></div>
         </div>
       </fieldset>
-      <fieldset class="settings-section" :disabled="busy"><legend>While the game is playing</legend>
+      <fieldset class="settings-section" :disabled="busy"><legend>Playing</legend>
         <div class="parameters slider-parameters">
           <div><label for="intensity">Intensity</label><select id="intensity" v-model="draft.lightShow.intensity"><option value="calm">Calm</option><option value="balanced">Balanced</option><option value="lively">Lively</option></select></div>
           <div><label for="drift-speed">Drift speed</label><input id="drift-speed" v-model.number="draft.lightShow.speed" type="range" min="25" max="200" step="5" /><output for="drift-speed">{{ draft.lightShow.speed }}%</output></div>
@@ -113,14 +123,15 @@ onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); });
       <LightShowPreview :draft="draft" />
       <section class="settings-section" aria-label="Test on the boards">
         <h2>Test on the boards</h2>
-        <p>Plays one part of the show on the real boards with the settings above, saved or not.</p>
+        <LiveBoards v-if="hasBoards" />
         <div class="button-group">
-          <button v-for="segment in segments" :key="segment.id" :disabled="blocked || !hasBoards" @click="mutation.mutate(segment.id)">{{ segment.label }}</button>
-          <button class="danger" :disabled="busy || !test" @click="mutation.mutate('stop')">Stop test</button>
+          <button v-for="segment in segments" :key="segment.id" :disabled="blocked || !hasBoards" @click="mutation.mutate(segment.id)"><component :is="segment.icon" />{{ segment.label }}</button>
+          <IconButton class="danger" :icon="Square" label="Stop test" :disabled="busy || !test" @click="mutation.mutate('stop')" />
         </div>
         <p v-if="testStatus" class="test-status" role="status" data-testid="light-test-status">{{ testStatus }}</p>
       </section>
-      <div class="button-group layout-save"><button class="primary" :disabled="blocked" @click="mutation.mutate('save')">Save light show</button><button :disabled="busy" @click="reload">Reload saved settings</button></div>
+      <SaveBar :dirty="dirty" label="Save light show" :disabled="blocked" reload-label="Reload saved settings" :reload-disabled="busy"
+        :note="mutation.error.value?.message ?? message" :failed="!!mutation.error.value" @save="mutation.mutate('save')" @reload="reload" />
     </template>
   </section>
 </template>

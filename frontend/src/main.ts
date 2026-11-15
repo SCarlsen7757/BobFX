@@ -10,6 +10,7 @@ import LightShow from './pages/LightShow.vue';
 import Effects from './pages/Effects.vue';
 import Devices from './pages/Devices.vue';
 import BoardLayout from './pages/BoardLayout.vue';
+import Boards from './pages/Boards.vue';
 import Controllers from './pages/Controllers.vue';
 import { queryClient } from './lib/session';
 
@@ -23,6 +24,7 @@ const router = createRouter({
     { path: '/drgb', component: Effects, meta: { title: 'LED effects' } },
     { path: '/wled', component: Devices, meta: { title: 'WLED devices' } },
     { path: '/layout', component: BoardLayout, meta: { title: 'Board layout' } },
+    { path: '/boards', component: Boards, meta: { title: 'Live boards' } },
     { path: '/controllers', component: Controllers, meta: { title: 'Remote controllers' } },
     { path: '/:pathMatch(.*)*', component: { template: '<h1>Page not found</h1><p><a href="/">Return to the game</a></p>' } },
   ],

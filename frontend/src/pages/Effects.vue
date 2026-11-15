@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useMutation, useQuery } from '@tanstack/vue-query';
+import { Play, Square, Zap } from '@lucide/vue';
 import { api } from '../lib/api';
 import { command, connected, preview, setPreview, useEffect, useInstallation } from '../lib/session';
 import type { EffectDescriptor } from '../lib/contracts';
@@ -34,22 +35,20 @@ const busy = computed(() => !connected.value || mutation.isPending.value || !!in
 <template>
   <section class="settings-page effects-page">
     <h1 tabindex="-1">LED effects</h1>
-    <div class="effect-summary"><span>Current effect: <strong>{{ status?.value.currentEffect ?? 'Off' }}</strong></span><span>Speed: <strong>{{ status?.value.speed ?? 100 }}</strong> ms</span></div>
-    <div class="effect-picker"><label for="effect-type">Effect</label><select id="effect-type" v-model="selected"><option v-for="effect in descriptors" :key="effect.type" :value="effect.type">{{ effect.type }}</option></select></div>
-    <p class="effect-description">{{ descriptor?.info.description }}</p>
+    <p class="effect-summary" title="Current effect and speed"><Zap /><span class="sr-only">Current effect: </span><strong>{{ status?.value.currentEffect ?? 'Off' }}</strong><span>{{ status?.value.speed ?? 100 }} ms</span></p>
+    <div class="effect-picker"><label for="effect-type">Effect</label><select id="effect-type" v-model="selected" :title="descriptor?.info.description"><option v-for="effect in descriptors" :key="effect.type" :value="effect.type">{{ effect.type }}</option></select></div>
     <div class="parameters effect-parameters">
       <div><label for="speed">Speed:</label><input id="speed" v-model.number="speed" type="number" inputmode="numeric" min="10" max="2000" /><span class="unit">ms</span></div>
-      <p class="led-count">Preview: {{ status?.value.ledCount ?? 0 }} LEDs</p>
-      <div v-for="(_, index) in colors" :key="`${selected}-${index}`"><label :for="`color-${index}`">{{ descriptor?.info.colorLabels[index] ?? `Color ${index + 1}` }} {{ index < (descriptor?.info.requiredColors ?? 0) ? '*' : '(optional)' }}:</label><input :id="`color-${index}`" v-model="colors[index]" type="color" /></div>
-      <div v-if="selected === 'FadeIn' || selected === 'FadeOut'"><label for="fade">Fade Duration:</label><input id="fade" v-model.number="fade" type="number" min="0.1" max="60" step="0.1" /><span class="unit">seconds</span></div>
+      <div v-for="(_, index) in colors" :key="`${selected}-${index}`"><label :for="`color-${index}`">{{ descriptor?.info.colorLabels[index] ?? `Color ${index + 1}` }}:</label><input :id="`color-${index}`" v-model="colors[index]" type="color" /></div>
+      <div v-if="selected === 'FadeIn' || selected === 'FadeOut'"><label for="fade">Fade Duration:</label><input id="fade" v-model.number="fade" type="number" min="0.1" max="60" step="0.1" /><span class="unit">s</span></div>
       <template v-if="selected === 'Breathing'">
-        <div><label for="breath">Breath Duration:</label><input id="breath" v-model.number="breath" type="number" min="0.1" max="60" step="0.1" /><span class="unit">seconds</span></div>
+        <div><label for="breath">Breath Duration:</label><input id="breath" v-model.number="breath" type="number" min="0.1" max="60" step="0.1" /><span class="unit">s</span></div>
         <div><label for="minimum">Min Brightness:</label><input id="minimum" v-model.number="minimum" type="number" min="0" max="100" /><span class="unit">%</span></div>
         <div><label for="maximum">Max Brightness:</label><input id="maximum" v-model.number="maximum" type="number" min="0" max="100" /><span class="unit">%</span></div>
       </template>
     </div>
-    <div class="button-group"><button class="primary" :disabled="busy || !descriptor" @click="mutation.mutate(false)">Start</button><button class="danger" :disabled="busy" @click="mutation.mutate(true)">Stop</button></div>
+    <div class="button-group"><button class="primary" :disabled="busy || !descriptor" @click="mutation.mutate(false)"><Play />Start</button><button class="danger" :disabled="busy" @click="mutation.mutate(true)"><Square />Stop</button></div>
     <p v-if="mutation.error.value" role="alert" class="error-message">{{ mutation.error.value.message }}</p>
-    <div class="led-preview"><h2>LED Preview</h2><div class="led-strip" aria-label="Live LED preview"><span v-for="(pixel, index) in preview" :key="index" class="led-pixel" :style="{ background: pixel }"></span></div></div>
+    <div class="led-preview"><div class="led-strip" aria-label="Live LED preview"><span v-for="(pixel, index) in preview" :key="index" class="led-pixel" :style="{ background: pixel }"></span></div></div>
   </section>
 </template>
