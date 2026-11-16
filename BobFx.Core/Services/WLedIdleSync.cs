@@ -27,8 +27,10 @@ public sealed class WLedIdleSync(InstallationSettingsStore settings, WLedDiscove
         if (configure)
             // A member that left the sync is told to stop; a simulated or removed one has nothing to tell.
             foreach (var device in Members(applied).Except(Members(sync)).Select(Device).OfType<DeviceSettings>().Where(device => !device.Simulated))
-                if (!await TryAsync(() => DisableAsync(discovery.Resolve(device), token), token))
-                    report(device.Mac, "Previous idle sync member could not be disabled.");
+            {
+                var disabled = await TryAsync(() => DisableAsync(discovery.Resolve(device), token), token);
+                if (!disabled) report(device.Mac, "Previous idle sync member could not be disabled.");
+            }
         applied = sync;
         if (!sync.Enabled) return;
 
