@@ -9,7 +9,7 @@ public sealed record StartEffectRequest(string Effect = "Rainbow", [Range(RgbEff
 public sealed record ChangeSpeedRequest([Range(RgbEffectBase.MinSpeedMilliseconds, RgbEffectBase.MaxSpeedMilliseconds)] int SpeedMs);
 [ApiController]
 [Route("api/[controller]")]
-public sealed class DRgbController(DRgbService ledService, IRgbEffectFactory factory, RgbAndSoundControlService control) : ControllerBase
+public sealed class DRgbController(ManualEffectRenderer ledService, IRgbEffectFactory factory, GameCoordinator control) : ControllerBase
 {
     [HttpPost("start")]
     public Task Start([FromBody] StartEffectRequest request)

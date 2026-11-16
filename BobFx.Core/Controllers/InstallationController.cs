@@ -7,7 +7,7 @@ namespace BobFx.Core.Controllers;
 /// <summary>Setting up the installation. What a command refuses is answered by <see cref="ApiExceptionFilter"/>.</summary>
 [ApiController]
 [Route("api/installation")]
-public sealed class InstallationController(InstallationSettingsStore settings, RgbAndSoundControlService control,
+public sealed class InstallationController(InstallationSettingsStore settings, GameCoordinator control,
     InstallationOutputService output, WLedRegistryService registry, ControllerCredentials credentials,
     WLedDiscoveryService discovery, BusyBarService busyBars) : ControllerBase
 {

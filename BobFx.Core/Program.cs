@@ -29,8 +29,8 @@ builder.Services.AddDeviceHttpClient("wled", TimeSpan.FromSeconds(2));
 builder.Services.AddDeviceHttpClient("busybar", TimeSpan.FromSeconds(2));
 builder.Services.AddDeviceHttpClient("busybar-assets", TimeSpan.FromSeconds(30));
 // Background services start in this order.
-builder.Services.AddHostedSingleton<DRgbService>();
-builder.Services.AddHostedSingleton<RgbAndSoundControlService>();
+builder.Services.AddHostedSingleton<ManualEffectRenderer>();
+builder.Services.AddHostedSingleton<GameCoordinator>();
 builder.Services.AddHostedSingleton<BoardMonitorService>();
 builder.Services.AddHostedSingleton<InstallationOutputService>();
 builder.Services.AddHostedSingleton<WLedDiscoveryService>();
@@ -59,13 +59,13 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
-app.MapGet("/health/ready", (RgbAndSoundControlService control, DRgbService rgb, InstallationOutputService output) =>
+app.MapGet("/health/ready", (GameCoordinator control, ManualEffectRenderer rgb, InstallationOutputService output) =>
     control.IsReady && rgb.IsReady && output.IsReady && rgb.LastError is null && output.LastError is null ? Results.Ok(new { status = "ready" }) : Results.StatusCode(StatusCodes.Status503ServiceUnavailable));
-app.MapGet("/health/status", (RgbAndSoundControlService control, DRgbService rgb, InstallationOutputService output, WLedDiscoveryService discovery) => Results.Ok(new
+app.MapGet("/health/status", (GameCoordinator control, ManualEffectRenderer rgb, InstallationOutputService output, WLedDiscoveryService discovery) => Results.Ok(new
 {
     phase = control.Phase.ToString(),
     renderer = new { ready = rgb.IsReady, error = rgb.LastError },
-    udp = new { active = rgb.IsUdpActive, lastSendUtc = output.LastSendUtc, error = output.LastError, devices = output.Errors },
+    udp = new { active = rgb.IsStreaming, lastSendUtc = output.LastSendUtc, error = output.LastError, devices = output.Errors },
     discovery = new { lastScanUtc = discovery.LastScanUtc, error = discovery.LastError, devices = discovery.Devices.Count }
 }));
 app.MapControllers();

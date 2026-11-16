@@ -1,6 +1,6 @@
 namespace BobFx.Core.Services;
 
-public sealed class WLedRegistryService(InstallationSettingsStore settings, RgbAndSoundControlService control, IHttpClientFactory clients)
+public sealed class WLedRegistryService(InstallationSettingsStore settings, GameCoordinator control, IHttpClientFactory clients)
 {
     /// <summary>WLED's UDP port for realtime frames unless the device says otherwise.</summary>
     public const int DefaultUdpPort = 21324;

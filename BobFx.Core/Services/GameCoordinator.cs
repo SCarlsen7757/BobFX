@@ -2,10 +2,12 @@ using BobFx.Core.Services.Effects;
 namespace BobFx.Core.Services;
 public enum GamePhase { Idle, PreCountdown, Running, Ending }
 
-/// <summary>Serializes game and manual commands and owns streaming transitions.</summary>
-public sealed class RgbAndSoundControlService(
-    CountdownService countdown, DRgbService rgb, SoundService sounds, TimeProvider clock,
-    ILogger<RgbAndSoundControlService> logger, InstallationSettingsStore settings) : BackgroundService
+/// <summary>Decides who has the lights. Every command that lights the boards goes through here one at a time:
+/// a game, a manual effect, a locate, a calibration, a light show test, and changes to the setup, which need the
+/// lights free. It also moves a game through its phases as the countdown runs.</summary>
+public sealed class GameCoordinator(
+    CountdownService countdown, ManualEffectRenderer rgb, SoundService sounds, TimeProvider clock,
+    ILogger<GameCoordinator> logger, InstallationSettingsStore settings) : BackgroundService
 {
     private readonly SemaphoreSlim commands = new(1, 1);
     private static readonly TimeSpan ShutdownWait = TimeSpan.FromSeconds(5);
@@ -85,7 +87,7 @@ public sealed class RgbAndSoundControlService(
             countdown.Start(withPreCountdown, duration, deviation);
             // The board show is rendered from the scene clock; a manual effect must not run on through the game.
             rgb.StopEffect();
-            rgb.IsUdpActive = true;
+            rgb.IsStreaming = true;
             SetPhase(countdown.IsPreCountdownRunning ? GamePhase.PreCountdown : GamePhase.Running,
                 countdown.IsPreCountdownRunning ? countdown.PreCountdownRemaining.TotalSeconds : 0);
         }
@@ -107,7 +109,7 @@ public sealed class RgbAndSoundControlService(
     public async Task StartManualEffectAsync(Action<RgbEffectBuilder> configure)
     {
         await commands.WaitAsync();
-        try { EnsureIdle(); await rgb.StartEffectAsync(configure); rgb.IsUdpActive = true; }
+        try { EnsureIdle(); await rgb.StartEffectAsync(configure); rgb.IsStreaming = true; }
         finally { commands.Release(); }
     }
     public async Task StopManualEffectAsync()
@@ -148,7 +150,7 @@ public sealed class RgbAndSoundControlService(
     {
         EnsureNotHeld(replacingLightTest);
         if (Phase != GamePhase.Idle) throw new InvalidOperationException("The game owns the lights until its ending sequence completes.");
-        if (before is not null && rgb.IsUdpActive) throw new InvalidOperationException($"Stop manual output before {before}.");
+        if (before is not null && rgb.IsStreaming) throw new InvalidOperationException($"Stop manual output before {before}.");
     }
 
     private Task EnterEndingAsync()
@@ -158,7 +160,7 @@ public sealed class RgbAndSoundControlService(
     }
     private void EnterIdle()
     {
-        rgb.IsUdpActive = false; rgb.StopEffect(); SetPhase(GamePhase.Idle);
+        rgb.IsStreaming = false; rgb.StopEffect(); SetPhase(GamePhase.Idle);
     }
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

@@ -152,7 +152,7 @@ public sealed class HttpTests
         await using var app = new BobFxFactory();
         using var client = app.CreateClient();
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Solid", colors = new[] { "#123456" } }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
-        var pixel = app.Services.GetRequiredService<DRgbService>().GetSnapshot()[0];
+        var pixel = app.Services.GetRequiredService<ManualEffectRenderer>().GetSnapshot()[0];
         Assert.Equal(0x12 / 255f, pixel.X); Assert.Equal(0x34 / 255f, pixel.Y); Assert.Equal(0x56 / 255f, pixel.Z);
         foreach (var invalid in new object[] {
             new { effect = "Solid", colors = new[] { "#000000" } },

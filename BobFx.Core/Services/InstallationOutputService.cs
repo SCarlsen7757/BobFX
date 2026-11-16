@@ -10,7 +10,7 @@ public sealed record LightShowTestView(string Segment, DateTimeOffset EndsUtc);
 public sealed record LightShowTestRequest(string Segment, LightShowSettings LightShow, AnimationSettings Animation);
 
 public sealed class InstallationOutputService(InstallationSettingsStore settings, WLedDiscoveryService discovery,
-    RgbAndSoundControlService control, DRgbService rgb, WLedIdleSync idleSync, TimeProvider clock,
+    GameCoordinator control, ManualEffectRenderer rgb, WLedIdleSync idleSync, TimeProvider clock,
     ILogger<InstallationOutputService> logger, IWLedFrameTransport transport, BoardFrameMonitor monitor) : BackgroundService
 {
     private readonly ConcurrentDictionary<string, string> errors = new();
@@ -214,7 +214,7 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
                         await SendSceneAsync(test.Settings, moment.Phase, moment.Elapsed, CountdownService.PreCountdownDuration.TotalSeconds, stoppingToken);
                     else await StopLightShowTestAsync(test.Started);
                 }
-                var streaming = rgb.IsUdpActive;
+                var streaming = rgb.IsStreaming;
                 // A finished test hands the boards back to WLED's idle state the same way a finished game does.
                 var active = streaming || test is not null;
                 if (wasActive && !active)

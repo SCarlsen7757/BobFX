@@ -33,10 +33,10 @@ internal sealed class TestHarness(TimeProvider? time = null, WLedOptions? wled =
     public ControllerCredentials Credentials => field ??= new(Store);
     public SoundService Sounds => field ??= new(NullLogger<SoundService>.Instance);
     public BoardFrameMonitor Monitor => field ??= new(Time);
-    public DRgbService Rgb => field ??= Keep(new DRgbService(NullLogger<DRgbService>.Instance, wledOptions, new RgbEffectFactory(), Time));
+    public ManualEffectRenderer Rgb => field ??= Keep(new ManualEffectRenderer(NullLogger<ManualEffectRenderer>.Instance, wledOptions, new RgbEffectFactory(), Time));
     public CountdownService Countdown => field ??= new(NullLogger<CountdownService>.Instance, Options.Create(countdown ?? new CountdownOptions()), Time, Store);
-    public RgbAndSoundControlService Control => field ??= Keep(new RgbAndSoundControlService(Countdown, Rgb, Sounds, Time,
-        NullLogger<RgbAndSoundControlService>.Instance, Store));
+    public GameCoordinator Control => field ??= Keep(new GameCoordinator(Countdown, Rgb, Sounds, Time,
+        NullLogger<GameCoordinator>.Instance, Store));
     public WLedDiscoveryService Discovery => field ??= Keep(new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, wledOptions, Http,
         DiscoverySource, Store));
     public InstallationOutputService Output => field ??= Keep(new InstallationOutputService(Store, Discovery, Control, Rgb, new WLedIdleSync(Store, Discovery, Http), Time,

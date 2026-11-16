@@ -6,11 +6,13 @@ namespace BobFx.Core.Services;
 
 public sealed record BusyBarStatus(string State, string? ApiVersion = null, bool InputSupported = false, BusyBarSelector Selector = BusyBarSelector.Unknown);
 
-public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSoundControlService control,
+public sealed class BusyBarService(InstallationSettingsStore settings, GameCoordinator control,
     IHttpClientFactory clients, IConfiguration configuration, TimeProvider clock, ControllerCredentials credentials,
     IBusyBarStatusSource source) : BackgroundService
 {
     internal const int DisplayLeaseSeconds = 15;
+    // The two states that are also looked for: a failed display update is cleared by the next good one.
+    private const string OutputEnabled = "APPS mode; BobFX output enabled", DisplayFailed = "Display update failed; retrying";
     private readonly ConcurrentDictionary<string, BusyBarStatus> statuses = new();
     public IReadOnlyDictionary<string, BusyBarStatus> Statuses => new Dictionary<string, BusyBarStatus>(statuses);
     public async Task<string> TestConnectionAsync(BusyBarSettings bar, string? password = null, CancellationToken token = default)
@@ -18,13 +20,24 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
         InstallationSettingsStore.Validate(new InstallationSettings { Controllers = [bar] });
         var secret = string.IsNullOrEmpty(password) ? LoadSecret(bar) : password;
         ControllerCredentials.ValidatePassword(secret);
-        using var client = clients.CreateClient("busybar");
-        client.DefaultRequestHeaders.Add("X-API-Token", secret);
-        var version = await client.GetFromJsonAsync<JsonElement>($"http://{bar.Address}:{bar.Port}/api/version", token);
-        if (!version.TryGetProperty("api_semver", out var value) || string.IsNullOrWhiteSpace(value.GetString()))
-            throw new InvalidDataException("Device did not return a BUSY Bar API version.");
-        return value.GetString()!;
+        using var client = Authenticated(secret);
+        var api = await ApiVersionAsync(client, bar, token);
+        return string.IsNullOrWhiteSpace(api) ? throw new InvalidDataException("Device did not return a BUSY Bar API version.") : api;
     }
+    /// <summary>A client that sends the bar's API token with every request.</summary>
+    private HttpClient Authenticated(string secret)
+    {
+        var client = clients.CreateClient("busybar");
+        client.DefaultRequestHeaders.Add("X-API-Token", secret);
+        return client;
+    }
+    /// <summary>The API version the bar reports, which decides the animation format it can play; null when it reports none.</summary>
+    private static async Task<string?> ApiVersionAsync(HttpClient client, BusyBarSettings bar, CancellationToken token)
+    {
+        var version = await client.GetFromJsonAsync<JsonElement>($"{Origin(bar)}/version", token);
+        return version.TryGetProperty("api_semver", out var value) ? value.GetString() : null;
+    }
+    private static string Origin(BusyBarSettings bar) => $"http://{bar.Address}:{bar.Port}/api";
     private string LoadSecret(BusyBarSettings bar)
     {
         if (credentials.HasPassword(bar.Id)) return credentials.Read(bar.Id);
@@ -76,11 +89,9 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
             try
             {
                 var secret = LoadSecret(bar);
-                using var client = clients.CreateClient("busybar");
-                client.DefaultRequestHeaders.Add("X-API-Token", secret);
-                var origin = $"http://{bar.Address}:{bar.Port}/api";
-                var version = await client.GetFromJsonAsync<JsonElement>(origin + "/version", token);
-                var api = version.TryGetProperty("api_semver", out var property) ? property.GetString() : null;
+                using var client = Authenticated(secret);
+                var origin = Origin(bar);
+                var api = await ApiVersionAsync(client, bar, token);
                 // The bar accepts an animation file it cannot play and shows an error icon instead,
                 // so only API versions with a reviewed native format get any output.
                 if (BusyBarAnimFile.FormatFor(api) is not { } format)
@@ -116,8 +127,8 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
         var uploaded = new HashSet<string>();
         long? lastSent = null;
         var failures = 0;
+        // Its own client: an animation file takes longer to send than a command.
         using var uploadClient = clients.CreateClient("busybar-assets");
-        uploadClient.Timeout = TimeSpan.FromSeconds(30);
         if (client.DefaultRequestHeaders.TryGetValues("X-API-Token", out var password))
             uploadClient.DefaultRequestHeaders.Add("X-API-Token", password);
         using var cadence = new PeriodicTimer(TimeSpan.FromMilliseconds(100), clock);
@@ -177,8 +188,8 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                     {
                         previous = screen; lastSent = clock.GetTimestamp();
                         failures = 0;
-                        if (statuses.TryGetValue(bar.Id, out var status) && status.State == "Display update failed; retrying")
-                            statuses.TryUpdate(bar.Id, status with { State = "APPS mode; BobFX output enabled" }, status);
+                        if (statuses.TryGetValue(bar.Id, out var status) && status.State == DisplayFailed)
+                            statuses.TryUpdate(bar.Id, status with { State = OutputEnabled }, status);
                     }
                     else { previous = null; lastSent = null; }
                 }
@@ -192,7 +203,7 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                 // responses do not justify re-uploading every file or dropping the scene.
                 if (ex is HttpRequestException { StatusCode: System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.NotFound })
                     uploaded.Clear();
-                statuses[bar.Id] = statuses.GetValueOrDefault(bar.Id, new("Disconnected")) with { State = "Display update failed; retrying" };
+                statuses[bar.Id] = statuses.GetValueOrDefault(bar.Id, new("Disconnected")) with { State = DisplayFailed };
                 var retryMilliseconds = 250 * (1 << Math.Min(failures++, 3));
                 try { await Task.Delay(TimeSpan.FromMilliseconds(retryMilliseconds), clock, token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
@@ -214,8 +225,7 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                         if (input.Selector is { } selector)
                         {
                             await mode.SetAsync(selector, token);
-                            statuses[bar.Id] = statuses[bar.Id] with { Selector = selector, State = selector == BusyBarSelector.Apps
-                                ? "APPS mode; BobFX output enabled" : "Output paused outside APPS mode" };
+                            statuses[bar.Id] = statuses[bar.Id] with { Selector = selector, State = selector == BusyBarSelector.Apps ? OutputEnabled : "Output paused outside APPS mode" };
                             continue;
                         }
                         if (!bar.RemoteEnabled || input.Button is not { } button || mode.Selector != BusyBarSelector.Apps) continue;

@@ -75,17 +75,17 @@ public sealed class BackendTests
         await using var h = new TestHarness();
         var (rgb, control) = (h.Rgb, h.Control);
         await control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid).WithColor("#ff0000"));
-        Assert.True(rgb.IsUdpActive);
+        Assert.True(rgb.IsStreaming);
         await control.StartGameAsync(TimeSpan.FromSeconds(10), TimeSpan.Zero);
         // The game is rendered on the boards from the scene clock; it ends the manual effect and starts none.
         Assert.Equal(RgbEffect.Off, rgb.CurrentEffect);
-        Assert.True(rgb.IsUdpActive);
+        Assert.True(rgb.IsStreaming);
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Rainbow)));
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StopManualEffectAsync());
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.SetManualSpeedAsync(TimeSpan.FromMilliseconds(100)));
         await control.StopGameAsync();
         Assert.Equal(GamePhase.Idle, control.Phase);
-        Assert.False(rgb.IsUdpActive);
+        Assert.False(rgb.IsStreaming);
     }
 
     [Fact]
@@ -102,11 +102,11 @@ public sealed class BackendTests
         clock.Advance(TimeSpan.FromSeconds(6));
         await Wait.Until(() => timer.Remaining <= TimeSpan.FromSeconds(14));
         Assert.Equal(GamePhase.Running, control.Phase);
-        Assert.True(rgb.IsUdpActive);
+        Assert.True(rgb.IsStreaming);
         Assert.Equal(RgbEffect.Off, rgb.CurrentEffect); // Six seconds in, the virtual strip is still not driven.
         await control.StopAsync(CancellationToken.None);
         Assert.False(control.IsReady);
-        Assert.False(rgb.IsUdpActive);
+        Assert.False(rgb.IsStreaming);
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartGameAsync());
     }
 

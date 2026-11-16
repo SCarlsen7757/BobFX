@@ -16,10 +16,10 @@ public sealed class RendererTests
         await rgb.StartAsync(CancellationToken.None);
         await Wait.Until(() => rgb.IsReady);
         await rgb.StartEffectAsync(new FaultingEffect());
-        rgb.IsUdpActive = true;
+        rgb.IsStreaming = true;
         clock.Advance(TimeSpan.FromMilliseconds(10));
-        await Wait.Until(() => rgb.LastError is not null && !rgb.IsUdpActive);
-        Assert.False(rgb.IsUdpActive);
+        await Wait.Until(() => rgb.LastError is not null && !rgb.IsStreaming);
+        Assert.False(rgb.IsStreaming);
         Assert.All(rgb.GetSnapshot(), color => Assert.Equal(Vector3.Zero, color));
         await rgb.StartEffectAsync(new SolidEffect { Color = Vector3.One });
         Assert.Null(rgb.LastError);
@@ -59,7 +59,7 @@ public sealed class RendererTests
         var animation = h.Store.Snapshot.Animation;
         clock.Advance(TimeSpan.FromSeconds(animation.FlashSeconds + animation.DotSeconds));
         await Wait.Until(() => control.Phase == GamePhase.Idle);
-        Assert.False(rgb.IsUdpActive);
+        Assert.False(rgb.IsStreaming);
         Assert.Single(requests);
         await control.StopAsync(CancellationToken.None);
     }

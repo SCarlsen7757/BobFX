@@ -5,7 +5,7 @@ namespace BobFx.Core.Controllers;
 public sealed record StartGameRequest(int? DurationSeconds = null, int? DeviationSeconds = null);
 [ApiController]
 [Route("api/[controller]")]
-public sealed class CountdownController(CountdownService countdown, RgbAndSoundControlService control) : ControllerBase
+public sealed class CountdownController(CountdownService countdown, GameCoordinator control) : ControllerBase
 {
     [HttpPost("start")]
     public Task Start([FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] StartGameRequest? request = null) =>

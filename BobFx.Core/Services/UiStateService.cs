@@ -23,7 +23,7 @@ public sealed record SoundEvent(string EventId, long RunId, string Key);
 
 /// <summary>One publisher samples shared services, independently of browser count.</summary>
 public sealed class UiStateService(
-    CountdownService countdown, RgbAndSoundControlService control, DRgbService rgb,
+    CountdownService countdown, GameCoordinator control, ManualEffectRenderer rgb,
     WLedDiscoveryService discovery, SoundService sounds, TimeProvider clock,
     InstallationSettingsStore settings, InstallationOutputService output, BusyBarService busyBars, ControllerCredentials credentials,
     IHubContext<UiHub> hub, ILogger<UiStateService> logger) : BackgroundService
