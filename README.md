@@ -137,7 +137,7 @@ The effect start API preserves the selected effect's descriptor default when `sp
 
 See the [modernization review](docs/modernization-review.md) for findings, validation evidence, and remaining rollout checks.
 
-Pull requests and main pushes run locked restore, Release build with analyzers, .NET and JavaScript tests, Playwright browser tests, NuGet advisory checks, repository secret/configuration scans, and hardened image smoke tests for amd64 and arm64. CodeQL runs on pull requests/main and weekly. Dependabot checks NuGet, the frontend and browser test npm dependencies, Docker images, and pinned GitHub Actions weekly.
+Pull requests and main pushes run locked restore, Release build with analyzers, .NET and JavaScript tests, Playwright browser tests, NuGet advisory checks, repository secret/configuration scans, and hardened image smoke tests for amd64 and arm64. CI also fails when the SDK in global.json and the Docker SDK image differ. CodeQL analyses the C# and TypeScript code on pull requests/main and weekly. Dependabot checks NuGet, the .NET SDK, the frontend and browser test npm dependencies, the CI scripts' Python packages, Docker images, and pinned GitHub Actions weekly.
 
 Publishing is explicit: a trusted maintainer pushes a stable `vMAJOR.MINOR.PATCH` tag. The release waits for quality and image checks, publishes a versioned multi-architecture GHCR image with SBOM/provenance, and records the immutable production digest in release notes. Main pushes no longer automatically publish `latest` or create releases.
 

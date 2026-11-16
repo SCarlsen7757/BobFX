@@ -14,12 +14,15 @@
 
   <ItemGroup>
     <Content Remove="wwwroot/ui/**/*" />
+    <!-- Development settings are read from the project directory and do not belong in a published app or image. -->
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
     <FrontendSource Include="../frontend/src/**/*;../frontend/public/**/*;../frontend/index.html;../frontend/vite.config.ts;../frontend/tsconfig.json;../frontend/package.json;../frontend/package-lock.json" />
   </ItemGroup>
-  <Target Name="InstallFrontend" Inputs="../frontend/package-lock.json" Outputs="../frontend/node_modules/.package-lock.json" Condition="'$(SkipFrontendBuild)' != 'true'">
+  <!-- The IDE's design-time builds only need the C# project, so they do not run npm. -->
+  <Target Name="InstallFrontend" Inputs="../frontend/package-lock.json" Outputs="../frontend/node_modules/.package-lock.json" Condition="'$(SkipFrontendBuild)' != 'true' And '$(DesignTimeBuild)' != 'true'">
     <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="../frontend" />
   </Target>
-  <Target Name="BuildFrontend" BeforeTargets="PrepareForBuild" DependsOnTargets="InstallFrontend" Inputs="@(FrontendSource)" Outputs="wwwroot/ui/index.html" Condition="'$(SkipFrontendBuild)' != 'true'">
+  <Target Name="BuildFrontend" BeforeTargets="PrepareForBuild" DependsOnTargets="InstallFrontend" Inputs="@(FrontendSource)" Outputs="wwwroot/ui/index.html" Condition="'$(SkipFrontendBuild)' != 'true' And '$(DesignTimeBuild)' != 'true'">
     <Exec Command="npm run build" WorkingDirectory="../frontend" />
   </Target>
   <Target Name="PublishFrontend" AfterTargets="ComputeFilesToPublish">

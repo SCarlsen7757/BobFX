@@ -1,31 +1,38 @@
 """Verify exact registry digests, then promote the complete index without rebuilding."""
 import argparse
+from collections.abc import Sequence
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import time
+from typing import Any
 
 ARCHITECTURES = ("amd64", "arm64")
+EVIDENCE = Path("release-evidence")
+# The address the app listens on inside the container.
+APP_URL = "http://127.0.0.1:8080"
+HEALTH_ATTEMPTS = 30
+HEALTH_INTERVAL_SECONDS = 3
 
 
-def run(*args):
+def run(*args: str) -> str:
     result = subprocess.run(args, check=True, text=True, encoding="utf-8", capture_output=True)
     return result.stdout.strip()
 
 
-def digest(value):
+def digest(value: str) -> str:
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
         raise ValueError(f"Invalid image digest: {value}")
     return value
 
 
-def inspect(reference, field="Manifest"):
+def inspect(reference: str, field: str = "Manifest") -> Any:
     return json.loads(run("docker", "buildx", "imagetools", "inspect", reference, "--format", "{{json ." + field + "}}"))
 
 
-def existing_digest(reference):
+def existing_digest(reference: str) -> str:
     try:
         return digest(inspect(reference)["digest"])
     except subprocess.CalledProcessError as error:
@@ -35,16 +42,16 @@ def existing_digest(reference):
         raise
 
 
-def select(image, version):
+def select(image: str, version: str) -> None:
     existing = existing_digest(f"{image}:{version}")
     candidate = f"{image}:candidate-{os.environ['GITHUB_SHA']}-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
         output.write(f"existing={existing}\ncandidate={candidate}\n")
 
 
-def platforms(index):
-    images = {}
-    attestations = set()
+def platforms(index: dict[str, Any]) -> dict[str, str]:
+    images: dict[str, str] = {}
+    attestations: set[str | None] = set()
     for manifest in index.get("manifests", []):
         platform = manifest.get("platform", {})
         annotations = manifest.get("annotations", {})
@@ -64,7 +71,7 @@ def platforms(index):
     return images
 
 
-def metadata(config, architecture, version, revision):
+def metadata(config: dict[str, Any], architecture: str, version: str, revision: str) -> None:
     if config["Os"] != "linux" or config["Architecture"] != architecture:
         raise ValueError("Pulled image platform does not match the candidate index")
     labels = config["Config"].get("Labels") or {}
@@ -74,7 +81,22 @@ def metadata(config, architecture, version, revision):
         raise ValueError("OCI source revision differs from tagged commit")
 
 
-def smoke(reference, architecture, version=None, evidence=Path("release-evidence")):
+def wait_healthy(name: str) -> bool:
+    """Poll the container's health check; False when it never reports healthy."""
+    for _ in range(HEALTH_ATTEMPTS):
+        if run("docker", "inspect", "--format", "{{.State.Health.Status}}", name) == "healthy":
+            return True
+        time.sleep(HEALTH_INTERVAL_SECONDS)
+    return False
+
+
+def exec_curl(name: str, path: str, *extra: str, data: str | None = None) -> str:
+    """Request a path from the app with curl inside the container; data is sent as a JSON body."""
+    body = ("-H", "Content-Type: application/json", "--data-binary", data) if data is not None else ()
+    return run("docker", "exec", name, "curl", "--fail", "--silent", *extra, "-H", "Host: localhost", *body, APP_URL + path)
+
+
+def smoke(reference: str, architecture: str, version: str | None = None, evidence: Path = EVIDENCE) -> None:
     name = f"bobfx-smoke-{architecture}"
     volume = f"{name}-data"
     command = ("docker", "run", "-d", "--name", name, "--platform", f"linux/{architecture}",
@@ -88,46 +110,34 @@ def smoke(reference, architecture, version=None, evidence=Path("release-evidence
     run("docker", "volume", "create", volume)
     run(*command)
     try:
-        for _ in range(30):
-            status = run("docker", "inspect", "--format", "{{.State.Health.Status}}", name)
-            if status == "healthy":
-                if run("docker", "exec", name, "id", "-u") != "1654":
-                    raise ValueError("Runtime must use UID 1654")
-                settings_url = "http://127.0.0.1:8080/api/installation"
-                settings = json.loads(run("docker", "exec", name, "curl", "--fail", "--silent", "-H", "Host: localhost", settings_url))
-                settings["animation"]["framesPerSecond"] = 23
-                run("docker", "exec", name, "curl", "--fail", "--silent", "-X", "PUT",
-                    "-H", "Host: localhost", "-H", "Content-Type: application/json", "--data-binary", json.dumps(settings), settings_url)
-                run("docker", "rm", "-f", name)
-                run(*command)
-                for _ in range(30):
-                    if run("docker", "inspect", "--format", "{{.State.Health.Status}}", name) == "healthy":
-                        break
-                    time.sleep(3)
-                else:
-                    raise ValueError("Recreated container failed to become healthy")
-                restored = json.loads(run("docker", "exec", name, "curl", "--fail", "--silent", "-H", "Host: localhost", settings_url))
-                if restored != settings:
-                    raise ValueError("Installation settings did not survive container recreation")
-                evidence.mkdir(parents=True, exist_ok=True)
-                (evidence / f"persistence-{architecture}.json").write_text(json.dumps({"settingsSurvivedRecreation": True, "uid": 1654}) + "\n", encoding="utf-8")
-                html = run("docker", "exec", name, "curl", "--fail", "--silent",
-                           "-H", "Host: localhost", "http://127.0.0.1:8080/game/fullscreen")
-                asset = re.search(r'src="(/ui/assets/[^\"]+\.js)"', html)
-                if not asset or "blazor" in html.lower():
-                    raise ValueError("Runtime must serve the Vue frontend")
-                run("docker", "exec", name, "curl", "--fail", "--silent", "-o", "/dev/null",
-                    "-H", "Host: localhost", "http://127.0.0.1:8080" + asset.group(1))
-                run("docker", "exec", name, "sh", "-c", "test ! -e /usr/bin/node && test ! -e /usr/local/bin/node")
-                if version:
-                    assembly = evidence / f"BobFx.Core-{architecture}.dll"
-                    run("docker", "cp", f"{name}:/app/BobFx.Core.dll", str(assembly))
-                    result = run("dotnet", "run", "--file", "scripts/ci/AssemblyVersion.cs", "--", str(assembly), version)
-                    (evidence / f"assembly-{architecture}.txt").write_text(result + "\n", encoding="utf-8")
-                    assembly.unlink()
-                return
-            time.sleep(3)
-        raise ValueError("Hardened runtime failed to become healthy")
+        if not wait_healthy(name):
+            raise ValueError("Hardened runtime failed to become healthy")
+        if run("docker", "exec", name, "id", "-u") != "1654":
+            raise ValueError("Runtime must use UID 1654")
+        settings = json.loads(exec_curl(name, "/api/installation"))
+        settings["animation"]["framesPerSecond"] = 23
+        exec_curl(name, "/api/installation", "-X", "PUT", data=json.dumps(settings))
+        run("docker", "rm", "-f", name)
+        run(*command)
+        if not wait_healthy(name):
+            raise ValueError("Recreated container failed to become healthy")
+        restored = json.loads(exec_curl(name, "/api/installation"))
+        if restored != settings:
+            raise ValueError("Installation settings did not survive container recreation")
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence / f"persistence-{architecture}.json").write_text(json.dumps({"settingsSurvivedRecreation": True, "uid": 1654}) + "\n", encoding="utf-8")
+        html = exec_curl(name, "/game/fullscreen")
+        asset = re.search(r'src="(/ui/assets/[^\"]+\.js)"', html)
+        if not asset or "blazor" in html.lower():
+            raise ValueError("Runtime must serve the Vue frontend")
+        exec_curl(name, asset.group(1), "-o", "/dev/null")
+        run("docker", "exec", name, "sh", "-c", "test ! -e /usr/bin/node && test ! -e /usr/local/bin/node")
+        if version:
+            assembly = evidence / f"BobFx.Core-{architecture}.dll"
+            run("docker", "cp", f"{name}:/app/BobFx.Core.dll", str(assembly))
+            result = run("dotnet", "run", "--file", "scripts/ci/AssemblyVersion.cs", "--", str(assembly), version)
+            (evidence / f"assembly-{architecture}.txt").write_text(result + "\n", encoding="utf-8")
+            assembly.unlink()
     finally:
         evidence.mkdir(parents=True, exist_ok=True)
         try:
@@ -137,15 +147,14 @@ def smoke(reference, architecture, version=None, evidence=Path("release-evidence
             run("docker", "volume", "rm", volume)
 
 
-def attestation(data, platform, key):
+def attestation(data: dict[str, Any], platform: str, key: str) -> None:
     # The release index has two platforms; one platform's predicate cannot cover the other.
     value = data.get(platform)
     if not isinstance(value, dict) or not value.get(key):
         raise ValueError(f"Missing {key} attestation for {platform}")
 
 
-def verify(image, candidate_digest, version, revision):
-    evidence = Path("release-evidence")
+def verify(image: str, candidate_digest: str, version: str, revision: str, evidence: Path = EVIDENCE) -> None:
     evidence.mkdir(exist_ok=True)
     (evidence / "verification.json").unlink(missing_ok=True)
     reference = f"{image}@{digest(candidate_digest)}"
@@ -175,10 +184,10 @@ def verify(image, candidate_digest, version, revision):
     (evidence / "verification.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 
 
-def promote(image, version, candidate_digest):
+def promote(image: str, version: str, candidate_digest: str, evidence: Path = EVIDENCE) -> None:
     candidate_digest = digest(candidate_digest)
     # Promotion requires evidence from this run, including both architecture gates.
-    summary = json.loads(Path("release-evidence/verification.json").read_text(encoding="utf-8"))
+    summary = json.loads((evidence / "verification.json").read_text(encoding="utf-8"))
     if summary["indexDigest"] != candidate_digest or summary["version"] != version or set(summary["platforms"]) != set(ARCHITECTURES):
         raise ValueError("Promotion does not match verified release evidence")
     stable = f"{image}:{version}"
@@ -191,15 +200,27 @@ def promote(image, version, candidate_digest):
         raise ValueError("Stable image digest differs from the tested candidate")
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("operation", choices=("select", "verify", "promote", "smoke"))
-    parser.add_argument("--image", required=True)
-    parser.add_argument("--version")
-    parser.add_argument("--digest")
-    parser.add_argument("--revision")
-    parser.add_argument("--architecture", choices=ARCHITECTURES)
-    args = parser.parse_args()
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    operations = parser.add_subparsers(dest="operation", required=True)
+
+    # Each operation declares the options it needs, so a missing one is a usage error.
+    def operation(name: str, *required: str) -> argparse.ArgumentParser:
+        subparser = operations.add_parser(name)
+        subparser.add_argument("--image", required=True)
+        for option in required:
+            subparser.add_argument(f"--{option}", required=True)
+        return subparser
+
+    operation("select", "version")
+    operation("verify", "version", "digest", "revision")
+    operation("promote", "version", "digest")
+    operation("smoke").add_argument("--architecture", required=True, choices=ARCHITECTURES)
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
     if args.operation == "select":
         select(args.image, args.version)
     elif args.operation == "verify":

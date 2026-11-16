@@ -7,11 +7,11 @@ services:
     ports:
       - "127.0.0.1:5159:8080"
     environment:
-      Settings__DataPath: /app/data
       ASPNETCORE_ENVIRONMENT: Development
-      ASPNETCORE_HTTP_PORTS: "8080"
       AllowedHosts: "localhost;127.0.0.1"
-      WLed__Discovery__UpdateIntervalSeconds: "30"
+      # The image does not contain appsettings.Development.json, so its values are set here.
+      Logging__LogLevel__BobFx.Core.Services: Debug
+      WLed__Led__LedCount: "24"
       Countdown__DurationSeconds: "60"
       Countdown__DeviationSeconds: "20"
     restart: "no"
