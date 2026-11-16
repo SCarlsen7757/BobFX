@@ -33,13 +33,14 @@ public sealed class UiStateService(
     private Versioned<GameView>? game;
     private Versioned<EffectView>? effect;
     private Versioned<DiscoveryView>? devices;
-    private string? discoveryJson;
+    private IReadOnlyList<WLedDevice>? discovered;
     private Versioned<InstallationView>? installation;
-    private string? installationJson;
     private readonly Channel<SoundEvent> audio = Channel.CreateBounded<SoundEvent>(new BoundedChannelOptions(32)
     { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
     private readonly ConcurrentDictionary<string, byte> previewClients = new();
-    public void SubscribePreview(string connectionId) => previewClients.TryAdd(connectionId, 0);
+    private int previewRefresh;
+    /// <summary>The browser has already joined the preview group, so the next tick's frame reaches it.</summary>
+    public void SubscribePreview(string connectionId) { previewClients.TryAdd(connectionId, 0); Volatile.Write(ref previewRefresh, 1); }
     public void UnsubscribePreview(string connectionId) => previewClients.TryRemove(connectionId, out _);
 
     public UiState GetState()
@@ -57,27 +58,31 @@ public sealed class UiStateService(
             var status = rgb.GetStatus();
             var nextEffect = new EffectView(status.Effect.ToString(), status.Speed.TotalMilliseconds, status.LedCount, status.Streaming, status.LastError);
             if (effect?.Value != nextEffect) effect = new(instanceId, (effect?.Revision ?? 0) + 1, now, nextEffect);
-            var nextDiscovery = new DiscoveryView(discovery.IsScanning, discovery.LastError, discovery.LastScanUtc,
-                discovery.Devices.Select(ToView).ToArray());
-            var json = JsonSerializer.Serialize(nextDiscovery);
-            if (json != discoveryJson)
+            // The device list is the same instance until a device changes, so its views are only rebuilt then.
+            var found = discovery.Devices;
+            var (scanning, scanError, lastScan) = (discovery.IsScanning, discovery.LastError, discovery.LastScanUtc);
+            if (devices is null || !ReferenceEquals(found, discovered) || devices.Value.Scanning != scanning || devices.Value.Error != scanError || devices.Value.LastScanUtc != lastScan)
             {
-                discoveryJson = json;
-                devices = new(instanceId, (devices?.Revision ?? 0) + 1, now, nextDiscovery);
+                discovered = found;
+                devices = new(instanceId, (devices?.Revision ?? 0) + 1, now, new DiscoveryView(scanning, scanError, lastScan, found.Select(ToView).ToArray()));
             }
             var saved = settings.Snapshot;
             var nextInstallation = new InstallationView(saved, control.IsLocating, output.Errors, busyBars.Statuses,
                 saved.Controllers.ToDictionary(c => c.Id, c => credentials.HasPassword(c.Id)), output.Calibration, output.LightShowTest);
-            var nextJson = JsonSerializer.Serialize(nextInstallation);
-            if (nextJson != installationJson)
-            {
-                installationJson = nextJson;
+            if (installation is null || !Same(installation.Value, nextInstallation))
                 installation = new(instanceId, (installation?.Revision ?? 0) + 1, now, nextInstallation);
-            }
             return new(game!, effect!, devices!, installation!,
                 new CountdownOptions { DurationSeconds = (int)countdown.CountdownDuration.TotalSeconds, DeviationSeconds = (int)countdown.CountdownDeviation.TotalSeconds });
         }
     }
+
+    /// <summary>Whether a browser would see the same installation. Saved settings are compared by instance, which
+    /// a save replaces; the rest are small and compared by value.</summary>
+    private static bool Same(InstallationView a, InstallationView b) =>
+        ReferenceEquals(a.Settings, b.Settings) && a.Locating == b.Locating && a.Calibration == b.Calibration && a.LightShowTest == b.LightShowTest &&
+        SameEntries(a.OutputErrors, b.OutputErrors) && SameEntries(a.Controllers, b.Controllers) && SameEntries(a.PasswordsSaved, b.PasswordsSaved);
+    private static bool SameEntries<T>(IReadOnlyDictionary<string, T> a, IReadOnlyDictionary<string, T> b) =>
+        a.Count == b.Count && a.All(entry => b.TryGetValue(entry.Key, out var other) && EqualityComparer<T>.Default.Equals(entry.Value, other));
 
     public static DeviceView ToView(WLedDevice device) => new(device.Mac, device.Address.ToString(), device.Port,
         device.Name, device.HostName, device.Version, device.LastSeen, device.IsOnline,
@@ -93,6 +98,7 @@ public sealed class UiStateService(
     {
         sounds.SoundRequested += OnSound;
         long gameRevision = 0, effectRevision = 0, discoveryRevision = 0, installationRevision = 0;
+        System.Numerics.Vector3[] previewSent = [];
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(100), clock);
         try
         {
@@ -125,8 +131,13 @@ public sealed class UiStateService(
                         await hub.Clients.All.SendAsync("SoundRequested", sound, stoppingToken);
                     if (!previewClients.IsEmpty)
                     {
-                        var pixels = rgb.GetSnapshot().Select(ColorHelper.RgbToHex).ToArray();
-                        await hub.Clients.Group(UiHub.PreviewGroup).SendAsync("LedPreviewChanged", pixels, stoppingToken);
+                        // A strip that shows the same as last time is not sent again, unless a browser just joined.
+                        var strip = rgb.GetSnapshot();
+                        if (Interlocked.Exchange(ref previewRefresh, 0) == 1 || !strip.AsSpan().SequenceEqual(previewSent))
+                        {
+                            await hub.Clients.Group(UiHub.PreviewGroup).SendAsync("LedPreviewChanged", strip.Select(ColorHelper.RgbToHex).ToArray(), stoppingToken);
+                            previewSent = strip;
+                        }
                     }
                 }
                 catch (Exception ex) when (!stoppingToken.IsCancellationRequested && ExceptionPolicy.IsRecoverable(ex))

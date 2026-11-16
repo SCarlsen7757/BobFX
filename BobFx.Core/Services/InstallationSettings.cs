@@ -4,17 +4,19 @@ using System.Net;
 
 namespace BobFx.Core.Services;
 
+/// <summary>Everything the operator sets up. An instance is never changed: a save makes a new one, so whoever
+/// holds one can keep reading it, and two reads that return the same instance saw the same settings.</summary>
 public sealed record InstallationSettings
 {
     /// <summary>Version 2 maps each board as a left and a right strip; version 1 files are migrated on load.</summary>
     public const int CurrentVersion = 2;
     public int Version { get; init; } = CurrentVersion;
-    public List<DeviceSettings> Devices { get; init; } = [];
-    public List<BoardSettings> Boards { get; init; } = [];
+    public IReadOnlyList<DeviceSettings> Devices { get; init; } = [];
+    public IReadOnlyList<BoardSettings> Boards { get; init; } = [];
     public IdleSyncSettings IdleSync { get; init; } = new();
     public AnimationSettings Animation { get; init; } = new();
     public LightShowSettings LightShow { get; init; } = new();
-    public List<BusyBarSettings> Controllers { get; init; } = [];
+    public IReadOnlyList<BusyBarSettings> Controllers { get; init; } = [];
     /// <summary>Saved game length. Null until saved from the UI, so the Countdown configuration supplies the first-run values.</summary>
     public CountdownSettings? Countdown { get; init; }
 }
@@ -64,7 +66,7 @@ public sealed record IdleSyncSettings
 {
     public bool Enabled { get; init; }
     public string? MasterMac { get; init; }
-    public List<string> Followers { get; init; } = [];
+    public IReadOnlyList<string> Followers { get; init; } = [];
     public int Group { get; init; } = 1;
 }
 public sealed record AnimationSettings
@@ -117,10 +119,16 @@ public sealed class InstallationSettingsStore
         current = Migrate(File.Exists(path) ? JsonSerializer.Deserialize<InstallationSettings>(File.ReadAllText(path), JsonOptions)
             ?? throw new InvalidDataException("Settings file is empty.") : new());
         Validate(current);
+        current = Own(current);
     }
-    public InstallationSettings Snapshot => Clone(Volatile.Read(ref current));
-    internal InstallationSettings Read() => Volatile.Read(ref current);
-    private static InstallationSettings Clone(InstallationSettings value) => JsonSerializer.Deserialize<InstallationSettings>(JsonSerializer.Serialize(value, JsonOptions), JsonOptions)!;
+    /// <summary>The settings as last saved. The instance is replaced by a save and never changed.</summary>
+    public InstallationSettings Snapshot => Volatile.Read(ref current);
+    /// <summary>Copies the lists, so that the caller who built them cannot change saved settings afterwards.</summary>
+    private static InstallationSettings Own(InstallationSettings value) => value with
+    {
+        Devices = [.. value.Devices], Boards = [.. value.Boards], Controllers = [.. value.Controllers],
+        IdleSync = value.IdleSync with { Followers = [.. value.IdleSync.Followers] }
+    };
     public Task SaveAsync(InstallationSettings value, CancellationToken token = default) => UpdateAsync(_ => value, token);
     public async Task UpdateAsync(Func<InstallationSettings, InstallationSettings> update, CancellationToken token = default)
     {
@@ -128,8 +136,9 @@ public sealed class InstallationSettingsStore
         var temporary = Path.Join(DirectoryPath, "settings." + Guid.NewGuid().ToString("N") + ".tmp");
         try
         {
-            var value = Migrate(Clone(update(Snapshot)));
+            var value = Migrate(update(Snapshot));
             Validate(value);
+            value = Own(value);
             await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
             {
                 await JsonSerializer.SerializeAsync(stream, value, JsonOptions, token);

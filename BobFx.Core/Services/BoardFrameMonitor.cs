@@ -36,7 +36,7 @@ public sealed class BoardMonitorService(BoardFrameMonitor monitor, InstallationS
     public void Unsubscribe(string connectionId) => clients.TryRemove(connectionId, out _);
 
     /// <summary>One entry per selected controller, in the order the settings list them.</summary>
-    public BoardFrame[] Snapshot() => settings.Read().Devices.Where(d => d.Selected).Select(d => new BoardFrame(d.Mac, monitor.Current(d.Mac))).ToArray();
+    public BoardFrame[] Snapshot() => settings.Snapshot.Devices.Where(d => d.Selected).Select(d => new BoardFrame(d.Mac, monitor.Current(d.Mac))).ToArray();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -50,7 +50,7 @@ public sealed class BoardMonitorService(BoardFrameMonitor monitor, InstallationS
         {
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(1d / settings.Read().Animation.FramesPerSecond), clock, stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(1d / settings.Snapshot.Animation.FramesPerSecond), clock, stoppingToken);
                 if (clients.IsEmpty) { sent = []; continue; }
                 var frames = Snapshot();
                 // Frames are replaced, never changed in place, so the same array means the same picture.

@@ -27,8 +27,20 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private const int MaxDevices = 256;
     private const int MaxResponseBytes = 64 * 1024;
-    public IReadOnlyList<WLedDevice> Devices => devices.Values.OrderBy(d => d.Name).ThenBy(d => d.Address.ToString()).ToArray();
-    public void Clear() { lock (mutation) { generation++; devices.Clear(); } }
+    private WLedDevice[]? sorted;
+    /// <summary>The discovered devices by name. The list is kept until a device is found, lost or changed, so it
+    /// is the same instance for as long as nothing changed.</summary>
+    public IReadOnlyList<WLedDevice> Devices
+    {
+        get
+        {
+            if (Volatile.Read(ref sorted) is { } current) return current;
+            lock (mutation) return sorted ??= [.. devices.Values.OrderBy(d => d.Name).ThenBy(d => d.Address.ToString())];
+        }
+    }
+    /// <summary>The discovered device with this MAC, if there is one.</summary>
+    public WLedDevice? Find(string mac) => devices.GetValueOrDefault(mac);
+    public void Clear() { lock (mutation) { generation++; devices.Clear(); sorted = null; } }
     public bool RemoveOffline(string mac)
     {
         lock (mutation)
@@ -37,6 +49,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
             if (device.IsOnline) throw new InvalidOperationException("Only offline devices can be removed.");
             generation++;
             devices.TryRemove(mac, out _);
+            sorted = null;
         }
         return true;
     }
@@ -55,7 +68,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
             {
                 logger.LogDebug(ex, "mDNS resolution failed");
                 Volatile.Write(ref lastError, "mDNS resolution failed");
-                if (settings.Read().Devices.Count == 0) { AgeDevices(scanGeneration); throw; }
+                if (settings.Snapshot.Devices.Count == 0) { AgeDevices(scanGeneration); throw; }
                 hosts = [];
             }
             hosts = hosts.Concat(settings.Snapshot.Devices.Where(d => !d.Simulated).Select(d => new WLedAdvertisement(d.Address, d.HttpPort, d.Name))).DistinctBy(h => (h.Address, h.Port)).ToArray();
@@ -89,6 +102,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                         {
                             if (generation != scanGeneration || (!devices.ContainsKey(key) && devices.Count >= MaxDevices)) return;
                             devices[key] = new(address, host.Port, info.Name ?? host.HostName, host.HostName, key, info.Ver ?? "", DateTime.UtcNow, true, info);
+                            sorted = null;
                         }
                     }
                     catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
@@ -115,7 +129,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
             if (s.Boards.Any(b => b.DeviceMac == saved.Mac && !BoardMapping.Fits(b, count))) count = saved.LedCount;
             return saved with { Address = found.Address.ToString(), HttpPort = found.Port, LedCount = count, UdpPort = found.Info.Udpport };
         }
-        var snapshot = settings.Read();
+        var snapshot = settings.Snapshot;
         if (snapshot.Devices.Any(d => Refresh(d, snapshot) != d))
             await settings.UpdateAsync(s => s with { Devices = s.Devices.Select(d => Refresh(d, s)).ToList() }, cancellationToken);
     }
@@ -130,6 +144,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                 if (pair.Value.LastSeen < now - TimeSpan.FromDays(1)) devices.TryRemove(pair.Key, out _);
                 else if (pair.Value.LastSeen < now - interval * 4) devices.TryUpdate(pair.Key, pair.Value with { IsOnline = false }, pair.Value);
             }
+            sorted = null;
         }
     }
     internal static bool IsLocalDeviceAddress(IPAddress address)

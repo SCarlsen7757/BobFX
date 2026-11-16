@@ -42,7 +42,7 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                var enabled = settings.Read().Controllers.Where(c => c.Enabled).ToDictionary(c => c.Id);
+                var enabled = settings.Snapshot.Controllers.Where(c => c.Enabled).ToDictionary(c => c.Id);
                 foreach (var (id, worker) in workers.ToArray())
                     if (!enabled.TryGetValue(id, out var updated) || updated != worker.Settings || worker.Revision != credentials.Revision(id))
                     {
@@ -131,7 +131,7 @@ public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSou
                     await cadence.WaitForNextTickAsync(token);
                     continue;
                 }
-                var updated = settings.Read().Animation;
+                var updated = settings.Snapshot.Animation;
                 if (timing != updated)
                 {
                     assets = BusyBarAnimations.Create(updated, format, preparation);

@@ -3,12 +3,20 @@ namespace BobFx.Core.Services;
 public sealed class SecurityOptions
 {
     public string[] AllowedClientNetworks { get; set; } = [];
+    // Every request is checked, so the networks are parsed once: for the list they were parsed from.
+    private (string[] Source, IPNetwork[] Networks)? parsed;
     public bool IsValid() => AllowedClientNetworks.Length > 0 && AllowedClientNetworks.All(value => IPNetwork.TryParse(value, out _));
     public bool Allows(IPAddress? address)
     {
         if (address is null) return false;
         if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
-        return AllowedClientNetworks.Any(value => IPNetwork.TryParse(value, out var network) && network.Contains(address));
+        var current = parsed;
+        if (current is null || !ReferenceEquals(current.Value.Source, AllowedClientNetworks))
+            parsed = current = (AllowedClientNetworks, [.. AllowedClientNetworks.Select(value => IPNetwork.TryParse(value, out var network) ? network : (IPNetwork?)null)
+                .Where(network => network is not null).Select(network => network!.Value)]);
+        foreach (var network in current.Value.Networks)
+            if (network.Contains(address)) return true;
+        return false;
     }
     public static bool IsSameOrigin(HttpRequest request)
     {

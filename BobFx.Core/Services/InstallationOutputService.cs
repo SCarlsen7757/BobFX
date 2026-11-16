@@ -7,7 +7,7 @@ using System.Collections.Concurrent;
 namespace BobFx.Core.Services;
 
 public sealed record CalibrationView(string SessionId, string ActiveBoardId, DateTimeOffset ExpiresUtc);
-public sealed record CalibrationRequest(List<BoardSettings> Boards, string ActiveBoardId);
+public sealed record CalibrationRequest(IReadOnlyList<BoardSettings> Boards, string ActiveBoardId);
 public sealed record LightShowTestView(string Segment, DateTimeOffset EndsUtc);
 public sealed record LightShowTestRequest(string Segment, LightShowSettings LightShow, AnimationSettings Animation);
 
@@ -30,6 +30,8 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
     private int disposed;
     private int stopping;
     private readonly SemaphoreSlim calibrationFrames = new(1, 1);
+    /// <summary>Even a frame that overran leaves the loop a moment for commands and shutdown.</summary>
+    private static readonly TimeSpan MinimumFrameWait = TimeSpan.FromMilliseconds(1);
     private sealed record CalibrationDraft(CalibrationView View, InstallationSettings Settings, long Started);
     private CalibrationDraft? calibration;
     public CalibrationView? Calibration => Volatile.Read(ref calibration)?.View;
@@ -47,7 +49,7 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
         InstallationSettingsStore.Validate(draft);
         var seconds = BoardLightShow.TestSeconds(request.Segment ?? "", draft.Animation)
             ?? throw new ArgumentException("Choose countdown, playing or gameOver to test.");
-        if (BoardSceneRenderer.AssignedBoards(draft).Count == 0) throw new ArgumentException("Assign at least one board before testing the light show.");
+        if (BoardSceneRenderer.Scene(draft).Boards.Count == 0) throw new ArgumentException("Assign at least one board before testing the light show.");
         Volatile.Write(ref lightTest, new(new(request.Segment!, clock.GetUtcNow().AddSeconds(seconds)), draft, clock.GetTimestamp()));
         return true;
     }, starting: true);
@@ -63,9 +65,8 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
 
     private InstallationSettings ValidateCalibration(CalibrationRequest request)
     {
-        var boards = JsonSerializer.SerializeToElement(request.Boards, InstallationSettingsStore.JsonOptions)
-            .Deserialize<List<BoardSettings>>(InstallationSettingsStore.JsonOptions);
-        var snapshot = settings.Snapshot with { Boards = boards! };
+        // The session keeps its own list: the caller's may change while the check runs.
+        var snapshot = settings.Snapshot with { Boards = request.Boards is null ? null! : [.. request.Boards] };
         InstallationSettingsStore.Validate(snapshot);
         if (!snapshot.Boards.Any(b => b.Id == request.ActiveBoardId && b.DeviceMac is not null))
             throw new ArgumentException("Choose an assigned board to calibrate.");
@@ -127,9 +128,10 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
         {
             var current = calibration;
             if (current is null || current.View.ExpiresUtc <= clock.GetUtcNow()) return;
-            foreach (var board in BoardSceneRenderer.AssignedBoards(current.Settings))
+            var scene = BoardSceneRenderer.Scene(current.Settings);
+            foreach (var board in scene.Boards)
             {
-                var device = Resolve(current.Settings.Devices.First(d => d.Mac == board.DeviceMac));
+                var device = Resolve(scene.Device(board));
                 try
                 {
                     if (KnownOffline(device)) throw new ArgumentException("Device is offline.");
@@ -145,13 +147,11 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
         }
         finally { calibrationFrames.Release(); }
     }
-    public DeviceSettings Resolve(DeviceSettings saved)
-    {
-        var found = discovery.Devices.FirstOrDefault(d => d.Mac == saved.Mac && d.IsOnline);
-        return found?.Info?.Leds is { Count: > 0 and <= 65535 } leds && found.Info.Udpport is > 0 and <= 65535
-            ? saved with { Address = found.Address.ToString(), HttpPort = found.Port, LedCount = leds.Count, UdpPort = found.Info.Udpport } : saved;
-    }
-    private bool KnownOffline(DeviceSettings d) => discovery.Devices.Any(found => found.Mac == d.Mac && !found.IsOnline);
+    /// <summary>The saved device with the address, ports and LED count it reports now, while it is online.</summary>
+    public DeviceSettings Resolve(DeviceSettings saved) =>
+        discovery.Find(saved.Mac) is { IsOnline: true, Info: { Leds.Count: > 0 and <= 65535, Udpport: > 0 and <= 65535 } info } found
+            ? saved with { Address = found.Address.ToString(), HttpPort = found.Port, LedCount = info.Leds.Count, UdpPort = info.Udpport } : saved;
+    private bool KnownOffline(DeviceSettings d) => discovery.Find(d.Mac) is { IsOnline: false };
     public static IEnumerable<byte[]> Packets(byte[] pixels)
     {
         // DNRGB permits larger strips without IP fragmentation: <= 489 pixels per packet.
@@ -167,16 +167,16 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
     /// <summary>Sends one frame of the game scene to every assigned board that is not known to be offline.</summary>
     private async Task SendSceneAsync(InstallationSettings source, GamePhase phase, double elapsed, double preparation, CancellationToken token)
     {
-        var scene = source with { Boards = BoardSceneRenderer.AssignedBoards(source) };
+        var scene = BoardSceneRenderer.Scene(source);
         foreach (var board in scene.Boards)
         {
-            var saved = source.Devices.First(d => d.Mac == board.DeviceMac);
+            var saved = scene.Device(board);
             if (KnownOffline(saved)) continue;
             var device = Resolve(saved);
             try
             {
                 if (!BoardMapping.Fits(board, device.LedCount)) throw new ArgumentException(BoardSceneRenderer.MappingChanged);
-                await SendAsync(device, BoardSceneRenderer.Render(scene, board, device.LedCount, phase, elapsed, preparation), token);
+                await SendAsync(device, scene.Render(board, device.LedCount, phase, elapsed, preparation), token);
                 errors.TryRemove(device.Mac, out _);
             }
             catch (Exception ex) when (ex is SocketException or ArgumentException or IOException)
@@ -208,7 +208,8 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
         {
             try
             {
-                var snapshot = settings.Read();
+                var frameStarted = clock.GetTimestamp();
+                var snapshot = settings.Snapshot;
                 if (Calibration is { } preview)
                 {
                     if (preview.ExpiresUtc <= clock.GetUtcNow())
@@ -256,7 +257,9 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
                         }
                     }
                 }
-                await Task.Delay(TimeSpan.FromSeconds(1d / (test?.Settings ?? snapshot).Animation.FramesPerSecond), clock, stoppingToken);
+                // The time the frame took comes off the wait, so the frame rate does not sink as boards are added.
+                var wait = TimeSpan.FromSeconds(1d / (test?.Settings ?? snapshot).Animation.FramesPerSecond) - clock.GetElapsedTime(frameStarted);
+                await Task.Delay(wait > MinimumFrameWait ? wait : MinimumFrameWait, clock, stoppingToken);
                 LastError = null;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
@@ -283,7 +286,9 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
             while (clock.GetElapsedTime(started) < TimeSpan.FromSeconds(5))
             {
                 var level = (byte)(30 + 150 * (Math.Sin(clock.GetElapsedTime(started).TotalSeconds * Math.PI * 2) + 1) / 2);
-                var pixels = Enumerable.Repeat(level, d.LedCount * 3).ToArray();
+                // A new array each time: the monitor keeps the frame it is given.
+                var pixels = new byte[d.LedCount * 3];
+                Array.Fill(pixels, level);
                 await SendAsync(d, pixels, locateToken);
                 await Task.Delay(TimeSpan.FromMilliseconds(33), clock, locateToken);
             }

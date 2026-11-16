@@ -186,7 +186,7 @@ public sealed class RgbAndSoundControlService(
                     countdown.Advance();
                     if (Phase == GamePhase.PreCountdown && countdown.IsRunning) SetPhase(GamePhase.Running);
                     else if (Phase == GamePhase.Running && !countdown.IsRunning) await EnterEndingAsync();
-                    else if (Phase == GamePhase.Ending && clock.GetElapsedTime(phaseStarted) >= EndingDuration(settings.Read().Animation)) EnterIdle();
+                    else if (Phase == GamePhase.Ending && clock.GetElapsedTime(phaseStarted) >= EndingDuration(settings.Snapshot.Animation)) EnterIdle();
                 }
                 finally { commands.Release(); }
             }

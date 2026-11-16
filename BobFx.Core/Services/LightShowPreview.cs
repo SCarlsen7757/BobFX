@@ -27,8 +27,9 @@ public static class LightShowPreviewRenderer
         var example = draft.Boards.Count == 0;
         var (row, assigned) = PreviewRow(example ? ExampleLayout() : draft.Boards, draft.Devices);
         draft = draft with { Devices = row.Devices, Boards = row.Boards };
-        var boards = BoardSceneRenderer.AssignedBoards(draft);
-        var counts = boards.Select(b => draft.Devices.First(d => d.Mac == b.DeviceMac).LedCount).ToList();
+        var scene = BoardSceneRenderer.Scene(draft);
+        var boards = scene.Boards;
+        var counts = boards.Select(b => scene.Device(b).LedCount).ToList();
         var frameCount = (int)Math.Ceiling(seconds * FramesPerSecond);
         var bytes = counts.Sum() * 3;
         if ((long)bytes * frameCount > MaxBytes) throw new ArgumentException("Too many LEDs to preview this part of the show.");
@@ -42,7 +43,7 @@ public static class LightShowPreviewRenderer
             var offset = 0;
             for (var i = 0; i < boards.Count; i++)
             {
-                var pixels = BoardSceneRenderer.Render(draft, boards[i], counts[i], moment.Phase, moment.Elapsed, preparation);
+                var pixels = scene.Render(boards[i], counts[i], moment.Phase, moment.Elapsed, preparation);
                 pixels.CopyTo(buffer, offset);
                 offset += pixels.Length;
             }
@@ -57,7 +58,7 @@ public static class LightShowPreviewRenderer
     /// hardware is there. Assigned boards keep their real controller and mapping. A board without one copies the
     /// LED count and strip mapping of the first board that has one, so it looks like the hardware already in use;
     /// with no controller anywhere it gets the standard two strips of 51 LEDs.</summary>
-    private static (InstallationSettings Row, HashSet<string> Assigned) PreviewRow(IReadOnlyList<BoardSettings> layout, List<DeviceSettings> devices)
+    private static (InstallationSettings Row, HashSet<string> Assigned) PreviewRow(IReadOnlyList<BoardSettings> layout, IReadOnlyList<DeviceSettings> devices)
     {
         var real = devices.Where(d => d.Selected).ToDictionary(d => d.Mac);
         var standard = BoardMapping.Default(ExampleLeds)!.Value;

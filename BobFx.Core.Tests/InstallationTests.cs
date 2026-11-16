@@ -147,16 +147,16 @@ public sealed class InstallationTests
     }
 
     [Fact]
-    public async Task SaveReloadRejectsInvalidAndDoesNotShareMutableCollections()
+    public async Task SaveReloadRejectsInvalidAndKeepsItsOwnLists()
     {
         var path = TestPaths.NewDataPath();
         var store = Store(path);
-        var settings = Installation();
-        await store.SaveAsync(settings, TestContext.Current.CancellationToken);
-        settings.Boards.Clear();
+        // Saved settings cannot be changed through the list they were built from; reading them gives no list to change.
+        List<BoardSettings> boards = [Board()];
+        await store.SaveAsync(Installation() with { Boards = boards }, TestContext.Current.CancellationToken);
+        boards.Clear();
         Assert.Single(store.Snapshot.Boards);
-        var copy = store.Snapshot; copy.Devices.Clear();
-        Assert.Single(store.Snapshot.Devices);
+        Assert.Same(store.Snapshot, store.Snapshot);
         var before = await File.ReadAllTextAsync(Path.Combine(path, "settings.json"), TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<ArgumentException>(() => store.SaveAsync(store.Snapshot with { Version = 3 }, TestContext.Current.CancellationToken));
         Assert.Equal(before, await File.ReadAllTextAsync(Path.Combine(path, "settings.json"), TestContext.Current.CancellationToken));
