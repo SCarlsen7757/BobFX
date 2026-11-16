@@ -7,15 +7,14 @@ using System.Threading.Channels;
 using Zeroconf;
 namespace BobFx.Core.Services;
 
-public record WLedDevice(IPAddress Address, int Port, string Name, string HostName, string Mac, string Version, DateTime LastSeen, bool IsOnline, Models.WLED.Info? Info);
+public record WLedDevice(IPAddress Address, int Port, string Name, string HostName, string Mac, string Version, DateTimeOffset LastSeen, bool IsOnline, Models.WLED.Info? Info);
 
-public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, IOptions<WLedOptions> options, IHttpClientFactory httpFactory, IWLedDiscoverySource? source = null, InstallationSettingsStore? settings = null) : BackgroundService
+public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, IOptions<WLedOptions> options, IHttpClientFactory httpFactory, IWLedDiscoverySource discoverySource, InstallationSettingsStore settings, TimeProvider clock) : BackgroundService
 {
     private string? lastError;
     private long lastScanUtcTicks;
     public string? LastError => Volatile.Read(ref lastError);
     public DateTimeOffset? LastScanUtc => Volatile.Read(ref lastScanUtcTicks) is var ticks && ticks > 0 ? new DateTimeOffset(ticks, TimeSpan.Zero) : null;
-    private readonly IWLedDiscoverySource discoverySource = source ?? new MdnsWLedDiscoverySource();
     private readonly ConcurrentDictionary<string, WLedDevice> devices = new();
     private readonly Lock mutation = new();
     private long generation;
@@ -25,12 +24,29 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
     private readonly Channel<bool> requestedScans = Channel.CreateBounded<bool>(1);
     public void RequestScan() { if (!IsScanning) requestedScans.Writer.TryWrite(true); }
     private readonly TimeSpan interval = TimeSpan.FromSeconds(options.Value.Discovery.UpdateIntervalSeconds);
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private const int MaxDevices = 256;
-    private const int MaxResponseBytes = 64 * 1024;
-    public event Action<IReadOnlyList<WLedDevice>>? DevicesUpdated;
-    public IReadOnlyList<WLedDevice> Devices => devices.Values.OrderBy(d => d.Name).ThenBy(d => d.Address.ToString()).ToArray();
-    public void Clear() { lock (mutation) { generation++; devices.Clear(); } Notify(); }
+    private WLedDevice[]? sorted;
+    /// <summary>The discovered devices by name. The list is kept until a device is found, lost or changed, so it
+    /// is the same instance for as long as nothing changed.</summary>
+    public IReadOnlyList<WLedDevice> Devices
+    {
+        get
+        {
+            if (Volatile.Read(ref sorted) is { } current) return current;
+            lock (mutation) return sorted ??= [.. devices.Values.OrderBy(d => d.Name).ThenBy(d => d.Address.ToString())];
+        }
+    }
+    /// <summary>The discovered device with this MAC, if there is one.</summary>
+    public WLedDevice? Find(string mac) => devices.GetValueOrDefault(mac);
+    /// <summary>A registered device with the address, ports and LED count it reports now, while it is online;
+    /// as saved otherwise.</summary>
+    public DeviceSettings Resolve(DeviceSettings saved) =>
+        Find(saved.Mac) is { IsOnline: true, Info: { Leds.Count: > 0 and <= 65535, Udpport: > 0 and <= 65535 } info } found
+            ? saved with { Address = found.Address.ToString(), HttpPort = found.Port, LedCount = info.Leds.Count, UdpPort = info.Udpport } : saved;
+    /// <summary>True for a device that was found before and has stopped answering. One that was never found
+    /// may still be there, so frames are sent to it.</summary>
+    public bool KnownOffline(DeviceSettings device) => Find(device.Mac) is { IsOnline: false };
+    public void Clear() { lock (mutation) { generation++; devices.Clear(); sorted = null; } }
     public bool RemoveOffline(string mac)
     {
         lock (mutation)
@@ -39,38 +55,29 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
             if (device.IsOnline) throw new InvalidOperationException("Only offline devices can be removed.");
             generation++;
             devices.TryRemove(mac, out _);
+            sorted = null;
         }
-        Notify();
         return true;
-    }
-    public void Remove(IPAddress address)
-    {
-        lock (mutation)
-        {
-            generation++;
-            foreach (var device in devices.Values.Where(d => d.Address.Equals(address))) devices.TryRemove(device.Mac, out _);
-        }
-        Notify();
     }
     public async Task ScanAsync(CancellationToken cancellationToken = default)
     {
         if (!await scanGate.WaitAsync(0, cancellationToken)) return;
         Volatile.Write(ref scanning, 1);
         var scanGeneration = Volatile.Read(ref generation);
-        Volatile.Write(ref lastScanUtcTicks, DateTimeOffset.UtcNow.UtcTicks);
+        Volatile.Write(ref lastScanUtcTicks, clock.GetUtcNow().UtcTicks);
         try
         {
             IReadOnlyList<WLedAdvertisement> hosts;
             try { hosts = await discoverySource.ResolveAsync(cancellationToken); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception)
+            catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex))
             {
+                logger.LogDebug(ex, "mDNS resolution failed");
                 Volatile.Write(ref lastError, "mDNS resolution failed");
-                if (settings is null || settings.Read().Devices.Count == 0) { AgeDevices(scanGeneration); Notify(); throw; }
+                if (settings.Snapshot.Devices.Count == 0) { AgeDevices(scanGeneration); throw; }
                 hosts = [];
             }
-            if (settings is not null)
-                hosts = hosts.Concat(settings.Snapshot.Devices.Select(d => new WLedAdvertisement(d.Address, d.HttpPort, d.Name))).DistinctBy(h => (h.Address, h.Port)).ToArray();
+            hosts = hosts.Concat(settings.Snapshot.Devices.Where(d => !d.Simulated).Select(d => new WLedAdvertisement(d.Address, d.HttpPort, d.Name))).DistinctBy(h => (h.Address, h.Port)).ToArray();
             using var http = httpFactory.CreateClient("wled");
             await Parallel.ForEachAsync(hosts.Take(MaxDevices), new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
                 async (host, token) =>
@@ -80,58 +87,47 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                     if (host.Port is < 1 or > 65535) return;
                     try
                     {
-                        using var response = await http.GetAsync($"http://{address}:{host.Port}/json/info", HttpCompletionOption.ResponseHeadersRead, token);
-                        if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > MaxResponseBytes) return;
-                        // ResponseHeadersRead does not apply HttpClient.Timeout to body reads.
-                        using var readDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-                        readDeadline.CancelAfter(TimeSpan.FromSeconds(2));
-                        await using var stream = await response.Content.ReadAsStreamAsync(readDeadline.Token);
-                        using var buffer = new MemoryStream();
-                        var chunk = new byte[4096];
-                        int read;
-                        while ((read = await stream.ReadAsync(chunk, readDeadline.Token)) != 0)
-                        {
-                            if (buffer.Length + read > MaxResponseBytes) return;
-                            buffer.Write(chunk, 0, read);
-                        }
-                        var info = JsonSerializer.Deserialize<Models.WLED.Info>(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), JsonOptions);
-                        if (info is null || info.Brand != "WLED" || !ValidMac(info.Mac)) return;
-                        var key = info.Mac.Replace(":", "").ToLowerInvariant();
+                        // Anything that is not a WLED controller, or does not answer like one, is left out.
+                        var info = await WLedInfo.ReadAsync(http, address.ToString(), host.Port, token);
+                        if (info is null || !WLedInfo.TryIdentify(info, out var key)) return;
                         lock (mutation)
                         {
                             if (generation != scanGeneration || (!devices.ContainsKey(key) && devices.Count >= MaxDevices)) return;
-                            devices[key] = new(address, host.Port, info.Name, host.HostName, key, info.Ver, DateTime.UtcNow, true, info);
+                            devices[key] = new(address, host.Port, info.Name ?? host.HostName, host.HostName, key, info.Ver ?? "", clock.GetUtcNow(), true, info);
+                            sorted = null;
                         }
                     }
                     catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-                    catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or OperationCanceledException)
+                    catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or JsonException or OperationCanceledException)
                     { logger.LogDebug(ex, "WLED enrichment failed for {Address}", address); }
                 });
             AgeDevices(scanGeneration);
-            if (settings is not null)
-            {
-                var online = Devices.Where(d => d.IsOnline && d.Info?.Leds?.Count is > 0 and <= 65535 && d.Info.Udpport is > 0 and <= 65535).ToDictionary(d => d.Mac);
-                DeviceSettings Refresh(DeviceSettings saved, InstallationSettings s)
-                {
-                    if (!online.TryGetValue(saved.Mac, out var found)) return saved;
-                    var count = found.Info!.Leds.Count;
-                    if (s.Boards.Any(b => b.DeviceMac == saved.Mac && b.Edges.Any(e => (long)e.Start + e.Count > count))) count = saved.LedCount;
-                    return saved with { Address = found.Address.ToString(), HttpPort = found.Port, LedCount = count, UdpPort = found.Info.Udpport };
-                }
-                var snapshot = settings.Read();
-                if (snapshot.Devices.Any(d => Refresh(d, snapshot) != d))
-                    await settings.UpdateAsync(s => s with { Devices = s.Devices.Select(d => Refresh(d, s)).ToList() }, cancellationToken);
-            }
+            await RefreshSavedDevicesAsync(cancellationToken);
             Volatile.Write(ref lastError, null);
-            Notify();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex) { Volatile.Write(ref lastError, "WLED discovery scan failed"); logger.LogWarning(ex, "WLED discovery failed"); throw; }
         finally { Volatile.Write(ref scanning, 0); scanGate.Release(); }
     }
+    /// <summary>Saves the address, ports and LED count a registered device reports now, so output follows a device
+    /// that moved. An LED count that an existing board mapping would not fit is not taken over.</summary>
+    private async Task RefreshSavedDevicesAsync(CancellationToken cancellationToken)
+    {
+        var online = Devices.Where(d => d.IsOnline && d.Info?.Leds?.Count is > 0 and <= 65535 && d.Info.Udpport is > 0 and <= 65535).ToDictionary(d => d.Mac);
+        DeviceSettings Refresh(DeviceSettings saved, InstallationSettings s)
+        {
+            if (!online.TryGetValue(saved.Mac, out var found)) return saved;
+            var count = found.Info!.Leds!.Count;
+            if (s.Boards.Any(b => b.DeviceMac == saved.Mac && !BoardMapping.Fits(b, count))) count = saved.LedCount;
+            return saved with { Address = found.Address.ToString(), HttpPort = found.Port, LedCount = count, UdpPort = found.Info.Udpport };
+        }
+        var snapshot = settings.Snapshot;
+        if (snapshot.Devices.Any(d => Refresh(d, snapshot) != d))
+            await settings.UpdateAsync(s => s with { Devices = s.Devices.Select(d => Refresh(d, s)).ToList() }, cancellationToken);
+    }
     private void AgeDevices(long scanGeneration)
     {
-        var now = DateTime.UtcNow;
+        var now = clock.GetUtcNow();
         lock (mutation)
         {
             if (generation != scanGeneration) return;
@@ -140,6 +136,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                 if (pair.Value.LastSeen < now - TimeSpan.FromDays(1)) devices.TryRemove(pair.Key, out _);
                 else if (pair.Value.LastSeen < now - interval * 4) devices.TryUpdate(pair.Key, pair.Value with { IsOnline = false }, pair.Value);
             }
+            sorted = null;
         }
     }
     internal static bool IsLocalDeviceAddress(IPAddress address)
@@ -154,18 +151,6 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
             169 => bytes[1] == 254,
             _ => false
         };
-    }
-    private static bool ValidMac(string? mac)
-    {
-        var normalized = mac?.Replace(":", "");
-        return normalized is { Length: 12 } && normalized.All(Uri.IsHexDigit);
-    }
-    private void Notify()
-    {
-        var snapshot = Devices;
-        if (DevicesUpdated is null) return;
-        foreach (Action<IReadOnlyList<WLedDevice>> subscriber in DevicesUpdated.GetInvocationList())
-            try { subscriber(snapshot); } catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { logger.LogDebug(ex, "Discovery subscriber failed"); }
     }
     private async Task TryScanAsync(CancellationToken token)
     {

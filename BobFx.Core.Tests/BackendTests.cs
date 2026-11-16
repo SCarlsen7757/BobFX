@@ -9,15 +9,12 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
-using Xunit;
 
 namespace BobFx.Core.Tests;
 
 public sealed class BackendTests
 {
-    private static CountdownService Countdown(FakeTimeProvider clock) => new(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
-    private static DRgbService Renderer(FakeTimeProvider clock, int count = 30) => new(NullLogger<DRgbService>.Instance,
-        Options.Create(new WLedOptions { Led = new() { LedCount = count } }), new RgbEffectFactory(), clock);
+    private static CountdownService Countdown(FakeTimeProvider clock) => new TestHarness(clock).Countdown;
 
     [Fact]
     public void FractionalDeviationIsRejectedBeforeCountdownStarts()
@@ -75,58 +72,49 @@ public sealed class BackendTests
     [Fact]
     public async Task ManualCommandsActivateStreamingAndCannotOverrideGame()
     {
-        var clock = new FakeTimeProvider();
-        var timer = Countdown(clock);
-        using var rgb = Renderer(clock);
-        using var control = new RgbAndSoundControlService(timer, rgb,
-            new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance);
+        await using var h = new TestHarness();
+        var (rgb, control) = (h.Rgb, h.Control);
         await control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid).WithColor("#ff0000"));
-        Assert.True(rgb.IsUdpActive);
+        Assert.True(rgb.IsStreaming);
         await control.StartGameAsync(TimeSpan.FromSeconds(10), TimeSpan.Zero);
         // The game is rendered on the boards from the scene clock; it ends the manual effect and starts none.
         Assert.Equal(RgbEffect.Off, rgb.CurrentEffect);
-        Assert.True(rgb.IsUdpActive);
+        Assert.True(rgb.IsStreaming);
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Rainbow)));
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StopManualEffectAsync());
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.SetManualSpeedAsync(TimeSpan.FromMilliseconds(100)));
         await control.StopGameAsync();
         Assert.Equal(GamePhase.Idle, control.Phase);
-        Assert.False(rgb.IsUdpActive);
+        Assert.False(rgb.IsStreaming);
     }
 
     [Fact]
     public async Task NewGameCancelsEndingAndShutdownCompletes()
     {
-        var clock = new FakeTimeProvider();
-        using var rgb = Renderer(clock);
-        var timer = Countdown(clock);
-        using var control = new RgbAndSoundControlService(timer, rgb,
-            new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance);
+        await using var h = new TestHarness();
+        var (clock, rgb, timer, control) = (h.Clock, h.Rgb, h.Countdown, h.Control);
         await control.StartAsync(CancellationToken.None);
-        await Eventually(() => control.IsReady);
+        await Wait.Until(() => control.IsReady);
         await control.StartGameAsync(false, duration: TimeSpan.FromSeconds(10), deviation: TimeSpan.Zero);
         await control.StopGameAsync();
         Assert.Equal(GamePhase.Ending, control.Phase);
         await control.StartGameAsync(false, duration: TimeSpan.FromSeconds(20), deviation: TimeSpan.Zero);
         clock.Advance(TimeSpan.FromSeconds(6));
-        await Eventually(() => timer.Remaining <= TimeSpan.FromSeconds(14));
+        await Wait.Until(() => timer.Remaining <= TimeSpan.FromSeconds(14));
         Assert.Equal(GamePhase.Running, control.Phase);
-        Assert.True(rgb.IsUdpActive);
+        Assert.True(rgb.IsStreaming);
         Assert.Equal(RgbEffect.Off, rgb.CurrentEffect); // Six seconds in, the virtual strip is still not driven.
         await control.StopAsync(CancellationToken.None);
         Assert.False(control.IsReady);
-        Assert.False(rgb.IsUdpActive);
+        Assert.False(rgb.IsStreaming);
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartGameAsync());
     }
 
     [Fact]
     public async Task ParallelCommandsCannotLeaveMultipleGameRuns()
     {
-        var clock = new FakeTimeProvider();
-        using var rgb = Renderer(clock);
-        var timer = Countdown(clock);
-        using var control = new RgbAndSoundControlService(timer, rgb,
-            new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance);
+        await using var h = new TestHarness();
+        var (timer, control) = (h.Countdown, h.Control);
         var attempts = Enumerable.Range(0, 20).Select(async _ =>
         {
             try { await control.StartGameAsync(false, duration: TimeSpan.FromSeconds(10), deviation: TimeSpan.Zero); return true; }
@@ -139,8 +127,8 @@ public sealed class BackendTests
     [Fact]
     public async Task InvalidUpdatePreservesCurrentEffect()
     {
-        var clock = new FakeTimeProvider();
-        using var rgb = Renderer(clock);
+        await using var h = new TestHarness();
+        var rgb = h.Rgb;
         await rgb.StartEffectAsync(new BreathingEffect());
         Assert.Throws<ArgumentException>(() => rgb.UpdateEffect(e => ((BreathingEffect)e).MaxBrightness = float.NaN));
         Assert.Equal(RgbEffect.Breathing, rgb.CurrentEffect);
@@ -155,10 +143,10 @@ public sealed class BackendTests
         effect.Initialize(1, clock);
         var leds = new Vector3[1];
         clock.Advance(TimeSpan.FromSeconds(1));
-        Assert.False(effect.Apply(leds, CancellationToken.None));
+        Assert.False(effect.Apply(leds));
         Assert.Equal(new Vector3(0.5f), leds[0]);
         clock.Advance(TimeSpan.FromSeconds(1));
-        Assert.True(effect.Apply(leds, CancellationToken.None));
+        Assert.True(effect.Apply(leds));
     }
 
     [Fact]
@@ -205,12 +193,6 @@ public sealed class BackendTests
         Assert.False(WLedDiscoveryService.IsLocalDeviceAddress(IPAddress.Parse("127.0.0.1")));
         Assert.False(WLedDiscoveryService.IsLocalDeviceAddress(IPAddress.Parse("8.8.8.8")));
         Assert.True(WLedDiscoveryService.IsLocalDeviceAddress(IPAddress.Parse("192.168.1.5")));
-    }
-
-    private static async Task Eventually(Func<bool> condition)
-    {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        while (!condition()) await Task.Delay(1, timeout.Token);
     }
 
 }

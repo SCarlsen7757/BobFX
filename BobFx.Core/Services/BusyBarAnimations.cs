@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using static BobFx.Core.Services.BusyBarScene;
+using static BobFx.Core.Services.ShowMath;
 
 namespace BobFx.Core.Services;
 
@@ -35,7 +36,7 @@ internal static class BusyBarAnimations
         BusyBarScreen.Go => GoSeconds * 2,
         // One clip for the whole ending: three flares while the boards flash, then the sun sets
         // while their dot runs.
-        _ => timing.FlashSeconds + timing.DotSeconds
+        _ => ShowTiming.EndingSeconds(timing)
     };
 
     /// <summary>Rates whose frame time is a whole number of milliseconds, so a long clip keeps time on the bar.
@@ -151,7 +152,7 @@ internal static class BusyBarAnimations
         var reach = (int)Math.Ceiling(number.Length * 9d * 1.3 / 2) + 3;
         Dim(canvas, 36 - reach, 35 + reach, 1, 14, 0.2, 4);
         var phase = Frac(elapsed / 2);
-        if (elapsed < preparation * 0.6)
+        if (elapsed < preparation * ShowTiming.ScannerUntil)
         {
             var centre = (Math.Sin(2 * Math.PI * 2 * phase - Math.PI / 2) + 1) * Centre;
             for (var x = 0; x < BusyBarCanvas.Width; x++)
@@ -161,7 +162,7 @@ internal static class BusyBarAnimations
                 canvas.Blend(x, 0, color, intensity); canvas.Blend(x, 15, color, intensity);
             }
         }
-        else if (elapsed < preparation * 0.8)
+        else if (elapsed < preparation * ShowTiming.PlayerEndsUntil)
         {
             for (var x = 0; x < BusyBarCanvas.Width; x++)
                 foreach (var (row, direction) in new[] { (0, 1), (15, -1) })
@@ -214,12 +215,11 @@ internal static class BusyBarAnimations
         var flare = 0d; var spread = 0d; var set = 0d;
         if (elapsed < timing.FlashSeconds)
         {
-            // Same cadence as the boards: six equal intervals, lit on the even ones.
-            var interval = timing.FlashSeconds / 6;
-            var index = (int)(elapsed / timing.FlashSeconds * 6);
-            if (index % 2 == 0)
+            // The same flares as on the boards.
+            var (_, lit, _, spreading) = ShowTiming.Flare(elapsed, timing.FlashSeconds);
+            if (lit)
             {
-                spread = Clamp01((elapsed - index * interval) / interval);
+                spread = spreading;
                 flare = Math.Pow(1 - spread, 1.5);
             }
         }
@@ -249,7 +249,7 @@ internal static class BusyBarAnimations
             var pop = 1 - Smooth(elapsed / 0.25);
             if (pop > 0) { ScaledLetters(canvas, GameOver, 1 + 0.2 * pop, 0.9 * pop, DuskColor); return; }
             // Each flare is weaker than the last: the pulse is fading out.
-            var pulse = flare * (1 - 0.25 * (int)(elapsed / timing.FlashSeconds * 3));
+            var pulse = flare * (1 - 0.25 * ShowTiming.Flare(elapsed, timing.FlashSeconds).Number);
             Letters(canvas, GameOver, (_, _) => 1, (_, y) => Rgb.Mix(DuskColor(y) * (0.6 + 0.4 * pulse), White, 0.5 * pulse));
             return;
         }

@@ -3,27 +3,29 @@ using Microsoft.Extensions.Options;
 using System.Numerics;
 namespace BobFx.Core.Services;
 
-/// <summary>One hosted renderer owns the mutable frame; consumers receive copies.</summary>
-public sealed class DRgbService : BackgroundService
+/// <summary>Draws the effect an operator started by hand on a virtual strip of LEDs, which the output service
+/// stretches over every selected controller. It owns that strip; everyone else gets copies. During a game it
+/// draws nothing: the boards are then lit from the scene clock.</summary>
+public sealed class ManualEffectRenderer : BackgroundService
 {
     private readonly Lock sync = new();
     private readonly Vector3[] leds;
     private readonly IRgbEffectFactory factory;
-    private readonly ILogger<DRgbService> logger;
+    private readonly ILogger<ManualEffectRenderer> logger;
     private readonly TimeProvider clock;
     private IRgbEffect? currentEffect;
     private bool completed;
     private long lastFrame;
-    private int udpActive;
+    private int streaming;
     private int ready;
     public bool IsReady => Volatile.Read(ref ready) != 0;
     private string? lastError;
     public string? LastError => Volatile.Read(ref lastError);
-    public int LedCount => leds.Length;
-    public bool IsUdpActive { get => Volatile.Read(ref udpActive) != 0; internal set => Volatile.Write(ref udpActive, value ? 1 : 0); }
+    /// <summary>True while frames are to go out to the controllers, for a game as well as for a manual effect.
+    /// The coordinator switches it; the output service acts on it.</summary>
+    public bool IsStreaming { get => Volatile.Read(ref streaming) != 0; internal set => Volatile.Write(ref streaming, value ? 1 : 0); }
     public RgbEffect CurrentEffect { get { lock (sync) return currentEffect?.EffectType ?? RgbEffect.Off; } }
-    public TimeSpan Speed { get { lock (sync) return currentEffect?.Speed ?? TimeSpan.FromMilliseconds(100); } }
-    public DRgbService(ILogger<DRgbService> logger, IOptions<WLedOptions> options, IRgbEffectFactory factory, TimeProvider clock)
+    public ManualEffectRenderer(ILogger<ManualEffectRenderer> logger, IOptions<WLedOptions> options, IRgbEffectFactory factory, TimeProvider clock)
     {
         this.logger = logger; this.factory = factory; this.clock = clock;
         leds = new Vector3[options.Value.Led.LedCount];
@@ -35,11 +37,11 @@ public sealed class DRgbService : BackgroundService
     }
     internal Task StartEffectAsync(IRgbEffect effect)
     {
-        Validate(effect);
+        effect.EnsureValid();
         lock (sync)
         {
             effect.Initialize(leds.Length, clock);
-            completed = effect.Apply(leds, CancellationToken.None);
+            completed = effect.Apply(leds);
             Volatile.Write(ref lastError, null);
             currentEffect = effect; lastFrame = clock.GetTimestamp();
         }
@@ -55,13 +57,12 @@ public sealed class DRgbService : BackgroundService
         lock (sync)
         {
             if (currentEffect is null) return;
-            var candidate = currentEffect.Clone(); update(candidate); Validate(candidate);
-            candidate.Initialize(leds.Length); currentEffect = candidate; completed = false;
+            var candidate = currentEffect.Clone(); update(candidate); candidate.EnsureValid();
+            candidate.Initialize(leds.Length, clock); currentEffect = candidate; completed = false;
         }
     }
-    public RgbStatus GetStatus() { lock (sync) return new(currentEffect?.EffectType ?? RgbEffect.Off, currentEffect?.Speed ?? TimeSpan.FromMilliseconds(100), leds.Length, IsUdpActive, LastError); }
+    public RgbStatus GetStatus() { lock (sync) return new(currentEffect?.EffectType ?? RgbEffect.Off, currentEffect?.Speed ?? TimeSpan.FromMilliseconds(100), leds.Length, IsStreaming, LastError); }
     public Vector3[] GetSnapshot() { lock (sync) return (Vector3[])leds.Clone(); }
-    private static void Validate(IRgbEffect effect) => EffectValidation.EnsureValid(effect);
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(10), clock);
@@ -72,12 +73,12 @@ public sealed class DRgbService : BackgroundService
                 lock (sync)
                 {
                     if (currentEffect is null || completed || clock.GetElapsedTime(lastFrame) < currentEffect.Speed) continue;
-                    try { completed = currentEffect.Apply(leds, stoppingToken); lastFrame = clock.GetTimestamp(); }
-                    catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { Volatile.Write(ref lastError, "LED renderer failed"); logger.LogError(ex, "LED renderer failed"); currentEffect = null; leds.AsSpan().Clear(); IsUdpActive = false; }
+                    try { completed = currentEffect.Apply(leds); lastFrame = clock.GetTimestamp(); }
+                    catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { Volatile.Write(ref lastError, "LED renderer failed"); logger.LogError(ex, "LED renderer failed"); currentEffect = null; leds.AsSpan().Clear(); IsStreaming = false; }
                 }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { /* Host shutdown cancels the renderer timer. */ }
-        finally { Volatile.Write(ref ready, 0); StopEffect(); IsUdpActive = false; }
+        finally { Volatile.Write(ref ready, 0); StopEffect(); IsStreaming = false; }
     }
 }
 

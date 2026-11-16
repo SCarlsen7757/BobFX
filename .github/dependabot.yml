@@ -3,8 +3,20 @@ updates:
   - package-ecosystem: npm
     directory: /frontend
     labels: [chore, dependencies, web]
+    groups:
+      # Packages that are released against each other arrive in one pull request.
+      vite:
+        patterns: ["vite", "vitest", "@vitejs/plugin-vue"]
+      vue:
+        patterns: ["vue", "vue-router", "vue-tsc"]
+      three:
+        patterns: ["three", "@types/three"]
     ignore:
+      # The Node types move with the Node runtime in .nvmrc; newer major types can expose unavailable APIs.
       - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # vue-tsc loads the JavaScript compiler, which TypeScript 7 no longer ships. Move when vue-tsc supports it.
+      - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
     schedule:
       interval: weekly
@@ -12,7 +24,11 @@ updates:
   - package-ecosystem: npm
     directory: /e2e
     labels: [chore, dependencies, web]
-    # Keep the Node 24 type definitions until they are deliberately moved with the Node runtime; newer major types can expose unavailable APIs.
+    groups:
+      # The compiler and the Node types move together; Playwright keeps its own pull request.
+      typescript:
+        patterns: ["typescript", "@types/node"]
+    # The Node types move with the Node runtime in .nvmrc; newer major types can expose unavailable APIs.
     ignore:
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
@@ -25,8 +41,22 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+  # The SDK in global.json. The SDK image in the Dockerfile must be moved to the same version; CI checks that they match.
+  - package-ecosystem: dotnet-sdk
+    directory: /
+    labels: [chore, dependencies, infra]
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
   - package-ecosystem: docker
     directory: /BobFx.Core
+    labels: [chore, dependencies, infra]
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  # The packages the tests of the CI scripts need.
+  - package-ecosystem: pip
+    directory: /scripts/ci
     labels: [chore, dependencies, infra]
     schedule:
       interval: weekly

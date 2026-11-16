@@ -1,60 +1,49 @@
+using System.Globalization;
 using System.Numerics;
 
 namespace BobFx.Core.Services.Effects;
 
-/// <summary>
-/// Helper methods for color conversion and manipulation.
-/// </summary>
+/// <summary>Conversions between the color forms in use: #RRGGBB text, bytes, and vectors with channels from 0 to 1.</summary>
 public static class ColorHelper
 {
-    /// <summary>
-    /// Convert hex color string to RGB vector.
-    /// </summary>
-    public static Vector3 HexToRgb(string hex)
+    /// <summary>Reads #RRGGBB. This is the one place that decides what a color in a request or in settings may look like.</summary>
+    public static bool TryParseHex(string? hex, out byte red, out byte green, out byte blue)
     {
-        if (string.IsNullOrWhiteSpace(hex))
-            throw new ArgumentException("Hex color cannot be null or empty", nameof(hex));
-
-        hex = hex.TrimStart('#');
-
-        if (hex.Length != 6)
-            throw new ArgumentException("Hex color must be 6 characters long", nameof(hex));
-
-        byte r = Convert.ToByte(hex[..2], 16);
-        byte g = Convert.ToByte(hex.Substring(2, 2), 16);
-        byte b = Convert.ToByte(hex.Substring(4, 2), 16);
-
-        // Normalize to 0..1
-        return new Vector3(r / 255f, g / 255f, b / 255f);
+        red = green = blue = 0;
+        return hex is { Length: 7 } && hex[0] == '#' &&
+            byte.TryParse(hex.AsSpan(1, 2), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out red) &&
+            byte.TryParse(hex.AsSpan(3, 2), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out green) &&
+            byte.TryParse(hex.AsSpan(5, 2), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out blue);
     }
 
-    /// <summary>
-    /// Convert RGB vector to hex color string.
-    /// </summary>
+    public static Vector3 HexToRgb(string hex) => TryParseHex(hex, out var red, out var green, out var blue)
+        ? new Vector3(red / 255f, green / 255f, blue / 255f)
+        : throw new ArgumentException("Colors must use #RRGGBB format.", nameof(hex));
+
     public static string RgbToHex(Vector3 color)
     {
-        int r = (int)(Math.Clamp(color.X, 0f, 1f) * 255);
-        int g = (int)(Math.Clamp(color.Y, 0f, 1f) * 255);
-        int b = (int)(Math.Clamp(color.Z, 0f, 1f) * 255);
-        return $"#{r:X2}{g:X2}{b:X2}";
+        var (red, green, blue) = ToRgbBytes(color);
+        return $"#{red:X2}{green:X2}{blue:X2}";
     }
 
-    /// <summary>
-    /// Convert RGB bytes to normalized vector.
-    /// </summary>
-    public static Vector3 FromRgb(byte r, byte g, byte b)
-    {
-        return new Vector3(r / 255f, g / 255f, b / 255f);
-    }
+    public static (byte r, byte g, byte b) ToRgbBytes(Vector3 color) =>
+        ((byte)(Math.Clamp(color.X, 0f, 1f) * 255), (byte)(Math.Clamp(color.Y, 0f, 1f) * 255), (byte)(Math.Clamp(color.Z, 0f, 1f) * 255));
 
-    /// <summary>
-    /// Convert normalized RGB vector to bytes.
-    /// </summary>
-    public static (byte r, byte g, byte b) ToRgbBytes(Vector3 color)
+    /// <summary>A color from its hue in degrees (0 up to 360), saturation and value.</summary>
+    public static Vector3 HsvToRgb(float hue, float saturation, float value)
     {
-        byte r = (byte)(Math.Clamp(color.X, 0f, 1f) * 255);
-        byte g = (byte)(Math.Clamp(color.Y, 0f, 1f) * 255);
-        byte b = (byte)(Math.Clamp(color.Z, 0f, 1f) * 255);
-        return (r, g, b);
+        var chroma = value * saturation;
+        var second = chroma * (1 - MathF.Abs(hue / 60 % 2 - 1));
+        var (red, green, blue) = hue switch
+        {
+            < 60 => (chroma, second, 0f),
+            < 120 => (second, chroma, 0f),
+            < 180 => (0f, chroma, second),
+            < 240 => (0f, second, chroma),
+            < 300 => (second, 0f, chroma),
+            _ => (chroma, 0f, second)
+        };
+        var lift = value - chroma;
+        return new Vector3(red + lift, green + lift, blue + lift);
     }
 }

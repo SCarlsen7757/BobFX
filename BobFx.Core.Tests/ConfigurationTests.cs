@@ -6,7 +6,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
-using Xunit;
 namespace BobFx.Core.Tests;
 
 public sealed class ConfigurationTests
@@ -20,26 +19,8 @@ public sealed class ConfigurationTests
     [InlineData("Countdown:DeviationSeconds", "720", "deviation smaller than duration")]
     public void InvalidProductionConfigurationFailsBeforeServing(string key, string value, string expected)
     {
-        using var app = new InvalidApp(key, value);
+        using var app = new BobFxFactory(new Dictionary<string, string?> { [key] = value }, background: false);
         var failure = Assert.ThrowsAny<Exception>(() => app.CreateClient());
         Assert.Contains(expected, failure.ToString(), StringComparison.Ordinal);
-    }
-    private sealed class InvalidApp(string key, string value) : WebApplicationFactory<Program>
-    {
-        protected override void ConfigureWebHost(IWebHostBuilder builder)
-        {
-            builder.UseEnvironment("Production");
-            builder.ConfigureAppConfiguration((_, config) =>
-            {
-                var values = new Dictionary<string, string?>
-                {
-                    ["AllowedHosts"] = "localhost",
-                    ["Security:AllowedClientNetworks:0"] = "127.0.0.0/8"
-                };
-                values[key] = value;
-                config.AddInMemoryCollection(values);
-            });
-            builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>());
-        }
     }
 }

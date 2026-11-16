@@ -14,9 +14,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
+env:
+  # One scanner version for the repository scan, the image scans and the release verification.
+  TRIVY_VERSION: v0.75.0
+  PYTHON_VERSION: "3.14"
+
 jobs:
-  quality:
-    runs-on: ubuntu-latest
+  dotnet:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -24,25 +30,96 @@ jobs:
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "26"
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Restore locked dependencies
+        run: dotnet restore BobFx.slnx --locked-mode
+      # The frontend build stays enabled here: this is the job that proves MSBuild installs and builds
+      # the Vue app, and the HTTP tests request the built pages. The e2e job publishes it the same way.
+      - name: Build with analyzers
+        run: dotnet build BobFx.slnx --configuration Release --no-restore --warnaserror
+      - name: Test
+        run: dotnet test --solution BobFx.slnx --configuration Release --no-build --report-xunit-trx
+      - name: Upload .NET test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dotnet-tests
+          # `dotnet test --solution` writes the TRX files to the working directory; a test project run on its own writes them beside its build output.
+          path: |
+            TestResults/
+            BobFx.Core.Tests/bin/Release/net10.0/TestResults/
+          retention-days: 14
+
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Typecheck frontend
+        run: npm run typecheck
+      - name: Test frontend state ordering and browser audio
+        run: npm test
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: |
             frontend/package-lock.json
             e2e/package-lock.json
+      # The whole solution is restored, as in the other jobs, so they all save the same NuGet cache.
       - name: Restore locked dependencies
         run: dotnet restore BobFx.slnx --locked-mode
-      - name: Build with analyzers
-        run: dotnet build BobFx.slnx --configuration Release --no-restore --warnaserror
-      - name: Test
-        run: dotnet test BobFx.slnx --configuration Release --no-build --logger trx
+      # e2e/run-app.mjs publishes the app while Playwright waits for it to start. Building it first,
+      # Vue app included, keeps that publish incremental and well inside the start timeout.
+      - name: Build the app and its Vue frontend
+        run: dotnet build BobFx.Core/BobFx.Core.csproj --configuration Release --no-restore -p:UseAppHost=false
       - name: Install browser test dependencies
         working-directory: e2e
         run: npm ci
       - name: Typecheck browser tests
         working-directory: e2e
         run: npm run typecheck
+      - name: Read the locked Playwright version
+        id: playwright
+        working-directory: e2e
+        run: echo "version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}-chromium-webkit
+      # With cached browsers this only installs their Linux dependencies.
       - name: Install Chromium and WebKit
         working-directory: e2e
         run: npx playwright install --with-deps chromium webkit
@@ -58,40 +135,47 @@ jobs:
             e2e/playwright-report/
             e2e/test-results/
           retention-days: 14
-      - name: Test frontend state ordering and browser audio
-        working-directory: frontend
-        run: npm test
+
+  policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
       - name: Test release policy and label categories
         run: |
-          python3 -m pip install PyYAML==6.0.3
+          python3 -m pip install -r scripts/ci/requirements.txt
           python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+      - name: Require the Docker SDK image to match global.json
+        run: python3 scripts/ci/sdk_version.py
+      # Nothing is built here: the advisory check only needs the restored package graph.
+      - name: Restore locked dependencies
+        run: dotnet restore BobFx.slnx --locked-mode
       - name: Reject known vulnerable direct and transitive packages
-        shell: bash
         run: |
           dotnet list BobFx.slnx package --vulnerable --include-transitive --format json > vulnerabilities.json
-          python3 - <<'PY'
-          import json
-          report = json.load(open("vulnerabilities.json", encoding="utf-8-sig"))
-          vulnerabilities = [
-              package
-              for project in report.get("projects", [])
-              for framework in project.get("frameworks", [])
-              for key in ("topLevelPackages", "transitivePackages")
-              for package in framework.get(key, [])
-              if package.get("vulnerabilities")
-          ]
-          if vulnerabilities:
-              print(json.dumps(vulnerabilities, indent=2))
-              raise SystemExit("Known vulnerable NuGet dependencies found")
-          PY
+          python3 scripts/ci/nuget_audit.py vulnerabilities.json
       - name: Validate development and production Compose
+        env:
+          # The BUSY Bar overlay requires a secret file path; the config check does not read the file.
+          BUSYBAR_TOKEN_FILE: /dev/null
         run: |
           docker compose -f docker-compose.yml config --quiet
           docker compose --env-file .env.example -f compose.prod.yaml config --quiet
+          docker compose --env-file .env.example -f compose.prod.yaml -f compose.busybar.yaml config --quiet
       - name: Scan repository configuration and secrets
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          version: v0.75.0
+          version: ${{ env.TRIVY_VERSION }}
           scan-type: fs
           scan-ref: .
           scanners: misconfig,secret
@@ -99,7 +183,8 @@ jobs:
           exit-code: "1"
 
   container:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -108,6 +193,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build test image
@@ -123,7 +211,7 @@ jobs:
       - name: Install image scanner
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
-          version: v0.75.0
+          version: ${{ env.TRIVY_VERSION }}
       - name: Scan image and enforce reviewed vulnerability policy
         run: |
           mkdir -p release-evidence
@@ -143,8 +231,9 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [quality, container]
-    runs-on: ubuntu-latest
+    needs: [dotnet, frontend, e2e, policy, container]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     permissions:
       contents: write
       packages: write
@@ -174,6 +263,9 @@ jobs:
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -199,7 +291,11 @@ jobs:
             REVISION=${{ github.sha }}
           provenance: mode=max
           sbom: true
-          cache-from: type=gha
+          # The container job saves one cache per architecture; the last line is this job's own cache, for reruns.
+          cache-from: |
+            type=gha,scope=amd64
+            type=gha,scope=arm64
+            type=gha
           cache-to: type=gha,mode=max
       - name: Select exact verification digest
         id: verified
@@ -212,7 +308,7 @@ jobs:
       - name: Install image scanner
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
-          version: v0.75.0
+          version: ${{ env.TRIVY_VERSION }}
       - name: Verify both exact architecture digests and release metadata
         run: python3 scripts/ci/release.py verify --image "$IMAGE" --version "$VERSION" --digest "$CANDIDATE_DIGEST" --revision "$GITHUB_SHA"
       - name: Attest image provenance

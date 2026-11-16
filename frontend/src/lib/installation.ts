@@ -1,116 +1,165 @@
 import { computed } from 'vue';
 import { connected, useEffect, useGame, useInstallation } from './session';
-import type { AnimationSettings, Board, Edge, InstallationSettings, LightShowSettings } from './contracts';
+import { maxLeds, wellFormed } from './strips';
+import type { AnimationSettings, Board, IdleSync, Limits, LightShowSettings, NumberRange, SavedDevice, Strip } from './contracts';
+
+export { maxLeds, wellFormed };
 
 export function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 export function newId() { return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join(''); }
+export function isIntBetween(value: number, low: number, high: number) { return Number.isInteger(value) && value >= low && value <= high; }
+
+/** The installation as the server last reported it, in the parts the pages read. */
+export function useInstallationState() {
+  const { data } = useInstallation();
+  const state = computed(() => data.value?.value);
+  return {
+    state,
+    settings: computed(() => state.value?.settings),
+    devices: computed<SavedDevice[]>(() => state.value?.settings.devices ?? []),
+    /** What went wrong the last time a frame was sent to a controller, by MAC. */
+    outputErrors: computed(() => state.value?.outputErrors ?? {}),
+    controllerStatus: computed(() => state.value?.controllers ?? {}),
+    passwordsSaved: computed(() => state.value?.passwordsSaved ?? {}),
+    calibration: computed(() => state.value?.calibration ?? null),
+    lightShowTest: computed(() => state.value?.lightShowTest ?? null),
+  };
+}
+
+/** Who has the lights. The server lets one of these at a time send frames; everything else has to wait for it. */
+export type LightsOwner = 'calibration' | 'lightTest' | 'locating' | 'game' | 'manual';
+export function useLightsOwner() {
+  const game = useGame(), effect = useEffect(), { state } = useInstallationState();
+  return computed<LightsOwner | null>(() =>
+    state.value?.calibration ? 'calibration' : state.value?.lightShowTest ? 'lightTest' : state.value?.locating ? 'locating'
+    // A game keeps the output streaming, so it is checked before the manual effect that streaming otherwise means.
+    : (game.data.value?.value.phase ?? 'Idle') !== 'Idle' ? 'game' : effect.data.value?.value.streaming ? 'manual' : null);
+}
 /** True while nothing else owns the lights. A light show test may replace a running test, so it passes `duringLightTest`. */
 export function useCanConfigure(duringLightTest = false) {
-  const game = useGame(), effect = useEffect(), installation = useInstallation();
-  return computed(() => connected.value && game.data.value?.value.phase === 'Idle' &&
-    !effect.data.value?.value.streaming && !installation.data.value?.value.locating && !installation.data.value?.value.calibration &&
-    (duringLightTest || !installation.data.value?.value.lightShowTest));
+  const game = useGame(), owner = useLightsOwner();
+  return computed(() => connected.value && !!game.data.value &&
+    (owner.value === null || (duringLightTest && owner.value === 'lightTest')));
 }
-// Mirrors the server's limits so a draft is rejected before it is sent to the boards.
-export function validateLightShow(show: LightShowSettings, animation: AnimationSettings) {
-  const between = (value: number, low: number, high: number) => Number.isFinite(value) && value >= low && value <= high;
-  if (!Number.isInteger(show.brightness) || !between(show.brightness, 20, 100)) throw new Error('Brightness must be 20–100%.');
-  if (!Number.isInteger(show.speed) || !between(show.speed, 25, 200)) throw new Error('Drift speed must be 25–200%.');
+
+/** Whether a number lies in a range the server sent; `whole` also requires a whole number. */
+export function inRange(value: number, range: NumberRange, whole = false) {
+  return (whole ? Number.isInteger(value) : Number.isFinite(value)) && value >= range.min && value <= range.max;
+}
+export function rangeText(range: NumberRange) { return `${range.min}–${range.max}`; }
+/** Checks a light show draft against the server's limits, so it is rejected before it is sent to the boards. */
+export function validateLightShow(show: LightShowSettings, animation: AnimationSettings, limits: Limits) {
+  const check = (value: number, range: NumberRange, name: string, unit = '', whole = false) => {
+    if (!inRange(value, range, whole)) throw new Error(`${name} must be ${rangeText(range)}${unit}.`);
+  };
+  check(show.brightness, limits.brightnessPercent, 'Brightness', '%', true);
+  check(show.speed, limits.driftSpeedPercent, 'Drift speed', '%', true);
   if (!['calm', 'balanced', 'lively'].includes(show.intensity)) throw new Error('Choose an intensity.');
-  if (show.theme === 'custom')
-    for (const color of [show.custom.primary, show.custom.secondary, show.custom.tertiary, show.custom.accent]) {
-      if (!/^#[0-9a-f]{6}$/i.test(color)) throw new Error('Custom colors must be #RRGGBB.');
-      if (Math.max(...[1, 3, 5].map(at => parseInt(color.slice(at, at + 2), 16))) < 0x30) throw new Error('Custom colors must not be black or nearly black.');
-    }
-  if (!Number.isInteger(animation.framesPerSecond) || !between(animation.framesPerSecond, 10, 60)) throw new Error('Frames per second must be 10–60.');
-  if (!between(animation.flashSeconds, 1, 10)) throw new Error('Flare seconds must be 1–10.');
-  if (!between(animation.dotSeconds, 1, 30)) throw new Error('Comet seconds must be 1–30.');
-  if (!between(animation.dotLapsPerSecond, 1, 20)) throw new Error('Comet laps per second must be 1–20.');
-}
-// Both strips start at top-left: output 1 follows top/right, output 2 follows left/bottom.
-// A total that does not divide by four maps the largest multiple of four; the LEDs left over at the end stay dark.
-export function twoStripEdges(ledCount: number): Edge[] {
-  if (!Number.isInteger(ledCount) || ledCount < 4 || ledCount > 65535)
-    throw new Error('A board needs at least four LEDs. Scan again in WLED devices if the controller reports the wrong total.');
-  const count = Math.floor(ledCount / 4);
-  return [{ start: 0, count, reversed: false }, { start: count, count, reversed: false },
-    { start: count * 3, count, reversed: true }, { start: count * 2, count, reversed: true }];
-}
-/** What the two-strip mapping left out for a controller whose LED total does not divide by four; empty when it does. */
-export function unevenStripNotice(name: string, ledCount: number) {
-  const spare = ledCount % 4;
-  return spare === 0 ? '' : `${name} reports ${ledCount} LEDs, which do not divide into four equal edges. The first ${ledCount - spare} are mapped and the last ${spare === 1 ? 'one stays' : `${spare} stay`} dark. If the strips are wired differently, change the edge ranges under Advanced settings.`;
-}
-export function swapStrips(board: Board) {
-  // Swap physical strip routes without assuming contiguous or equally sized ranges.
-  board.edges = [3, 2, 1, 0].map(side => ({ ...board.edges[side]!, reversed: !board.edges[side]!.reversed }));
-}
-export function validateBoards(settings: InstallationSettings) {
-  const ids = new Set<string>(), devices = new Set<string>();
-  for (const board of settings.boards) {
-    const device = settings.devices.find(d => d.mac === board.deviceMac && d.selected);
-    if (board.deviceMac !== null && board.edges.length === 0)
-      throw new Error(`${board.name}: its LEDs are not mapped yet. Use the two-strip template or set the mapping manually under Advanced settings.`);
-    if (!board.id || !board.name.trim() || ![0, 90, 180, 270].includes(board.rotation) ||
-      (board.edges.length !== 4 && !(board.deviceMac === null && board.edges.length === 0)))
-      throw new Error('Boards require a name, rotation 0/90/180/270 and four mapped edges when assigned.');
-    if (board.deviceMac !== null && !device) throw new Error(`${board.name}: choose a selected WLED controller.`);
-    if (ids.has(board.id) || (board.deviceMac !== null && devices.has(board.deviceMac))) throw new Error('Each board needs a unique ID and WLED controller.');
-    ids.add(board.id); if (board.deviceMac !== null) devices.add(board.deviceMac);
-    const used = new Set<number>();
-    for (const edge of board.edges) {
-      if (!Number.isInteger(edge.start) || !Number.isInteger(edge.count) || edge.start < 0 || edge.count < 1 || edge.start + edge.count > (device?.ledCount ?? 65535))
-        throw new Error(`${board.name}: edge lies outside the device LED count.`);
-      for (let pixel = edge.start; pixel < edge.start + edge.count; pixel++) {
-        if (used.has(pixel)) throw new Error(`${board.name}: edge mappings overlap.`);
-        used.add(pixel);
-      }
-    }
+  // Checked whatever the theme: the server stores the custom colors with every save and refuses unusable ones.
+  for (const color of [show.custom.primary, show.custom.secondary, show.custom.tertiary, show.custom.accent]) {
+    if (!/^#[0-9a-f]{6}$/i.test(color)) throw new Error('Custom colors must be #RRGGBB.');
+    if (Math.max(...[1, 3, 5].map(at => parseInt(color.slice(at, at + 2), 16))) < 0x30) throw new Error('Custom colors must not be black or nearly black.');
   }
+  check(animation.framesPerSecond, limits.framesPerSecond, 'Frames per second', '', true);
+  check(animation.flashSeconds, limits.flareSeconds, 'Flare seconds');
+  check(animation.dotSeconds, limits.cometSeconds, 'Comet seconds');
+  check(animation.dotLapsPerSecond, limits.cometLapsPerSecond, 'Comet laps per second');
 }
+
+/** A standard board: a strip of 51 LEDs down the left side and one down the right. */
+const ledsPerStrip = 51, ledsPerBoard = ledsPerStrip * 2;
+export type Side = 'left' | 'right';
+export const sides: Side[] = ['left', 'right'];
+export const sideNames: Record<Side, string> = { left: 'Left', right: 'Right' };
+
 /**
- * Which strip each edge belongs to, numbered from the strip holding the lowest LED index. Only the edge ranges are
- * saved, so strips are inferred: an edge continues the previous one when its LED numbers carry on and its first LED
- * sits at the corner where the previous edge's last LED is. Edges run clockwise from corner to corner (top-left = 0);
- * an edge's first LED is at its start corner unless the edge is reversed. Unmapped edges get -1.
+ * The mapping a board gets when a controller is assigned: the first half of its LEDs on the left strip and the
+ * second half on the right, both starting at the near end. An odd LED at the end stays dark. Null when the
+ * controller has fewer than two LEDs. Mirrors BoardMapping.Default on the server.
  */
-export function edgeStrips(edges: Edge[]): number[] {
-  const strips = edges.map(() => -1);
-  const order = edges.map((_, side) => side).filter(side => edges[side]!.count >= 1).sort((a, b) => edges[a]!.start - edges[b]!.start);
-  let strip = -1, previous: number | undefined;
-  for (const side of order) {
-    const edge = edges[side]!, before = previous === undefined ? undefined : edges[previous]!;
-    const lastCorner = before && (before.reversed ? previous! : (previous! + 1) % 4);
-    const firstCorner = edge.reversed ? (side + 1) % 4 : side;
-    if (!before || before.start + before.count !== edge.start || lastCorner !== firstCorner) strip++;
-    strips[side] = strip; previous = side;
-  }
-  return strips;
+export function defaultStrips(ledCount: number): { left: Strip; right: Strip } | null {
+  const half = Number.isInteger(ledCount) ? Math.floor(ledCount / 2) : 0;
+  return half < 1 ? null : { left: { start: 0, count: half, reversed: false }, right: { start: half, count: half, reversed: false } };
 }
-/** LEDs of a controller that no edge covers, such as the spare when the total does not divide by four. */
+export function resetMapping(board: Board, ledCount: number) {
+  const strips = defaultStrips(ledCount);
+  board.left = strips?.left ?? null; board.right = strips?.right ?? null;
+}
+/** The strips are plugged into each other's outputs: what was mapped as left is on the right. */
+export function swapSides(board: Board) { [board.left, board.right] = [board.right, board.left]; }
+/** The strip is wired from the other end. */
+export function reverseStrip(board: Board, side: Side) { const strip = board[side]; if (strip) strip.reversed = !strip.reversed; }
+/** The board stands the other way round: the strips change sides and both run the other way. */
+export function turnBoard(board: Board) { swapSides(board); for (const side of sides) reverseStrip(board, side); }
+/** Whether both strips of a board are mapped onto LEDs the controller has. */
+export function fitsController(board: Board, ledCount: number) {
+  return sides.every(side => { const strip = board[side]; return !!strip && wellFormed(strip) && strip.start + strip.count <= ledCount; });
+}
+/** "LEDs 0–50", as the strip is numbered on its controller. */
+export function stripRange(strip: Strip | null) {
+  if (!strip) return 'not mapped';
+  if (!wellFormed(strip)) return 'needs fixing';
+  return strip.count === 1 ? `LED ${strip.start}` : `LEDs ${strip.start}–${strip.start + strip.count - 1}`;
+}
+/** LEDs of a controller that neither strip covers, such as the spare one when the total is odd. */
 export function unmappedLeds(board: Board, ledCount: number) {
-  return Math.max(0, ledCount - board.edges.reduce((sum, edge) => sum + Math.max(0, edge.count), 0));
+  return Math.max(0, ledCount - sides.reduce((sum, side) => sum + Math.max(0, board[side]?.count ?? 0), 0));
 }
-export function boardPixels(board: Board) {
-  const pixels: Array<{ x: number; y: number; index: number; strip: number; stripStart: boolean }> = [];
-  const strips = edgeStrips(board.edges);
-  // The first LED of each strip, for the start marker.
-  const starts = new Set(board.edges.filter((_, side) => strips[side]! >= 0 && !board.edges.some((other, o) => strips[o] === strips[side] && other.start < board.edges[side]!.start))
-    .map(edge => edge.start));
-  for (let side = 0; side < 4; side++) {
-    const physical = (side - board.rotation / 90 + 4) % 4;
-    const edge = board.edges[physical];
-    if (!edge || edge.count < 1 || edge.count > 65535) continue;
-    const count = Math.min(64, edge.count);
-    for (let i = 0; i < count; i++) {
-      const fraction = (i + .5) / count;
-      // Long edges are thinned to 64 dots; keep both end LEDs so a strip's first LED is always drawn.
-      const offset = count === edge.count ? i : Math.round(i * (edge.count - 1) / (count - 1));
-      const index = edge.start + (edge.reversed ? edge.count - 1 - offset : offset);
-      pixels.push({ x: side === 0 ? 10 + fraction * 180 : side === 1 ? 190 : side === 2 ? 190 - fraction * 180 : 10,
-        y: side === 0 ? 10 : side === 1 ? 10 + fraction * 180 : side === 2 ? 190 : 190 - fraction * 180,
-        index, strip: strips[physical]!, stripStart: starts.has(index) });
+/** What to tell the operator when a controller does not report the LEDs of a standard board; empty when it does. */
+export function ledCountNotice(device: SavedDevice) {
+  if (device.ledCount === ledsPerBoard) return '';
+  // The board's tile shows how the LEDs were split, so the notice only says what is unusual.
+  return `${device.name} reports ${device.ledCount} LEDs, not ${ledsPerBoard}.`;
+}
+
+/** Something that stops a layout from being saved, tied to the board and field it belongs to. */
+export interface BoardProblem { boardId: string; side?: Side; part?: 'start' | 'count'; bothStrips?: true; message: string }
+
+/**
+ * Everything wrong with a layout draft, mirroring the server's checks, so each problem is shown next to its field
+ * while editing instead of in a banner after saving. Messages do not repeat the board name: `describeProblem` adds it.
+ */
+export function boardProblems(boards: Board[], devices: SavedDevice[]): BoardProblem[] {
+  const problems: BoardProblem[] = [];
+  const owners = new Map<string, Board>();
+  for (const board of boards) {
+    const add = (message: string, side?: Side, part?: 'start' | 'count') => problems.push({ boardId: board.id, side, part, message });
+    if (!board.name.trim()) add('Give the board a name.');
+    const device = devices.find(d => d.mac === board.deviceMac && d.selected);
+    if (board.deviceMac !== null) {
+      if (!device) add('Its WLED controller is no longer registered or selected. Choose another controller.');
+      const owner = owners.get(board.deviceMac);
+      if (owner) add(`${device?.name ?? 'This controller'} is already used by ${owner.name}. A controller drives one board.`);
+      else owners.set(board.deviceMac, board);
     }
+    for (const side of sides) {
+      const strip = board[side];
+      if (!strip) { if (board.deviceMac !== null) add(`The ${side} strip is not mapped. Use Reset mapping.`, side); continue; }
+      if (!Number.isInteger(strip.start) || strip.start < 0) add('The first LED must be a whole number, 0 or higher.', side, 'start');
+      if (!Number.isInteger(strip.count) || strip.count < 1) add('The LED count must be a whole number, 1 or higher.', side, 'count');
+      if (Number.isInteger(strip.start) && Number.isInteger(strip.count) && strip.start >= 0 && strip.count >= 1 && strip.start + strip.count > (device?.ledCount ?? maxLeds))
+        add(device ? `The ${side} strip uses ${stripRange(strip)}, but ${device.name} has ${device.ledCount} LEDs (0–${device.ledCount - 1}).`
+          : `The ${side} strip uses ${stripRange(strip)}, which is more than a controller can have.`, side, 'count');
+    }
+    const { left, right } = board;
+    if (left && right && wellFormed(left) && wellFormed(right) && left.start < right.start + right.count && right.start < left.start + left.count)
+      problems.push({ boardId: board.id, bothStrips: true, message: `The left strip (${stripRange(left)}) and the right strip (${stripRange(right)}) use the same LEDs.` });
   }
-  return pixels;
+  return problems;
+}
+export function describeProblem(problem: BoardProblem, boards: Board[]) {
+  const name = boards.find(board => board.id === problem.boardId)?.name.trim();
+  return `${name || 'Unnamed board'}: ${problem.message}`;
+}
+/** What is wrong with the idle sync draft; the server refuses the whole layout over any of these. */
+export function idleSyncProblems(idleSync: IdleSync, devices: SavedDevice[], groups: NumberRange = { min: 1, max: 8 }): string[] {
+  const problems: string[] = [];
+  if (!inRange(idleSync.group, groups, true)) problems.push(`Idle sync: the sync group must be a whole number from ${groups.min} to ${groups.max}.`);
+  const master = devices.find(d => d.mac === idleSync.masterMac);
+  if (idleSync.enabled && !master) problems.push('Idle sync: choose a master, or turn idle sync off.');
+  const followers = idleSync.followers.filter(mac => mac !== idleSync.masterMac);
+  if (followers.some(mac => !devices.some(d => d.mac === mac))) problems.push('Idle sync: a follower is no longer registered. Untick it.');
+  if (idleSync.enabled && master && followers.some(mac => devices.find(d => d.mac === mac)?.udpPort !== master.udpPort))
+    problems.push('Idle sync: the master and its followers must use the same WLED UDP port. Set the ports in WLED first.');
+  return problems;
 }

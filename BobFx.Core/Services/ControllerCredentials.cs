@@ -25,7 +25,9 @@ public sealed class ControllerCredentials
         provider = DataProtectionProvider.Create(new DirectoryInfo(keys), builder => builder.SetApplicationName("BobFX.ControllerCredentials"));
     }
     private string PathFor(string id) => Path.Join(directory, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id))) + ".protected");
-    public bool HasPassword(string id) => File.Exists(PathFor(id));
+    // Passwords are only ever written through SetAsync, so whether one exists is looked up on disk once.
+    private readonly ConcurrentDictionary<string, bool> saved = new();
+    public bool HasPassword(string id) => saved.GetOrAdd(id, key => File.Exists(PathFor(key)));
     public long Revision(string id) => revisions.GetValueOrDefault(id);
     public static void ValidatePassword(string password)
     {
@@ -54,6 +56,7 @@ public sealed class ControllerCredentials
                 await stream.FlushAsync(token); stream.Flush(true);
             }
             File.Move(temporary, PathFor(id), true);
+            saved[id] = true;
             revisions.AddOrUpdate(id, 1, (_, revision) => revision + 1);
         }
         finally

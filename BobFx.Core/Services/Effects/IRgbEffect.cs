@@ -2,51 +2,31 @@ using System.Numerics;
 
 namespace BobFx.Core.Services.Effects;
 
-/// <summary>
-/// Interface for all RGB effects.
-/// </summary>
+/// <summary>An animation of the virtual LED strip that manual effects are drawn on.</summary>
 public interface IRgbEffect
 {
-    /// <summary>
-    /// The type of effect this represents.
-    /// </summary>
     RgbEffect EffectType { get; }
 
-    /// <summary>
-    /// The speed/delay between effect updates.
-    /// </summary>
+    /// <summary>The time between two frames.</summary>
     TimeSpan Speed { get; set; }
 
-    /// <summary>
-    /// Initialize the effect before first render.
-    /// </summary>
-    void Initialize(int ledCount, TimeProvider? clock = null);
+    /// <summary>The effect's colors, in the order of its info's labels.</summary>
+    IReadOnlyList<Vector3> Colors { get; }
+    void SetColor(int index, Vector3 color);
 
-    /// <summary>
-    /// Apply the effect to the LED array.
-    /// </summary>
-    /// <param name="leds">The LED array to update.</param>
-    /// <param name="token">Cancellation token.</param>
-    /// <returns>True if the effect has completed and should stop, false to continue.</returns>
-    bool Apply(Span<Vector3> leds, CancellationToken token);
+    /// <summary>Prepares the effect for a strip and starts it from its beginning. The clock is the renderer's,
+    /// so timed effects follow it.</summary>
+    void Initialize(int ledCount, TimeProvider clock);
 
-    /// <summary>
-    /// Reset the effect to its initial state.
-    /// </summary>
-    void Reset();
+    /// <summary>Draws the next frame.</summary>
+    /// <returns>True once the effect has finished and has nothing more to draw.</returns>
+    bool Apply(Span<Vector3> leds);
 
-    /// <summary>
-    /// Get metadata about this effect.
-    /// </summary>
     RgbEffectInfo GetInfo();
 
-    /// <summary>
-    /// Validate that the effect is properly configured.
-    /// </summary>
-    ValidationResult Validate();
+    /// <summary>Throws an <see cref="ArgumentException"/> that says what is wrong with the effect's settings.</summary>
+    void EnsureValid();
 
-    /// <summary>
-    /// Clone the effect with the same configuration.
-    /// </summary>
+    /// <summary>A copy with the same settings, which can be changed and tried without touching this one.</summary>
     IRgbEffect Clone();
 }

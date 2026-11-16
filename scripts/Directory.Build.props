@@ -1,0 +1,3 @@
+<Project>
+  <!-- The file-based scripts here are not part of the application: they do not inherit its build settings or package locks. -->
+</Project>

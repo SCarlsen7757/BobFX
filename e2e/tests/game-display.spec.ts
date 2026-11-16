@@ -249,3 +249,13 @@ test('an initial SignalR connection failure retries without reloading', async ({
   await expect(page.getByRole('button', { name: 'Start Countdown', exact: true })).toBeEnabled({ timeout: 10000 });
   expect(failed).toBe(true);
 });
+
+test('an unknown path reached inside the app shows a way back to the game', async ({ page }) => {
+  await ready(page);
+  // The server answers unknown URLs itself, so the app's own page only shows for navigation inside it.
+  await page.evaluate(() => { history.pushState(null, '', '/no-such-page'); dispatchEvent(new PopStateEvent('popstate')); });
+  await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
+  await expect(page).toHaveTitle('Not found | BobFX');
+  await page.getByRole('link', { name: 'Return to the game' }).click();
+  await expect(page.getByRole('button', { name: 'Start Countdown', exact: true })).toBeVisible();
+});

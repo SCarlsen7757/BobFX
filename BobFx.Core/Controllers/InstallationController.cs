@@ -4,51 +4,50 @@ using System.Text.Json;
 
 namespace BobFx.Core.Controllers;
 
+/// <summary>Setting up the installation. What a command refuses is answered by <see cref="ApiExceptionFilter"/>.</summary>
 [ApiController]
 [Route("api/installation")]
-public sealed class InstallationController(InstallationSettingsStore settings, RgbAndSoundControlService control,
+public sealed class InstallationController(InstallationSettingsStore settings, GameCoordinator control,
     InstallationOutputService output, WLedRegistryService registry, ControllerCredentials credentials,
     WLedDiscoveryService discovery, BusyBarService busyBars) : ControllerBase
 {
     [HttpGet]
     public InstallationSettings Get() => settings.Snapshot;
     [HttpPut]
-    public Task<IActionResult> Save(InstallationSettings value, CancellationToken token) => Execute(async () =>
-        await control.ConfigureAsync(() => settings.SaveAsync(value, token)));
+    public Task Save(InstallationSettings value, CancellationToken token) => control.ConfigureAsync(() => settings.SaveAsync(value, token));
     [HttpPut("layout")]
-    public Task<IActionResult> SaveLayout(LayoutRequest value, CancellationToken token) => Execute(() => control.ConfigureAsync(async () =>
+    public Task SaveLayout(LayoutRequest value, CancellationToken token) => control.ConfigureAsync(async () =>
     {
         await settings.UpdateAsync(s => s with { Boards = value.Boards, IdleSync = value.IdleSync }, token);
         await output.ApplyIdleSyncAsync(token);
-    }));
+    });
     [HttpPut("light-show")]
-    public Task<IActionResult> SaveLightShow(LightShowRequest value, CancellationToken token) => Execute(() => control.ConfigureAsync(() =>
-        settings.UpdateAsync(s => s with { LightShow = value.LightShow, Animation = value.Animation }, token)));
+    public Task SaveLightShow(LightShowRequest value, CancellationToken token) => control.ConfigureAsync(() =>
+        settings.UpdateAsync(s => s with { LightShow = value.LightShow, Animation = value.Animation }, token));
     /// <summary>Takes effect from the next game, so it is allowed while a game runs.</summary>
     [HttpPut("countdown")]
-    public Task<IActionResult> SaveCountdown(CountdownSettings value, CancellationToken token) => Execute(() => settings.UpdateAsync(s => s with { Countdown = value }, token));
+    public Task SaveCountdown(CountdownSettings value, CancellationToken token) => settings.UpdateAsync(s => s with { Countdown = value }, token);
+
     [HttpGet("light-show/themes")]
     public IReadOnlyList<LightShowTheme> LightShowThemes() => BoardLightShow.Themes;
     [HttpPost("light-show/test")]
-    public async Task<IActionResult> StartLightShowTest(LightShowTestRequest request)
+    public async Task<LightShowTestView?> StartLightShowTest(LightShowTestRequest request)
     {
-        var result = await Execute(() => output.StartLightShowTestAsync(request));
-        return result is OkResult ? Ok(output.LightShowTest) : result;
+        await output.StartLightShowTestAsync(request);
+        return output.LightShowTest;
     }
     /// <summary>Renders a part of the show for the browser preview. It only reads settings and owns no lights,
     /// so it works during games and tests too.</summary>
     [HttpPost("light-show/preview")]
-    public IActionResult PreviewLightShow(LightShowTestRequest request)
-    {
-        try { return Ok(LightShowPreviewRenderer.Render(settings.Snapshot, request)); }
-        catch (ArgumentException ex) { return Problem(ex.Message, statusCode: 400); }
-    }
+    public LightShowPreview PreviewLightShow(LightShowTestRequest request) => LightShowPreviewRenderer.Render(settings.Snapshot, request);
     [HttpDelete("light-show/test")]
-    public Task<IActionResult> StopLightShowTest() => Execute(() => output.StopLightShowTestAsync());
+    public Task StopLightShowTest() => output.StopLightShowTestAsync();
+
     [HttpPut("controllers")]
-    public Task<IActionResult> SaveControllers(ControllersRequest value, CancellationToken token) => Execute(() => control.ConfigureAsync(async () =>
+    public Task SaveControllers(ControllersRequest value, CancellationToken token) => control.ConfigureAsync(async () =>
     {
         if (value.Controllers is null || value.Passwords is null) throw new ArgumentException("Controllers and passwords are required.");
+        // Everything is checked before anything is saved, so a refused password does not leave the list half saved.
         InstallationSettingsStore.Validate(settings.Snapshot with { Controllers = value.Controllers });
         foreach (var (id, password) in value.Passwords)
         {
@@ -57,72 +56,66 @@ public sealed class InstallationController(InstallationSettingsStore settings, R
         }
         await settings.UpdateAsync(s => s with { Controllers = value.Controllers }, token);
         foreach (var (id, password) in value.Passwords) await credentials.SetAsync(id, password, token);
-    }));
+    });
     [HttpPost("controllers/test")]
     public async Task<IActionResult> TestController(ControllerTestRequest value, CancellationToken token)
     {
+        // Whatever goes wrong on the way to the device, the operator checks the same three things.
         try { return Ok(new { apiVersion = await busyBars.TestConnectionAsync(value.Controller, value.Password, token) }); }
-        catch (ArgumentException ex) { return Problem(ex.Message, statusCode: 400); }
         catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or OperationCanceledException)
         { return Problem("Connection failed. Check address, local API access and device password.", statusCode: 502); }
     }
-    [HttpPost("devices/{mac}/select")]
-    public Task<IActionResult> SelectDevice(string mac, CancellationToken token) => Execute(async () =>
-    {
-        var device = discovery.Devices.FirstOrDefault(d => d.Mac == mac) ?? throw new ArgumentException("Device is no longer discovered. Scan again.");
-        await registry.SelectAsync(device, token);
-    });
-    [HttpPut("devices/{mac}")]
-    public Task<IActionResult> SelectSaved(string mac, DeviceSelectionRequest value, CancellationToken token) => Execute(() => control.ConfigureAsync(() =>
-        settings.UpdateAsync(s => s with { Devices = s.Devices.Select(d => d.Mac == mac ? d with { Selected = value.Selected } : d).ToList() }, token)));
-    [HttpDelete("devices/{mac}")]
-    public Task<IActionResult> RemoveDevice(string mac, CancellationToken token) => Execute(() => control.ConfigureAsync(() => settings.UpdateAsync(s =>
-    {
-        if (s.Boards.Any(b => b.DeviceMac == mac) || s.IdleSync.MasterMac == mac || s.IdleSync.Followers.Contains(mac))
-            throw new ArgumentException("Remove this device from board layout and idle sync before deleting it.");
-        return s with { Devices = s.Devices.Where(d => d.Mac != mac).ToList() };
-    }, token)));
-    [HttpPost("devices/{mac}/locate-discovered")]
-    public Task<IActionResult> LocateDiscovered(string mac, CancellationToken token) => Execute(async () =>
-    {
-        var d = discovery.Devices.FirstOrDefault(d => d.Mac == mac) ?? throw new ArgumentException("Device is no longer discovered. Scan again.");
-        await output.LocateDeviceAsync(new DeviceSettings(d.Mac, d.Name, d.Address.ToString(), d.Port, d.Info?.Leds?.Count ?? 0, d.Info?.Udpport ?? 21324, false), token);
-    });
-    [HttpPost("devices/manual")]
-    public Task<IActionResult> AddManual(ManualDeviceRequest request, CancellationToken token) => Execute(() => registry.AddManualAsync(request.Address, request.Port, token));
-    [HttpPost("devices/{mac}/locate")]
-    public Task<IActionResult> Locate(string mac, CancellationToken token) => Execute(() => output.LocateAsync(mac, token));
-    [HttpPost("calibration")]
-    public async Task<IActionResult> StartCalibration(CalibrationRequest request)
-    {
-        var result = await Execute(() => output.StartCalibrationAsync(request));
-        return result is OkResult ? Ok(output.Calibration) : result;
-    }
-    [HttpPut("calibration/{id}")]
-    public Task<IActionResult> UpdateCalibration(string id, CalibrationRequest request) => Execute(() => output.UpdateCalibrationAsync(id, request));
-    [HttpDelete("calibration/{id}")]
-    public Task<IActionResult> StopCalibration(string id) => Execute(() => output.StopCalibrationAsync(id));
-    [HttpPost("idle-sync/apply")]
-    public Task<IActionResult> Sync(CancellationToken token) => Execute(() => control.ConfigureAsync(() => output.ApplyIdleSyncAsync(token)));
+    [HttpGet("controllers/status")]
+    public IReadOnlyDictionary<string, BusyBarStatus> ControllerStatus() => busyBars.Statuses;
     [HttpGet("controllers/{id}/password")]
     public IActionResult PasswordStatus(string id) => settings.Snapshot.Controllers.Any(c => c.Id == id)
         ? Ok(new { hasPassword = credentials.HasPassword(id) }) : NotFound();
     [HttpPut("controllers/{id}/password")]
-    public Task<IActionResult> SetPassword(string id, ControllerPasswordRequest request, CancellationToken token) => Execute(() => control.ConfigureAsync(async () =>
+    public Task SetPassword(string id, ControllerPasswordRequest request, CancellationToken token) => control.ConfigureAsync(async () =>
     {
         if (!settings.Snapshot.Controllers.Any(c => c.Id == id)) throw new ArgumentException("Save the controller before setting its password.");
         await credentials.SetAsync(id, request.Password, token);
-    }));
-    private async Task<IActionResult> Execute(Func<Task> action)
+    });
+
+    [HttpPost("devices/{mac}/select")]
+    public Task SelectDevice(string mac, CancellationToken token) => registry.SelectAsync(Discovered(mac), token);
+    [HttpPut("devices/{mac}")]
+    public Task SelectSaved(string mac, DeviceSelectionRequest value, CancellationToken token) => control.ConfigureAsync(() =>
+        settings.UpdateAsync(s => s with { Devices = s.Devices.Select(d => d.Mac == mac ? d with { Selected = value.Selected } : d).ToList() }, token));
+    [HttpDelete("devices/{mac}")]
+    public Task RemoveDevice(string mac, CancellationToken token) => control.ConfigureAsync(() => settings.UpdateAsync(s =>
     {
-        try { await action(); return Ok(); }
-        catch (ArgumentException ex) { return Problem(ex.Message, statusCode: 400); }
-        catch (JsonException) { return Problem("Device returned invalid JSON.", statusCode: 400); }
-        catch (InvalidOperationException ex) { return Problem(ex.Message, statusCode: 409); }
-        catch (HttpRequestException) { return Problem("Device could not be reached.", statusCode: 502); }
-        catch (OperationCanceledException) { return Problem("Operation timed out or was cancelled.", statusCode: 504); }
-        catch (IOException) { return Problem("Settings could not be saved; check data-volume permissions.", statusCode: 503); }
+        if (s.Boards.Any(b => b.DeviceMac == mac) || s.IdleSync.MasterMac == mac || s.IdleSync.Followers.Contains(mac))
+            throw new ArgumentException("Remove this device from board layout and idle sync before deleting it.");
+        return s with { Devices = s.Devices.Where(d => d.Mac != mac).ToList() };
+    }, token));
+    [HttpPost("devices/{mac}/locate-discovered")]
+    public Task LocateDiscovered(string mac, CancellationToken token) =>
+        output.LocateDeviceAsync(WLedRegistryService.ToSettings(Discovered(mac)) with { Selected = false }, token);
+    [HttpPost("devices/manual")]
+    public Task AddManual(ManualDeviceRequest request, CancellationToken token) => registry.AddManualAsync(request.Address, request.Port, token);
+    /// <summary>Adds a simulated controller and returns it, so a page can assign it to a board at once.</summary>
+    [HttpPost("devices/simulated")]
+    public Task<DeviceSettings> AddSimulated(CancellationToken token) => registry.AddSimulatedAsync(token);
+    [HttpPost("devices/{mac}/locate")]
+    public Task Locate(string mac, CancellationToken token) => output.LocateAsync(mac, token);
+    private WLedDevice Discovered(string mac) => discovery.Find(mac) ?? throw new ArgumentException("Device is no longer discovered. Scan again.");
+
+    [HttpPost("calibration")]
+    public async Task<CalibrationView?> StartCalibration(CalibrationRequest request)
+    {
+        await output.StartCalibrationAsync(request);
+        return output.Calibration;
     }
+    [HttpPut("calibration/{id}")]
+    public Task UpdateCalibration(string id, CalibrationRequest request) => output.UpdateCalibrationAsync(id, request);
+    [HttpDelete("calibration/{id}")]
+    public Task StopCalibration(string id) => output.StopCalibrationAsync(id);
+    [HttpPost("idle-sync/apply")]
+    public Task Sync(CancellationToken token) => control.ConfigureAsync(() => output.ApplyIdleSyncAsync(token));
+    /// <summary>When a frame last went out, and what went wrong per controller.</summary>
+    [HttpGet("status")]
+    public object Status() => new { output.LastSendUtc, output.Errors };
 }
 public sealed record ManualDeviceRequest(string Address, int Port = 80);
 public sealed record ControllerPasswordRequest(string Password);

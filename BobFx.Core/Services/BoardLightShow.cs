@@ -1,4 +1,5 @@
-using static BobFx.Core.Services.BusyBarScene;
+using static BobFx.Core.Services.ShowMath;
+using static BobFx.Core.Services.ShowTiming;
 
 namespace BobFx.Core.Services;
 
@@ -42,8 +43,8 @@ internal sealed class LightPalette
     /// <summary>A theme colour sets hue only: it is scaled to full level, then gamma-corrected.</summary>
     private static Rgb Led(string hex)
     {
-        double red = Convert.ToInt32(hex.Substring(1, 2), 16), green = Convert.ToInt32(hex.Substring(3, 2), 16), blue = Convert.ToInt32(hex.Substring(5, 2), 16);
-        var peak = Math.Max(red, Math.Max(green, blue));
+        if (!Effects.ColorHelper.TryParseHex(hex, out var red, out var green, out var blue)) return default;
+        double peak = Math.Max(red, Math.Max(green, blue));
         if (peak <= 0) return default;
         double Channel(double value) => 255 * Math.Pow(value / peak, Gamma);
         return new(Channel(red), Channel(green), Channel(blue));
@@ -67,7 +68,7 @@ internal static class BoardLightShow
     internal static double? Level(string? intensity) => intensity switch { "calm" => 0, "balanced" => 0.5, "lively" => 1, _ => null };
 
     // Countdown: stage boundaries and the per-second pop match the BUSY Bar's countdown clip.
-    private const double ScannerUntil = 0.6, PlayerEdgesUntil = 0.8, PopSeconds = 0.3;
+    private const double PopSeconds = 0.3;
     // GO: the burst reaches the row ends at BurstSeconds, then settles and blends into play.
     internal const double GoSeconds = BusyBarAnimations.GoSeconds, BlendSeconds = 0.75;
     private const double BurstSeconds = 0.3;
@@ -75,12 +76,20 @@ internal static class BoardLightShow
     private const double PlayLevel = 0.35, PlayLevelRange = 0.20;
     private const double DriftLoopsPerSecond = 0.04, DriftRange = 0.05, DriftFloor = 0.02;
     private const double BreathDepth = 0.20, BreathDepthRange = 0.12, BreathSeconds = 9, BreathSecondsRange = 3;
+    // Play: how far, in board widths, the row gradient leans over the length of a strip. Without it every
+    // strip would be a single flat colour, because a strip sits at one position across the row.
+    private const double PlayTilt = 0.5;
     // Game over: the comet starts at the configured lap rate and coasts down to a quarter of it.
     private const double CometSlowdown = 0.75, GlowLevel = 0.22;
     internal const double TestPlaySeconds = 30, TestGoSeconds = 3;
+    /// <summary>Where a board's strips sit across its width: the left strip this far in from the board's left
+    /// edge, the right strip as far in from its right edge. A board is one unit wide.</summary>
+    internal const double StripInset = 0.15;
 
-    /// <summary>Where a pixel sits: X runs 0..Total along the row of boards, Around 0..1 clockwise round its board.</summary>
-    internal readonly record struct Spot(double X, double Total, int Edge, int Board, double Around);
+    /// <summary>Where a pixel sits: X runs 0..Total along the row of boards, Side is its strip (left 0, right 1),
+    /// Along runs 0..1 from the near end of the strip to the far end, and Around runs 0..1 round the board: up the
+    /// left strip, then back down the right.</summary>
+    internal readonly record struct Spot(double X, double Total, int Side, int Board, double Along, double Around);
 
     internal static Rgb Countdown(LightPalette colors, Spot at, double elapsed, double preparation)
     {
@@ -88,20 +97,18 @@ internal static class BoardLightShow
         Rgb color;
         if (progress < ScannerUntil)
         {
-            // A comet sweeps the row and returns once a second, so it leaves from the left on every count.
-            var centre = (Math.Sin(2 * Math.PI * elapsed - Math.PI / 2) + 1) / 2 * at.Total;
-            var glow = Math.Max(0, 1 - Math.Abs(at.X - centre) / Math.Max(0.35, 0.11 * at.Total));
+            // A comet sweeps the row from its first strip to its last and returns once a second, so it leaves
+            // from the left on every count. It is wide enough to stay lit while it crosses a board between strips.
+            var centre = StripInset + (Math.Sin(2 * Math.PI * elapsed - Math.PI / 2) + 1) / 2 * (at.Total - 2 * StripInset);
+            var glow = Math.Max(0, 1 - Math.Abs(at.X - centre) / Math.Max(0.5, 0.11 * at.Total));
             color = Rgb.Mix(colors.Primary, colors.Highlight, glow * glow) * glow;
         }
-        else if (progress < PlayerEdgesUntil)
+        else if (progress < PlayerEndsUntil)
         {
-            if (at.Edge is 1 or 3) color = default;
-            else
-            {
-                double direction = at.Edge == 0 ? 1 : -1;
-                var pulse = 0.5 + 0.5 * Math.Cos(2 * Math.PI * (1.5 * at.X - direction * 3 * elapsed));
-                color = Rgb.Mix(colors.Primary * 0.7, colors.Secondary, pulse * pulse);
-            }
+            // Pulses run in from the two player ends of every strip and meet in the middle of the board.
+            var fromEnd = 1 - Math.Abs(2 * at.Along - 1);
+            var pulse = 0.5 + 0.5 * Math.Cos(2 * Math.PI * (1.5 * fromEnd - 3 * elapsed));
+            color = Rgb.Mix(colors.Primary * 0.7, colors.Secondary, pulse * pulse);
         }
         else
         {
@@ -133,13 +140,13 @@ internal static class BoardLightShow
         return Rgb.Mix(color, White, 0.9 * Clamp01(1 - Math.Abs(distance - reach) / Math.Max(0.12, 0.06 * at.Total)));
     }
 
-    /// <summary>The theme gradient drifting along the row under a slow breathing wave. No channel exceeds
+    /// <summary>The theme gradient drifting along the row, leaning along each strip, under a slow breathing wave. No channel exceeds
     /// the play level and nothing flashes; drift and breathing have floors so no setting can freeze it.</summary>
     internal static Rgb Playing(LightPalette colors, LightShowSettings show, Spot at, double elapsed)
     {
         var lively = Level(show.Intensity) ?? 0;
         var speed = show.Speed / 100d;
-        var along = at.X / at.Total;
+        var along = (at.X + PlayTilt * (at.Along - 0.5)) / at.Total;
         var level = PlayLevel + PlayLevelRange * lively;
         var drift = Math.Max(DriftFloor, (DriftLoopsPerSecond + DriftRange * lively) * speed);
         var color = colors.Loop((0.5 + 0.25 * lively) * along - drift * elapsed);
@@ -154,13 +161,11 @@ internal static class BoardLightShow
     /// centre of the row, lit on the same sixths of <paramref name="flashSeconds"/> as the BUSY Bar.</summary>
     internal static Rgb Flare(LightPalette colors, Spot at, double elapsed, double flashSeconds)
     {
-        var sixth = flashSeconds / 6;
-        var interval = (int)(elapsed / sixth);
-        var strength = 1 - 0.25 * (int)(elapsed / (sixth * 2));
+        var (number, lit, since, spread) = ShowTiming.Flare(elapsed, flashSeconds);
+        // Each flare is a quarter weaker than the one before.
+        var strength = 1 - 0.25 * number;
         var ember = colors.Primary * (0.05 * strength);
-        if (interval % 2 != 0) return ember;
-        var local = elapsed - interval * sixth;
-        var spread = Clamp01(local / sixth);
+        if (!lit) return ember;
         var flare = Math.Pow(1 - spread, 1.5) * strength;
         var half = at.Total / 2;
         var distance = Math.Abs(at.X - half);
@@ -168,7 +173,7 @@ internal static class BoardLightShow
         var color = ember + colors.Primary * (0.30 * flare);
         if (distance <= radius) color += colors.Flare(spread) * (0.45 * flare);
         color = Rgb.Mix(color, colors.Flare(spread), 0.9 * Clamp01(1 - Math.Abs(distance - radius) / Math.Max(0.15, 0.09 * at.Total)) * flare);
-        return Rgb.Mix(color, White, 0.8 * Clamp01(1 - local / 0.08) * strength);
+        return Rgb.Mix(color, White, 0.8 * Clamp01(1 - since / 0.08) * strength);
     }
 
     /// <summary>Glow left by the flares, cooling from primary to tertiary and sinking to black.</summary>
@@ -202,7 +207,7 @@ internal static class BoardLightShow
             "countdown" when elapsed < preparation => (GamePhase.PreCountdown, elapsed),
             "countdown" when elapsed < preparation + TestGoSeconds => (GamePhase.Running, elapsed - preparation),
             "playing" when elapsed < TestPlaySeconds => (GamePhase.Running, elapsed + GoSeconds + BlendSeconds),
-            "gameOver" when elapsed < timing.FlashSeconds + timing.DotSeconds => (GamePhase.Ending, elapsed),
+            "gameOver" when elapsed < EndingSeconds(timing) => (GamePhase.Ending, elapsed),
             _ => null
         };
     }
@@ -212,7 +217,7 @@ internal static class BoardLightShow
     {
         "countdown" => CountdownService.PreCountdownDuration.TotalSeconds + TestGoSeconds,
         "playing" => TestPlaySeconds,
-        "gameOver" => timing.FlashSeconds + timing.DotSeconds,
+        "gameOver" => EndingSeconds(timing),
         _ => null
     };
 }

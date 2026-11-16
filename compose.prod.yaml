@@ -22,8 +22,6 @@ services:
       WLed__Discovery__UpdateIntervalSeconds: ${WLED_DISCOVERY_INTERVAL_SECONDS:-30}
       Countdown__DurationSeconds: ${COUNTDOWN_DURATION_SECONDS:-720}
       Countdown__DeviationSeconds: ${COUNTDOWN_DEVIATION_SECONDS:-120}
-      Logging__LogLevel__Default: Information
-      Logging__LogLevel__BobFx.Core.Services: Information
     restart: unless-stopped
     init: true
     stop_grace_period: 15s

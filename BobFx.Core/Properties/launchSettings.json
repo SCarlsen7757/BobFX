@@ -13,7 +13,10 @@
       "commandName": "Project",
       "launchBrowser": true,
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Production"
+        "ASPNETCORE_ENVIRONMENT": "Production",
+        "AllowedHosts": "localhost",
+        "Security__AllowedClientNetworks__0": "127.0.0.0/8",
+        "Security__AllowedClientNetworks__1": "::1/128"
       },
       "dotnetRunMessages": true,
       "applicationUrl": "http://localhost:5159"

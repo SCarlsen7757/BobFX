@@ -1,66 +1,88 @@
-import { computed, ref } from 'vue';
+import { computed, ref, shallowRef } from 'vue';
 import { QueryClient, useQuery } from '@tanstack/vue-query';
 import { HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr';
 import { api } from './api';
+import { decodeBase64 } from './bytes';
+import { endpoints } from './endpoints';
 import { newer } from './revisions';
-import type { Defaults, DiscoveryState, EffectState, GameState, InstallationState, SoundEvent, UiState, Versioned } from './contracts';
+import type { BoardFrame, Defaults, DiscoveryState, Limits, EffectState, GameState, InstallationState, SoundEvent, UiState, Versioned } from './contracts';
 
 export const queryClient = new QueryClient({ defaultOptions: {
-  queries: { staleTime: Infinity, retry: 1, refetchOnWindowFocus: false },
+  queries: { retry: 1, refetchOnWindowFocus: false },
   mutations: { retry: false },
 } });
+// These four are filled by the hub and never fetched, so they never go stale. Anything read over HTTP, such as a
+// device's details, is fetched again each time it is shown.
+const hubStates = { game: 'GameStateChanged', effect: 'EffectStateChanged', discovery: 'DevicesChanged', installation: 'InstallationChanged' } as const;
+type HubState = keyof typeof hubStates;
+for (const key of Object.keys(hubStates)) queryClient.setQueryDefaults([key], { staleTime: Infinity });
 export const connectionStatus = ref<'connecting' | 'syncing' | 'connected' | 'disconnected'>('connecting');
 export const connected = computed(() => connectionStatus.value === 'connected');
 export const defaults = ref<Defaults>();
+/** The ranges the server accepts; known from the first synchronization on. */
+export const limits = ref<Limits>();
+export function requireLimits() {
+  if (!limits.value) throw new Error('Reconnect before changing settings.');
+  return limits.value;
+}
 export const preview = ref<string[]>([]);
 export const suppressedRun = ref<string | null>(null);
+/** What every controller's LEDs show right now, by MAC: RGB bytes, or null while it receives no frames. Empty until a view watches. */
+export const boardFrames = shallowRef<Record<string, Uint8Array | null>>({});
+let boardWatchers = 0;
 let instance = '';
 let syncing = true;
 let stopped = false;
 let previewWanted = false;
 let startTask: Promise<void> | undefined;
 let syncTask: Promise<void> | undefined;
+let syncAgain = false;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
 let buffered: Array<() => void> = [];
 let onSound: ((event: SoundEvent) => void) | undefined;
 let connectionGeneration = 0;
-const connection = new HubConnectionBuilder().withUrl('/hubs/ui')
+const connection = new HubConnectionBuilder().withUrl(endpoints.hub)
   .withAutomaticReconnect({ nextRetryDelayInMilliseconds: context => Math.min(1000 * 2 ** Math.min(context.previousRetryCount, 5), 15000) })
   .configureLogging(LogLevel.None).build();
 
-function apply<T>(key: string, value: Versioned<T>) {
+function apply<T>(key: HubState, value: Versioned<T>) {
   if (newer(queryClient.getQueryData<Versioned<T>>([key]), value, instance))
     queryClient.setQueryData([key], value);
 }
-function receive<T>(key: string, value: Versioned<T>) {
+function receive<T>(key: HubState, value: Versioned<T>) {
   if (syncing) {
     if (buffered.length < 256) buffered.push(() => apply(key, value));
   } else apply(key, value);
 }
-connection.on('GameStateChanged', (value: Versioned<GameState>) => receive('game', value));
-connection.on('EffectStateChanged', (value: Versioned<EffectState>) => receive('effect', value));
-connection.on('DevicesChanged', (value: Versioned<DiscoveryState>) => receive('discovery', value));
-connection.on('InstallationChanged', (value: Versioned<InstallationState>) => receive('installation', value));
+for (const [key, event] of Object.entries(hubStates) as Array<[HubState, string]>)
+  connection.on(event, (value: Versioned<unknown>) => receive(key, value));
 connection.on('LedPreviewChanged', (value: string[]) => { if (connected.value && previewWanted) preview.value = value; });
+function showBoardFrames(frames: BoardFrame[]) {
+  boardFrames.value = Object.fromEntries(frames.map(frame => [frame.mac, frame.pixels === null ? null : decodeBase64(frame.pixels)]));
+}
+connection.on('BoardFramesChanged', (frames: BoardFrame[]) => { if (connected.value && boardWatchers > 0) showBoardFrames(frames); });
 connection.on('SoundRequested', (event: SoundEvent) => {
   const game = queryClient.getQueryData<Versioned<GameState>>(['game'])?.value;
   if (connected.value && !document.hidden && game?.runId === event.runId && game.phase === 'Ending') onSound?.(event);
 });
 
 export function synchronize(): Promise<void> {
-  if (syncTask) return syncTask;
+  // The snapshot being fetched may predate what this caller just did, so it is fetched once more before it is used.
+  if (syncTask) { syncAgain = true; return syncTask; }
   const generation = connectionGeneration;
   syncTask = (async () => {
     syncing = true; connectionStatus.value = 'syncing'; buffered = [];
-    const snapshot = await api<UiState>('/api/ui/state');
+    let snapshot: UiState;
+    do { syncAgain = false; snapshot = await api<UiState>(endpoints.state); } while (syncAgain);
     if (generation !== connectionGeneration || connection.state !== HubConnectionState.Connected || stopped || document.hidden) return;
     instance = snapshot.game.serverInstanceId;
     apply('game', snapshot.game); apply('effect', snapshot.effect); apply('discovery', snapshot.discovery);
     apply('installation', snapshot.installation);
-    defaults.value = snapshot.defaults;
+    defaults.value = snapshot.defaults; limits.value = snapshot.limits;
     for (const update of buffered) update();
     buffered = []; syncing = false;
     await synchronizePreview();
+    await synchronizeBoards();
     connectionStatus.value = 'connected';
   })().catch(() => {
     connectionStatus.value = 'disconnected';
@@ -88,7 +110,7 @@ async function start() {
     .finally(() => { startTask = undefined; });
   return startTask;
 }
-connection.onreconnecting(() => { connectionGeneration++; syncing = true; connectionStatus.value = 'disconnected'; preview.value = []; });
+connection.onreconnecting(() => { connectionGeneration++; syncing = true; connectionStatus.value = 'disconnected'; preview.value = []; boardFrames.value = {}; });
 connection.onreconnected(() => synchronize());
 connection.onclose(() => { connectionGeneration++; connectionStatus.value = 'disconnected'; scheduleRetry(); });
 
@@ -100,14 +122,15 @@ export function startSession(sound: (event: SoundEvent) => void) {
   };
   document.addEventListener('visibilitychange', resume);
   const offline = () => {
-    connectionGeneration++; syncing = true; connectionStatus.value = 'disconnected'; preview.value = []; void connection.stop();
+    connectionGeneration++; syncing = true; connectionStatus.value = 'disconnected'; preview.value = []; boardFrames.value = {}; void connection.stop();
   };
   const online = () => { void start(); };
   window.addEventListener('offline', offline);
   window.addEventListener('online', online);
   return () => {
     stopped = true; onSound = undefined;
-    if (retryTimer) clearTimeout(retryTimer);
+    // Cleared as well as cancelled: a session started again must be able to schedule its own retry.
+    clearTimeout(retryTimer); retryTimer = undefined;
     window.removeEventListener('offline', offline);
     window.removeEventListener('online', online);
     document.removeEventListener('visibilitychange', resume); void connection.stop();
@@ -130,10 +153,33 @@ async function synchronizePreview() {
     await connection.invoke(requested ? 'SubscribePreview' : 'UnsubscribePreview');
   } while (requested !== previewWanted);
 }
-export function useGame() { return useQuery({ queryKey: ['game'], queryFn: async () => (await api<UiState>('/api/ui/state')).game, enabled: false }); }
-export function useEffect() { return useQuery({ queryKey: ['effect'], queryFn: async () => (await api<UiState>('/api/ui/state')).effect, enabled: false }); }
-export function useDiscovery() { return useQuery({ queryKey: ['discovery'], queryFn: async () => (await api<UiState>('/api/ui/state')).discovery, enabled: false }); }
-export function useInstallation() { return useQuery({ queryKey: ['installation'], queryFn: async () => (await api<UiState>('/api/ui/state')).installation, enabled: false }); }
+/**
+ * Starts or stops the live board frames for one view. Views are counted, so the frames keep coming while any view
+ * still shows them. The call returns once the server has acknowledged the change.
+ */
+export async function watchBoards(watching: boolean) {
+  boardWatchers = Math.max(0, boardWatchers + (watching ? 1 : -1));
+  if (boardWatchers === 0) boardFrames.value = {};
+  if (connected.value) {
+    try { await synchronizeBoards(); }
+    catch { connectionStatus.value = 'disconnected'; scheduleRetry(); }
+  }
+}
+async function synchronizeBoards() {
+  // As with the preview, the wanted state may change while an invocation is pending.
+  let requested: boolean;
+  do {
+    requested = boardWatchers > 0;
+    if (requested) showBoardFrames(await connection.invoke<BoardFrame[]>('SubscribeBoards'));
+    else await connection.invoke('UnsubscribeBoards');
+  } while (requested !== boardWatchers > 0);
+}
+/** State the hub keeps up to date. It is never fetched by the query itself, which only exposes what `apply` stored. */
+function useHubState<T>(key: HubState) { return useQuery<Versioned<T>>({ queryKey: [key], enabled: false }); }
+export function useGame() { return useHubState<GameState>('game'); }
+export function useEffect() { return useHubState<EffectState>('effect'); }
+export function useDiscovery() { return useHubState<DiscoveryState>('discovery'); }
+export function useInstallation() { return useHubState<InstallationState>('installation'); }
 export async function command(path: string, body?: unknown, method = 'POST') {
   if (!connected.value) throw new Error('Reconnect before sending a command.');
   try { await api(path, method, body); await synchronize(); }
