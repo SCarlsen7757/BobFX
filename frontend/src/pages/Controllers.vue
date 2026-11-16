@@ -1,28 +1,35 @@
 <script setup lang="ts">
-import { computed, onUnmounted, reactive, ref, watch } from 'vue';
-import { useMutation } from '@tanstack/vue-query';
+import { computed, onUnmounted, reactive, ref } from 'vue';
 import { Check, PlugZap, Plus, Trash2 } from '@lucide/vue';
 import { api } from '../lib/api';
 import IconButton from '../components/IconButton.vue';
 import SaveBar from '../components/SaveBar.vue';
-import { useUnsavedGuard } from '../lib/unsaved';
-import { command, connected, useInstallation } from '../lib/session';
-import { clone, newId, useCanConfigure } from '../lib/installation';
+import StatusMessage from '../components/StatusMessage.vue';
+import { useSectionDraft } from '../lib/draft';
+import { endpoints } from '../lib/endpoints';
+import { clone, isIntBetween, newId, useCanConfigure, useInstallationState } from '../lib/installation';
+import { command, connected } from '../lib/session';
+import { usePageStatus } from '../lib/status';
 import type { RemoteController } from '../lib/contracts';
-const installation = useInstallation();
+
+const { controllerStatus, passwordsSaved } = useInstallationState();
 const canConfigure = useCanConfigure();
-const controllers = ref<RemoteController[]>();
+// The controller in the editor is a copy; Apply puts it in the list and Save sends the list.
 const editing = ref<RemoteController>();
 const password = ref('');
+// Passwords are sent with Save and never read back, so they are kept apart from the settings draft.
 const pendingPasswords = reactive<Record<string, string>>({});
-const message = ref('');
-function reload() {
-  if (!installation.data.value) return;
-  controllers.value = clone(installation.data.value.value.settings.controllers);
-  editing.value = undefined; password.value = ''; message.value = '';
-  for (const id of Object.keys(pendingPasswords)) delete pendingPasswords[id];
+function forgetPasswords() { password.value = ''; for (const id of Object.keys(pendingPasswords)) delete pendingPasswords[id]; }
+/** The list with the open editor's values in it: what Save would send. */
+function withEditor(list: RemoteController[]) {
+  const open = editing.value;
+  return !open ? list : list.some(bar => bar.id === open.id) ? list.map(bar => bar.id === open.id ? open : bar) : [...list, open];
 }
-watch(() => installation.data.value, () => { if (!controllers.value) reload(); }, { immediate: true });
+const { draft: controllers, dirty, adopt } = useSectionDraft(settings => settings.controllers,
+  { value: withEditor, also: () => !!password.value || Object.keys(pendingPasswords).length > 0 });
+const status = usePageStatus();
+
+function reload() { adopt(); editing.value = undefined; forgetPasswords(); status.clear(); }
 function edit(bar: RemoteController) { editing.value = clone(bar); password.value = ''; }
 function add() { edit({ id: newId(), name: 'BUSY Bar', address: '', port: 80, enabled: false, remoteEnabled: false, secretName: 'busybar_token' }); }
 function remove(id: string) {
@@ -30,62 +37,55 @@ function remove(id: string) {
   delete pendingPasswords[id];
   if (editing.value?.id === id) { editing.value = undefined; password.value = ''; }
 }
-function apply() {
-  if (!editing.value) return true;
+/** What is wrong with the editor's values; empty when they can be applied. */
+function problem() {
   const bar = editing.value;
-  if (!bar.name.trim() || !bar.address.trim() || !Number.isInteger(bar.port) || bar.port < 1 || bar.port > 65535) {
-    message.value = 'Enter a name, private IPv4 address and valid HTTP port.'; return false;
-  }
-  if (password.value && (password.value.length > 256 || /[^\x20-\x7e]/.test(password.value))) {
-    message.value = 'Enter a device API password of 1–256 printable ASCII characters.'; return false;
-  }
-  const index = controllers.value?.findIndex(c => c.id === bar.id) ?? -1;
-  if (index < 0) controllers.value?.push(clone(bar)); else controllers.value!.splice(index, 1, clone(bar));
-  if (password.value) { pendingPasswords[bar.id] = password.value; password.value = ''; }
-  message.value = 'Controller settings applied.'; return true;
+  if (!bar) return '';
+  if (!bar.name.trim() || !bar.address.trim() || !isIntBetween(bar.port, 1, 65535)) return 'Enter a name, private IPv4 address and valid HTTP port.';
+  if (password.value && (password.value.length > 256 || /[^\x20-\x7e]/.test(password.value))) return 'Enter a device API password of 1–256 printable ASCII characters.';
+  return '';
 }
-const mutation = useMutation({ mutationFn: async (action: 'save' | 'test') => {
-  message.value = '';
-  if (!apply()) return;
-  if (action === 'test' && editing.value) {
-    const result = await api<{ apiVersion: string }>('/api/installation/controllers/test', 'POST', { controller: editing.value, password: pendingPasswords[editing.value.id] });
-    message.value = `Connection successful. BUSY Bar API ${result.apiVersion}.`; return;
-  }
-  await command('/api/installation/controllers', { controllers: controllers.value, passwords: pendingPasswords }, 'PUT');
-  for (const id of Object.keys(pendingPasswords)) delete pendingPasswords[id];
-  // Continue from exactly what was saved, with the editor still open on the same controller.
-  const saved = installation.data.value?.value.settings.controllers;
-  if (saved) {
-    controllers.value = clone(saved);
-    const open = saved.find(bar => bar.id === editing.value?.id);
-    if (open) editing.value = clone(open);
-  }
-  password.value = ''; message.value = 'Controllers saved.';
-} });
-const busy = computed(() => !connected.value || mutation.isPending.value);
-// What Save would send differs from what is saved: the list with the open editor's values, or a new password.
-const dirty = computed(() => {
-  const saved = installation.data.value?.value.settings.controllers;
-  if (!controllers.value || !saved) return false;
-  const open = editing.value;
-  const merged = !open ? controllers.value : controllers.value.some(bar => bar.id === open.id)
-    ? controllers.value.map(bar => bar.id === open.id ? open : bar) : [...controllers.value, open];
-  return JSON.stringify(merged) !== JSON.stringify(saved) || !!password.value || Object.keys(pendingPasswords).length > 0;
+/** Puts the editor's values in the list. Throws what is wrong with them instead, when something is. */
+function applyEditor() {
+  const wrong = problem();
+  if (wrong) throw new Error(wrong);
+  if (!editing.value || !controllers.value) return;
+  controllers.value = withEditor(controllers.value).map(bar => clone(bar));
+  if (password.value) { pendingPasswords[editing.value.id] = password.value; password.value = ''; }
+}
+const apply = status.action(() => { applyEditor(); return 'Controller settings applied.'; });
+// A test tries the values in the editor as they are, without applying them to the list.
+const test = status.action(async () => {
+  const bar = editing.value, wrong = problem();
+  if (wrong) throw new Error(wrong);
+  if (!bar) return;
+  const result = await api<{ apiVersion: string }>(endpoints.installation.controllerTest, 'POST', { controller: bar, password: password.value || pendingPasswords[bar.id] });
+  return `Connection successful. BUSY Bar API ${result.apiVersion}.`;
 });
-useUnsavedGuard(dirty);
-const passwordSaved = computed(() => !!editing.value && !!installation.data.value?.value.passwordsSaved[editing.value.id]);
-onUnmounted(() => { password.value = ''; for (const id of Object.keys(pendingPasswords)) delete pendingPasswords[id]; });
+const save = status.action(async () => {
+  applyEditor();
+  await command(endpoints.installation.controllers, { controllers: controllers.value, passwords: pendingPasswords }, 'PUT');
+  forgetPasswords();
+  // Continue from exactly what was saved, with the editor still open on the same controller.
+  adopt();
+  const open = controllers.value?.find(bar => bar.id === editing.value?.id);
+  if (open) editing.value = clone(open);
+  return 'Controllers saved.';
+});
+const busy = computed(() => !connected.value || status.busy.value);
+const passwordSaved = computed(() => !!editing.value && !!passwordsSaved.value[editing.value.id]);
+onUnmounted(forgetPasswords);
 </script>
 <template>
   <section class="settings-page controllers-page">
     <h1 tabindex="-1">Remote controllers</h1>
-    <p v-if="message || mutation.error.value" role="status" :class="{ 'error-message': mutation.error.value }">{{ mutation.error.value?.message ?? message }}</p>
+    <StatusMessage :status="status" />
     <div class="registered-devices">
       <article v-for="bar in controllers" :key="bar.id" class="registered-device">
         <div class="controller-summary"><button :disabled="busy" @click="edit(bar)">{{ bar.name }} · {{ bar.address }} · {{ bar.enabled ? 'Enabled' : 'Disabled' }}</button>
-          <p v-if="installation.data.value?.value.controllers[bar.id]" class="controller-status">{{ installation.data.value.value.controllers[bar.id]?.state }}<span v-if="installation.data.value.value.controllers[bar.id]?.apiVersion"> · API {{ installation.data.value.value.controllers[bar.id]?.apiVersion }}</span></p>
+          <p v-if="controllerStatus[bar.id]" class="controller-status">{{ controllerStatus[bar.id]?.state }}<span v-if="controllerStatus[bar.id]?.apiVersion"> · API {{ controllerStatus[bar.id]?.apiVersion }}</span></p>
         </div>
-        <IconButton class="danger" :icon="Trash2" label="Remove" :disabled="busy" @click="remove(bar.id)" />
+        <IconButton class="danger" :icon="Trash2" :label="`Remove ${bar.name}`" :disabled="busy" @click="remove(bar.id)" />
       </article>
     </div>
     <button :disabled="busy" aria-label="Add BUSY Bar" title="Add BUSY Bar" @click="add"><Plus />BUSY Bar</button>
@@ -100,10 +100,10 @@ onUnmounted(() => { password.value = ''; for (const id of Object.keys(pendingPas
       <label class="checkbox-label"><input v-model="editing.remoteEnabled" type="checkbox" />Enable START and wheel-press game controls</label>
       <div class="button-group">
         <button aria-label="Apply controller settings" title="Apply controller settings" @click="apply"><Check />Apply</button>
-        <button aria-label="Test connection" title="Test connection" @click="mutation.mutate('test')"><PlugZap />Test</button>
+        <button aria-label="Test connection" title="Test connection" @click="test"><PlugZap />Test</button>
       </div>
     </fieldset>
     <SaveBar :dirty="dirty" label="Save controllers" :disabled="busy || !canConfigure" reload-label="Reload saved controllers" :reload-disabled="busy"
-      :note="mutation.error.value?.message ?? message" :failed="!!mutation.error.value" @save="mutation.mutate('save')" @reload="reload" />
+      :note="status.text.value" :failed="status.failed.value" @save="save" @reload="reload" />
   </section>
 </template>

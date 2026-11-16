@@ -1,88 +1,68 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
-import { useMutation, useQuery } from '@tanstack/vue-query';
-import { Square } from '@lucide/vue';
-import { api } from '../lib/api';
-import IconButton from '../components/IconButton.vue';
+import { useQuery } from '@tanstack/vue-query';
+import { api, apiBeacon } from '../lib/api';
 import LightShowPreview from '../components/LightShowPreview.vue';
+import LightShowTestControls from '../components/LightShowTestControls.vue';
 import LiveBoards from '../components/LiveBoards.vue';
 import SaveBar from '../components/SaveBar.vue';
-import { useUnsavedGuard } from '../lib/unsaved';
-import { command, connected, useInstallation } from '../lib/session';
-import { clone, useCanConfigure, validateLightShow } from '../lib/installation';
-import { segments } from '../lib/segments';
-import type { AnimationSettings, LightShowColors, LightShowSegment, LightShowSettings, LightShowTheme } from '../lib/contracts';
+import StatusMessage from '../components/StatusMessage.vue';
+import { useSectionDraft } from '../lib/draft';
+import { endpoints } from '../lib/endpoints';
+import { validateLightShow } from '../lib/installation';
+import { useOnPageHide } from '../lib/lifecycle';
+import { useLightShowTest } from '../lib/lightShowTest';
+import { command, connected } from '../lib/session';
+import { usePageStatus } from '../lib/status';
+import type { LightShowColors, LightShowTheme } from '../lib/contracts';
 
-const installation = useInstallation();
+const { data: themes } = useQuery({ queryKey: ['light-show-themes'], queryFn: () => api<LightShowTheme[]>(endpoints.installation.lightShowThemes), staleTime: Infinity });
+// Asked first: staying on the page keeps a running test going.
+const { draft, dirty, adopt } = useSectionDraft(settings => ({ lightShow: settings.lightShow, animation: settings.animation }));
+const status = usePageStatus();
 // A running test does not block this page: the next test replaces it and Save stops it first.
-const lightsFree = useCanConfigure(true);
-const { data: themes } = useQuery({ queryKey: ['light-show-themes'], queryFn: () => api<LightShowTheme[]>('/api/installation/light-show/themes'), staleTime: Infinity });
-const draft = ref<{ lightShow: LightShowSettings; animation: AnimationSettings }>();
-const message = ref('');
+const { test, lightsFree, hasBoards, stop: stopTest } = useLightShowTest();
 const colorRoles: Array<{ key: keyof LightShowColors; label: string }> = [
   { key: 'primary', label: 'Main color' }, { key: 'secondary', label: 'Second color' },
   { key: 'tertiary', label: 'Third color' }, { key: 'accent', label: 'GO and accent color' }];
-function reload() {
-  const saved = installation.data.value?.value.settings;
-  if (!saved) return;
-  draft.value = clone({ lightShow: saved.lightShow, animation: saved.animation }); message.value = '';
-}
-watch(() => installation.data.value, () => { if (!draft.value) reload(); }, { immediate: true });
-const test = computed(() => installation.data.value?.value.lightShowTest ?? null);
-const hasBoards = computed(() => !!installation.data.value?.value.settings.boards.some(board => board.deviceMac));
-// Only a test started from this page is stopped when the page is left.
-let startedHere = false;
-watch(test, value => { if (!value) startedHere = false; });
 function swatch(colors: LightShowColors) {
   return { background: `linear-gradient(90deg, ${colors.tertiary}, ${colors.primary} 30%, ${colors.secondary} 60%, ${colors.tertiary} 82%, ${colors.accent} 82%)` };
 }
-const stopTest = () => command('/api/installation/light-show/test', undefined, 'DELETE');
-const mutation = useMutation({ mutationFn: async (action: LightShowSegment | 'save' | 'stop') => {
-  message.value = '';
-  if (!draft.value) return;
-  if (action === 'stop') { await stopTest(); return; }
+function reload() { adopt(); status.clear(); }
+/** The draft, once it is known to be something the server will accept. */
+function checked() {
+  if (!draft.value) throw new Error('Reconnect before changing the light show.');
   validateLightShow(draft.value.lightShow, draft.value.animation);
-  if (action === 'save') {
-    if (test.value) await stopTest();
-    await command('/api/installation/light-show', draft.value, 'PUT');
-    // Continue from exactly what was saved, so the page reads as saved whatever the server tidied up.
-    reload(); message.value = 'Light show saved.';
-  } else {
-    await command('/api/installation/light-show/test', { segment: action, ...draft.value });
-    startedHere = true;
-  }
-} });
-const busy = computed(() => !connected.value || mutation.isPending.value);
-const blocked = computed(() => busy.value || !lightsFree.value);
-const testStatus = computed(() => test.value
-  ? `Playing “${segments.find(segment => segment.id === test.value?.segment)?.label}” on the boards`
-  : !hasBoards.value ? 'No board has a controller.'
-  : !lightsFree.value && connected.value ? 'The lights are in use.' : '');
-
-const dirty = computed(() => {
-  const saved = installation.data.value?.value.settings;
-  return !!draft.value && !!saved && JSON.stringify(draft.value) !== JSON.stringify({ lightShow: saved.lightShow, animation: saved.animation });
+  return draft.value;
+}
+const save = status.action(async () => {
+  const show = checked();
+  if (test.value) await stopTest();
+  await command(endpoints.installation.lightShow, show, 'PUT');
+  // Continue from exactly what was saved, so the page reads as saved whatever the server tidied up.
+  adopt();
+  return 'Light show saved.';
 });
-// Asked first: staying on the page keeps a running test going.
-useUnsavedGuard(dirty);
+const busy = computed(() => !connected.value || status.busy.value);
+
+// Only a test started from this page is stopped when the page is left.
+let startedHere = false;
+watch(test, value => { if (!value) startedHere = false; });
 onBeforeRouteLeave(async () => {
   if (!startedHere || !test.value) return;
   try { await stopTest(); } catch { /* The test ends by itself if the connection is lost. */ }
 });
-function leaving() {
-  if (startedHere && test.value)
-    void fetch('/api/installation/light-show/test', { method: 'DELETE', credentials: 'same-origin', keepalive: true }).catch(() => {});
+useOnPageHide(() => {
+  if (startedHere && test.value) apiBeacon(endpoints.installation.lightShowTest, 'DELETE');
   startedHere = false;
-}
-window.addEventListener('pagehide', leaving);
-onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); });
+});
 </script>
 
 <template>
   <section class="settings-page light-show-page">
     <h1 tabindex="-1">Light show</h1>
-    <p v-if="message || mutation.error.value" role="status" :class="{ 'error-message': mutation.error.value }">{{ mutation.error.value?.message ?? message }}</p>
+    <StatusMessage :status="status" />
     <template v-if="draft">
       <fieldset class="settings-section" :disabled="busy"><legend>Look</legend>
         <div class="theme-options">
@@ -123,14 +103,10 @@ onBeforeUnmount(() => { window.removeEventListener('pagehide', leaving); });
       <section class="settings-section" aria-label="Test on the boards">
         <h2>Test on the boards</h2>
         <LiveBoards v-if="hasBoards" />
-        <div class="button-group">
-          <button v-for="segment in segments" :key="segment.id" :disabled="blocked || !hasBoards" @click="mutation.mutate(segment.id)"><component :is="segment.icon" />{{ segment.label }}</button>
-          <IconButton class="danger" :icon="Square" label="Stop test" :disabled="busy || !test" @click="mutation.mutate('stop')" />
-        </div>
-        <p v-if="testStatus" class="test-status" role="status" data-testid="light-test-status">{{ testStatus }}</p>
+        <LightShowTestControls :status="status" :show="checked" where=" on the boards" testid="light-test-status" @started="startedHere = true" />
       </section>
-      <SaveBar :dirty="dirty" label="Save light show" :disabled="blocked" reload-label="Reload saved settings" :reload-disabled="busy"
-        :note="mutation.error.value?.message ?? message" :failed="!!mutation.error.value" @save="mutation.mutate('save')" @reload="reload" />
+      <SaveBar :dirty="dirty" label="Save light show" :disabled="busy || !lightsFree" reload-label="Reload saved settings" :reload-disabled="busy"
+        :note="status.text.value" :failed="status.failed.value" @save="save" @reload="reload" />
     </template>
   </section>
 </template>

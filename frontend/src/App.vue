@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onErrorCaptured, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { Columns3, Gamepad2, Joystick, MonitorPlay, Router, Sparkles, RotateCcw, Timer, WandSparkles, WifiOff } from '@lucide/vue';
+import { RotateCcw, WifiOff } from '@lucide/vue';
 import SunsetBackground from './components/SunsetBackground.vue';
 import AudioControl from './components/AudioControl.vue';
 import { BrowserAudio } from './lib/audio';
+import { gamePath, pages } from './lib/routes';
 import { connected, connectionStatus, startSession } from './lib/session';
 
 const route = useRoute();
 const immersive = computed(() => !!route.meta.fullscreen);
 // Only the Game page keeps the moving background; every other page is a form laid straight on it.
-const liveBackground = computed(() => route.path === '/' || immersive.value);
+const liveBackground = computed(() => route.path === gamePath || immersive.value);
 const audioEnabled = ref(false);
 const audioBusy = ref(false);
 const audioReady = ref(false);
@@ -45,16 +46,9 @@ watch(() => route.path, async () => {
   <div class="app-shell" :class="{ immersive }">
     <a class="skip-link" href="#main-content">Skip to content</a>
     <header v-if="!immersive" class="app-header">
-      <RouterLink to="/" class="brand" aria-label="BobFX home">BobFX</RouterLink>
+      <RouterLink :to="gamePath" class="brand" aria-label="BobFX home">BobFX</RouterLink>
       <nav aria-label="Main navigation">
-        <RouterLink to="/" aria-label="Game" title="Game"><Gamepad2 /></RouterLink>
-        <RouterLink to="/countdown" aria-label="Countdown settings" title="Countdown settings"><Timer /></RouterLink>
-        <RouterLink to="/lights" aria-label="Light show" title="Light show"><Sparkles /></RouterLink>
-        <RouterLink to="/drgb" aria-label="LED effects" title="LED effects"><WandSparkles /></RouterLink>
-        <RouterLink to="/wled" aria-label="WLED devices" title="WLED devices"><Router /></RouterLink>
-        <RouterLink to="/layout" aria-label="Board layout" title="Board layout"><Columns3 /></RouterLink>
-        <RouterLink to="/boards" aria-label="Live boards" title="Live boards"><MonitorPlay /></RouterLink>
-        <RouterLink to="/controllers" aria-label="Remote controllers" title="Remote controllers"><Joystick /></RouterLink>
+        <RouterLink v-for="page in pages" :key="page.path" :to="page.path" :aria-label="page.title" :title="page.title"><component :is="page.icon" /></RouterLink>
       </nav>
       <AudioControl :enabled="audioEnabled" :disabled="!audioReady || audioBusy" :status="audioStatus" @toggle="toggleAudio" />
     </header>

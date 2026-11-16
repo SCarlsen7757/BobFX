@@ -153,7 +153,7 @@ test('a controller that does not report 102 LEDs is mapped in halves, explained 
     await page.goto('/layout');
     await expect(page.getByRole('button', { name: 'Enable audio', exact: true })).toBeEnabled();
     const message = page.locator('.layout-page > p[role="status"]');
-    await page.getByLabel('WLED controller', { exact: true }).selectOption('001122334455');
+    await page.getByLabel(/^WLED controller for /).selectOption('001122334455');
     await expect(message).toHaveText('Odd strip reports 17 LEDs, not 102.');
     await expect(page.locator('.board-tile').first()).toContainText('1 LED unused');
     await page.getByRole('button', { name: 'Save layout', exact: true }).click();
@@ -260,7 +260,7 @@ test('boards can be added before controllers and checked without saving until fi
     await page.getByRole('button', { name: 'Save layout', exact: true }).click();
     await expect(message).toHaveText('Layout saved.');
     await page.reload();
-    const controllers = page.getByLabel('WLED controller', { exact: true });
+    const controllers = page.getByLabel(/^WLED controller for /);
     await expect(controllers).toHaveCount(3);
     await controllers.nth(0).selectOption('001122334455');
     await expect(controllers.nth(2).locator('option[value="001122334455"]')).toHaveCount(0);

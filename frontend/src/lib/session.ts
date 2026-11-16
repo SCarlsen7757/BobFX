@@ -2,6 +2,8 @@ import { computed, ref, shallowRef } from 'vue';
 import { QueryClient, useQuery } from '@tanstack/vue-query';
 import { HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr';
 import { api } from './api';
+import { decodeBase64 } from './bytes';
+import { endpoints } from './endpoints';
 import { newer } from './revisions';
 import type { BoardFrame, Defaults, DiscoveryState, EffectState, GameState, InstallationState, SoundEvent, UiState, Versioned } from './contracts';
 
@@ -11,7 +13,9 @@ export const queryClient = new QueryClient({ defaultOptions: {
 } });
 // These four are filled by the hub and never fetched, so they never go stale. Anything read over HTTP, such as a
 // device's details, is fetched again each time it is shown.
-for (const key of ['game', 'effect', 'discovery', 'installation']) queryClient.setQueryDefaults([key], { staleTime: Infinity });
+const hubStates = { game: 'GameStateChanged', effect: 'EffectStateChanged', discovery: 'DevicesChanged', installation: 'InstallationChanged' } as const;
+type HubState = keyof typeof hubStates;
+for (const key of Object.keys(hubStates)) queryClient.setQueryDefaults([key], { staleTime: Infinity });
 export const connectionStatus = ref<'connecting' | 'syncing' | 'connected' | 'disconnected'>('connecting');
 export const connected = computed(() => connectionStatus.value === 'connected');
 export const defaults = ref<Defaults>();
@@ -31,27 +35,24 @@ let retryTimer: ReturnType<typeof setTimeout> | undefined;
 let buffered: Array<() => void> = [];
 let onSound: ((event: SoundEvent) => void) | undefined;
 let connectionGeneration = 0;
-const connection = new HubConnectionBuilder().withUrl('/hubs/ui')
+const connection = new HubConnectionBuilder().withUrl(endpoints.hub)
   .withAutomaticReconnect({ nextRetryDelayInMilliseconds: context => Math.min(1000 * 2 ** Math.min(context.previousRetryCount, 5), 15000) })
   .configureLogging(LogLevel.None).build();
 
-function apply<T>(key: string, value: Versioned<T>) {
+function apply<T>(key: HubState, value: Versioned<T>) {
   if (newer(queryClient.getQueryData<Versioned<T>>([key]), value, instance))
     queryClient.setQueryData([key], value);
 }
-function receive<T>(key: string, value: Versioned<T>) {
+function receive<T>(key: HubState, value: Versioned<T>) {
   if (syncing) {
     if (buffered.length < 256) buffered.push(() => apply(key, value));
   } else apply(key, value);
 }
-connection.on('GameStateChanged', (value: Versioned<GameState>) => receive('game', value));
-connection.on('EffectStateChanged', (value: Versioned<EffectState>) => receive('effect', value));
-connection.on('DevicesChanged', (value: Versioned<DiscoveryState>) => receive('discovery', value));
-connection.on('InstallationChanged', (value: Versioned<InstallationState>) => receive('installation', value));
+for (const [key, event] of Object.entries(hubStates) as Array<[HubState, string]>)
+  connection.on(event, (value: Versioned<unknown>) => receive(key, value));
 connection.on('LedPreviewChanged', (value: string[]) => { if (connected.value && previewWanted) preview.value = value; });
 function showBoardFrames(frames: BoardFrame[]) {
-  boardFrames.value = Object.fromEntries(frames.map(frame =>
-    [frame.mac, frame.pixels === null ? null : Uint8Array.from(atob(frame.pixels), c => c.charCodeAt(0))]));
+  boardFrames.value = Object.fromEntries(frames.map(frame => [frame.mac, frame.pixels === null ? null : decodeBase64(frame.pixels)]));
 }
 connection.on('BoardFramesChanged', (frames: BoardFrame[]) => { if (connected.value && boardWatchers > 0) showBoardFrames(frames); });
 connection.on('SoundRequested', (event: SoundEvent) => {
@@ -66,7 +67,7 @@ export function synchronize(): Promise<void> {
   syncTask = (async () => {
     syncing = true; connectionStatus.value = 'syncing'; buffered = [];
     let snapshot: UiState;
-    do { syncAgain = false; snapshot = await api<UiState>('/api/ui/state'); } while (syncAgain);
+    do { syncAgain = false; snapshot = await api<UiState>(endpoints.state); } while (syncAgain);
     if (generation !== connectionGeneration || connection.state !== HubConnectionState.Connected || stopped || document.hidden) return;
     instance = snapshot.game.serverInstanceId;
     apply('game', snapshot.game); apply('effect', snapshot.effect); apply('discovery', snapshot.discovery);
@@ -168,7 +169,7 @@ async function synchronizeBoards() {
   } while (requested !== boardWatchers > 0);
 }
 /** State the hub keeps up to date. It is never fetched by the query itself, which only exposes what `apply` stored. */
-function useHubState<T>(key: string) { return useQuery<Versioned<T>>({ queryKey: [key], enabled: false }); }
+function useHubState<T>(key: HubState) { return useQuery<Versioned<T>>({ queryKey: [key], enabled: false }); }
 export function useGame() { return useHubState<GameState>('game'); }
 export function useEffect() { return useHubState<EffectState>('effect'); }
 export function useDiscovery() { return useHubState<DiscoveryState>('discovery'); }
