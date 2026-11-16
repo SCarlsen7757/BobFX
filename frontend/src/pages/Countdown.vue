@@ -4,9 +4,9 @@ import { Hourglass } from '@lucide/vue';
 import SaveBar from '../components/SaveBar.vue';
 import StatusMessage from '../components/StatusMessage.vue';
 import { endpoints } from '../lib/endpoints';
-import { isIntBetween } from '../lib/installation';
+import { inRange, isIntBetween } from '../lib/installation';
 import { useUnsavedGuard } from '../lib/unsaved';
-import { command, connected, defaults, useGame } from '../lib/session';
+import { command, connected, defaults, limits, requireLimits, useGame } from '../lib/session';
 import { usePageStatus } from '../lib/status';
 
 const { data } = useGame();
@@ -29,8 +29,11 @@ const remaining = computed(() => {
 });
 const status = usePageStatus();
 const save = status.action(async () => {
-  if (!isIntBetween(minutes.value, 0, 180) || !isIntBetween(seconds.value, 0, 59) || !isIntBetween(deviation.value, 0, 300) || duration.value <= deviation.value)
-    throw new Error('Use 0–180 minutes, 0–59 seconds and 0–300 random seconds; the duration must exceed the random seconds.');
+  const allowed = requireLimits().countdownSeconds;
+  if (!Number.isInteger(minutes.value) || minutes.value < 0 || !isIntBetween(seconds.value, 0, 59) || !inRange(duration.value, allowed, true))
+    throw new Error(`Use a duration of ${allowed.min} second to ${allowed.max / 3600} hours, with 0–59 seconds.`);
+  if (!Number.isInteger(deviation.value) || deviation.value < 0 || deviation.value >= duration.value)
+    throw new Error('The random seconds must be a whole number, 0 or more, and less than the duration.');
   await command(endpoints.installation.countdown, { durationSeconds: duration.value, deviationSeconds: deviation.value }, 'PUT');
   return 'Countdown saved.';
 });
@@ -44,9 +47,9 @@ useUnsavedGuard(changed);
     <!-- A timer is not announced as it ticks; a status would be read out every second of a game. -->
     <p class="remaining" role="timer" title="Remaining"><Hourglass /><span class="sr-only">Remaining: </span><strong>{{ remaining }}</strong></p>
     <div class="parameters countdown-parameters">
-      <div><label for="minutes">Minutes</label><input id="minutes" v-model.number="minutes" type="number" inputmode="numeric" min="0" max="180" /></div>
+      <div><label for="minutes">Minutes</label><input id="minutes" v-model.number="minutes" type="number" inputmode="numeric" min="0" :max="limits ? limits.countdownSeconds.max / 60 : undefined" /></div>
       <div><label for="seconds">Seconds</label><input id="seconds" v-model.number="seconds" type="number" inputmode="numeric" min="0" max="59" /></div>
-      <div><label for="deviation">Random ± seconds</label><input id="deviation" v-model.number="deviation" type="number" inputmode="numeric" min="0" max="300" /></div>
+      <div><label for="deviation">Random ± seconds</label><input id="deviation" v-model.number="deviation" type="number" inputmode="numeric" min="0" /></div>
     </div>
     <StatusMessage :status="status" />
     <SaveBar :dirty="changed" label="Save" :disabled="!connected || status.busy.value || !changed" reload-label="Reload saved settings" :reload-disabled="!changed"

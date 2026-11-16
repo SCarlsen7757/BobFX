@@ -5,7 +5,7 @@ import { api } from './api';
 import { decodeBase64 } from './bytes';
 import { endpoints } from './endpoints';
 import { newer } from './revisions';
-import type { BoardFrame, Defaults, DiscoveryState, EffectState, GameState, InstallationState, SoundEvent, UiState, Versioned } from './contracts';
+import type { BoardFrame, Defaults, DiscoveryState, Limits, EffectState, GameState, InstallationState, SoundEvent, UiState, Versioned } from './contracts';
 
 export const queryClient = new QueryClient({ defaultOptions: {
   queries: { retry: 1, refetchOnWindowFocus: false },
@@ -19,6 +19,12 @@ for (const key of Object.keys(hubStates)) queryClient.setQueryDefaults([key], { 
 export const connectionStatus = ref<'connecting' | 'syncing' | 'connected' | 'disconnected'>('connecting');
 export const connected = computed(() => connectionStatus.value === 'connected');
 export const defaults = ref<Defaults>();
+/** The ranges the server accepts; known from the first synchronization on. */
+export const limits = ref<Limits>();
+export function requireLimits() {
+  if (!limits.value) throw new Error('Reconnect before changing settings.');
+  return limits.value;
+}
 export const preview = ref<string[]>([]);
 export const suppressedRun = ref<string | null>(null);
 /** What every controller's LEDs show right now, by MAC: RGB bytes, or null while it receives no frames. Empty until a view watches. */
@@ -72,7 +78,7 @@ export function synchronize(): Promise<void> {
     instance = snapshot.game.serverInstanceId;
     apply('game', snapshot.game); apply('effect', snapshot.effect); apply('discovery', snapshot.discovery);
     apply('installation', snapshot.installation);
-    defaults.value = snapshot.defaults;
+    defaults.value = snapshot.defaults; limits.value = snapshot.limits;
     for (const update of buffered) update();
     buffered = []; syncing = false;
     await synchronizePreview();

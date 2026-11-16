@@ -13,7 +13,7 @@ import { endpoints } from '../lib/endpoints';
 import { validateLightShow } from '../lib/installation';
 import { useOnPageHide } from '../lib/lifecycle';
 import { useLightShowTest } from '../lib/lightShowTest';
-import { command, connected } from '../lib/session';
+import { command, connected, requireLimits } from '../lib/session';
 import { usePageStatus } from '../lib/status';
 import type { LightShowColors, LightShowTheme } from '../lib/contracts';
 
@@ -33,7 +33,7 @@ function reload() { adopt(); status.clear(); }
 /** The draft, once it is known to be something the server will accept. */
 function checked() {
   if (!draft.value) throw new Error('Reconnect before changing the light show.');
-  validateLightShow(draft.value.lightShow, draft.value.animation);
+  validateLightShow(draft.value.lightShow, draft.value.animation, requireLimits());
   return draft.value;
 }
 const save = status.action(async () => {

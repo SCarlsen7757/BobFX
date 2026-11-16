@@ -4,8 +4,8 @@ import { useQuery } from '@tanstack/vue-query';
 import { Play, Square, Zap } from '@lucide/vue';
 import { api } from '../lib/api';
 import { endpoints } from '../lib/endpoints';
-import { isIntBetween, useLightsOwner } from '../lib/installation';
-import { command, connected, preview, setPreview, useEffect } from '../lib/session';
+import { inRange, rangeText, useLightsOwner } from '../lib/installation';
+import { command, connected, limits, preview, setPreview, requireLimits, useEffect } from '../lib/session';
 import { usePageStatus } from '../lib/status';
 import type { EffectDescriptor } from '../lib/contracts';
 
@@ -22,8 +22,7 @@ const speed = ref(50), fade = ref(2), breath = ref(2), minimum = ref(0), maximum
 const colors = ref<string[]>([]);
 watch(descriptor, effect => {
   if (!effect) return;
-  const [hours, minutes, seconds] = effect.info.defaultSpeed.split(':').map(Number);
-  speed.value = Math.round(((hours ?? 0) * 3600 + (minutes ?? 0) * 60 + (seconds ?? 0)) * 1000);
+  speed.value = Math.round(effect.info.defaultSpeedMs);
   // Red first. A strobe's second color is its flash, shown green so the two are told apart at a glance.
   colors.value = Array.from({ length: effect.info.totalColors }, (_, i) => i === 0 ? '#ff0000' : selected.value === 'Strobe' ? '#00ff00' : '#0000ff');
   fade.value = 2; breath.value = 2; minimum.value = 0; maximum.value = 100;
@@ -32,7 +31,8 @@ onMounted(() => { void setPreview(true); });
 onUnmounted(() => { void setPreview(false); });
 const status = usePageStatus();
 const start = status.action(async () => {
-  if (!isIntBetween(speed.value, 10, 2000)) throw new Error('Speed must be 10–2000 ms.');
+  const allowed = requireLimits().effectSpeedMs;
+  if (!inRange(speed.value, allowed, true)) throw new Error(`Speed must be ${rangeText(allowed)} ms.`);
   await command(endpoints.effects.start, {
     effect: selected.value, speedMs: speed.value, colors: colors.value,
     ...(hasFade.value ? { fadeDurationSeconds: fade.value } : {}),
@@ -49,7 +49,7 @@ const busy = computed(() => !connected.value || status.busy.value || owner.value
     <p class="effect-summary" title="Current effect and speed"><Zap /><span class="sr-only">Current effect: </span><strong>{{ current?.value.currentEffect ?? 'Off' }}</strong><span>{{ current?.value.speed ?? 100 }} ms</span></p>
     <div class="effect-picker"><label for="effect-type">Effect</label><select id="effect-type" v-model="selected" :title="descriptor?.info.description"><option v-for="effect in descriptors" :key="effect.type" :value="effect.type">{{ effect.type }}</option></select></div>
     <div class="parameters effect-parameters">
-      <div><label for="speed">Speed:</label><input id="speed" v-model.number="speed" type="number" inputmode="numeric" min="10" max="2000" /><span class="unit">ms</span></div>
+      <div><label for="speed">Speed:</label><input id="speed" v-model.number="speed" type="number" inputmode="numeric" :min="limits?.effectSpeedMs.min" :max="limits?.effectSpeedMs.max" /><span class="unit">ms</span></div>
       <div v-for="(_, index) in colors" :key="`${selected}-${index}`"><label :for="`color-${index}`">{{ descriptor?.info.colorLabels[index] ?? `Color ${index + 1}` }}:</label><input :id="`color-${index}`" v-model="colors[index]" type="color" /></div>
       <div v-if="hasFade"><label for="fade">Fade Duration:</label><input id="fade" v-model.number="fade" type="number" min="0.1" max="60" step="0.1" /><span class="unit">s</span></div>
       <template v-if="hasBreath">

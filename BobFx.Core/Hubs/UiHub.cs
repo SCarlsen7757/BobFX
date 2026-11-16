@@ -3,7 +3,21 @@ using Microsoft.AspNetCore.SignalR;
 
 namespace BobFx.Core.Hubs;
 
-public sealed class UiHub(UiStateService state, BoardMonitorService boards) : Hub
+/// <summary>What the server tells the browsers. The method names are the event names the frontend listens for,
+/// in frontend/src/lib/session.ts.</summary>
+public interface IUiClient
+{
+    Task GameStateChanged(Versioned<GameView> game);
+    Task EffectStateChanged(Versioned<EffectView> effect);
+    Task DevicesChanged(Versioned<DiscoveryView> discovery);
+    Task InstallationChanged(Versioned<InstallationView> installation);
+    Task SoundRequested(SoundEvent sound);
+    /// <summary>The virtual strip of the manual effect, one #RRGGBB per LED.</summary>
+    Task LedPreviewChanged(string[] pixels);
+    Task BoardFramesChanged(BoardFrame[] frames);
+}
+
+public sealed class UiHub(UiStateService state, BoardMonitorService boards) : Hub<IUiClient>
 {
     public const string PreviewGroup = "led-preview";
     public const string BoardsGroup = "live-boards";

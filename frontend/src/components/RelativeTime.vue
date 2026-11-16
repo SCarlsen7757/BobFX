@@ -5,8 +5,7 @@ import { useNow } from '../lib/lifecycle';
 // "3 minutes ago", kept up to date. It ticks by itself, so the page around it does not re-render every second.
 const props = defineProps<{ value: string }>();
 const now = useNow();
-// The server sends UTC; a time without an offset would otherwise be read as local time.
-const date = computed(() => new Date(/(?:z|[+-]\d{2}:\d{2})$/i.test(props.value) ? props.value : `${props.value}Z`));
+const date = computed(() => new Date(props.value));
 const text = computed(() => {
   const elapsed = Math.max(0, Math.floor((now.value - date.value.getTime()) / 1000));
   if (!Number.isFinite(elapsed)) return 'Unknown';

@@ -26,7 +26,7 @@ public sealed class BoardFrameMonitor(TimeProvider clock)
 
 /// <summary>Streams the monitored frames to browsers that show the live boards. Nothing is sent while no
 /// browser is subscribed or while the picture does not change.</summary>
-public sealed class BoardMonitorService(BoardFrameMonitor monitor, InstallationSettingsStore settings, IHubContext<UiHub> hub,
+public sealed class BoardMonitorService(BoardFrameMonitor monitor, InstallationSettingsStore settings, IHubContext<UiHub, IUiClient> hub,
     TimeProvider clock, ILogger<BoardMonitorService> logger) : BackgroundService
 {
     private readonly ConcurrentDictionary<string, byte> clients = new();
@@ -57,7 +57,7 @@ public sealed class BoardMonitorService(BoardFrameMonitor monitor, InstallationS
                 var changed = frames.Length != sent.Length || frames.Zip(sent).Any(pair => pair.First.Mac != pair.Second.Mac || !ReferenceEquals(pair.First.Pixels, pair.Second.Pixels));
                 if (!changed && Interlocked.Exchange(ref refresh, 0) == 0) continue;
                 Volatile.Write(ref refresh, 0);
-                await hub.Clients.Group(UiHub.BoardsGroup).SendAsync("BoardFramesChanged", frames, stoppingToken);
+                await hub.Clients.Group(UiHub.BoardsGroup).BoardFramesChanged(frames);
                 sent = frames;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }

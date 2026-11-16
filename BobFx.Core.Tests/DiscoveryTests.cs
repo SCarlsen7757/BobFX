@@ -165,5 +165,5 @@ public sealed class DiscoveryTests
     /// <summary>A discovery service that finds what <paramref name="source"/> advertises and reads each device's
     /// info from <paramref name="response"/>. Nothing is registered, so only discovery itself is exercised.</summary>
     private static WLedDiscoveryService Create(FakeDiscovery source, Func<SentRequest, HttpResponseMessage> response) =>
-        new(NullLogger<WLedDiscoveryService>.Instance, Options.Create(new WLedOptions()), new FakeHttp(response), source, TestData.Store());
+        new(NullLogger<WLedDiscoveryService>.Instance, Options.Create(new WLedOptions()), new FakeHttp(response), source, TestData.Store(), TimeProvider.System);
 }

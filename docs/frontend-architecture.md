@@ -12,8 +12,8 @@ Run `npm --prefix frontend test` for the unit tests: audio, revision ordering, t
 
 ## State and commands
 
-- `GET /api/ui/state` returns versioned game, effect, discovery, and installation snapshots plus configured countdown defaults.
-- `/hubs/ui` publishes `GameStateChanged`, `EffectStateChanged`, `DevicesChanged`, `InstallationChanged`, and live `SoundRequested` events. One publisher samples services every 100ms, independently of connected browser count.
+- `GET /api/ui/state` returns versioned game, effect, discovery, and installation snapshots plus configured countdown defaults and `limits`: the ranges the server accepts for the light show, animation, countdown, effect speed and sync group (`SettingLimits` on the server). Forms validate against those, so the two cannot disagree.
+- `/hubs/ui` publishes `GameStateChanged`, `EffectStateChanged`, `DevicesChanged`, `InstallationChanged`, and live `SoundRequested` events. The event names are the methods of `IUiClient` in `Hubs/UiHub.cs`. One publisher samples services every 100ms, independently of connected browser count.
 - Each state stream has a server-instance ID and increasing revision. Vue Query is the single server-state cache. Events are buffered during initial synchronization, older revisions are rejected, and a new server instance replaces the previous cache.
 - Initial failures retry. Reconnect, browser online, and tablet resume fetch current state before enabling commands. Commands are HTTP mutations, never optimistic or automatically retried. Disconnected controls do not queue actions.
 - Effects pages join `led-preview` through `SubscribePreview` and leave through `UnsubscribePreview`; disconnected clients are removed. `LedPreviewChanged` frames are sent at most 10 times per second, only when subscribers exist.

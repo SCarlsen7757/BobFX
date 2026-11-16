@@ -3,7 +3,7 @@ vi.mock('../lib/session', () => ({ connected: { value: true }, useEffect: vi.fn(
 import { boardProblems, defaultStrips, describeProblem, idleSyncProblems, ledCountNotice, resetMapping, reverseStrip, stripRange, swapSides, turnBoard,
   unmappedLeds, validateLightShow } from '../lib/installation';
 import { boardDots, boardTile } from '../lib/boardDrawing';
-import type { Board, IdleSync, InstallationSettings, SavedDevice } from '../lib/contracts';
+import type { Board, IdleSync, InstallationSettings, Limits, SavedDevice } from '../lib/contracts';
 
 const device = (ledCount = 102, mac = '001122334455'): SavedDevice =>
   ({ mac, name: 'WLED', address: '192.168.1.20', httpPort: 80, ledCount, udpPort: 21324, selected: true, simulated: false });
@@ -110,28 +110,33 @@ describe('a board with a strip down each side', () => {
 });
 
 describe('light show draft', () => {
+  // The ranges as the server sends them.
+  const range = (min: number, max: number) => ({ min, max });
+  const limits: Limits = { effectSpeedMs: range(10, 60000), countdownSeconds: range(1, 86400), brightnessPercent: range(20, 100),
+    driftSpeedPercent: range(25, 200), framesPerSecond: range(10, 60), flareSeconds: range(1, 10), cometSeconds: range(1, 30),
+    cometLapsPerSecond: range(1, 20), syncGroup: range(1, 8), maxLeds: 65535 };
   const draft = () => structuredClone(settings([]));
   it('accepts the defaults and every built-in limit', () => {
     const { lightShow, animation } = draft();
-    expect(() => validateLightShow(lightShow, animation)).not.toThrow();
-    expect(() => validateLightShow({ ...lightShow, brightness: 20, speed: 200, intensity: 'lively' }, animation)).not.toThrow();
+    expect(() => validateLightShow(lightShow, animation, limits)).not.toThrow();
+    expect(() => validateLightShow({ ...lightShow, brightness: 20, speed: 200, intensity: 'lively' }, animation, limits)).not.toThrow();
   });
   it('rejects values the server would refuse before they reach the boards', () => {
     const { lightShow, animation } = draft();
-    expect(() => validateLightShow({ ...lightShow, brightness: 19 }, animation)).toThrow('Brightness');
-    expect(() => validateLightShow({ ...lightShow, brightness: 50.5 }, animation)).toThrow('Brightness');
-    expect(() => validateLightShow({ ...lightShow, speed: 201 }, animation)).toThrow('Drift speed');
-    expect(() => validateLightShow(lightShow, { ...animation, framesPerSecond: 9 })).toThrow('Frames per second');
-    expect(() => validateLightShow(lightShow, { ...animation, flashSeconds: 0.5 })).toThrow('Flare seconds');
-    expect(() => validateLightShow(lightShow, { ...animation, dotSeconds: Number.NaN })).toThrow('Comet seconds');
-    expect(() => validateLightShow(lightShow, { ...animation, dotLapsPerSecond: 21 })).toThrow('Comet laps');
+    expect(() => validateLightShow({ ...lightShow, brightness: 19 }, animation, limits)).toThrow('Brightness');
+    expect(() => validateLightShow({ ...lightShow, brightness: 50.5 }, animation, limits)).toThrow('Brightness');
+    expect(() => validateLightShow({ ...lightShow, speed: 201 }, animation, limits)).toThrow('Drift speed');
+    expect(() => validateLightShow(lightShow, { ...animation, framesPerSecond: 9 }, limits)).toThrow('Frames per second');
+    expect(() => validateLightShow(lightShow, { ...animation, flashSeconds: 0.5 }, limits)).toThrow('Flare seconds');
+    expect(() => validateLightShow(lightShow, { ...animation, dotSeconds: Number.NaN }, limits)).toThrow('Comet seconds');
+    expect(() => validateLightShow(lightShow, { ...animation, dotLapsPerSecond: 21 }, limits)).toThrow('Comet laps');
   });
   it('checks custom colors whatever the theme, as the server does', () => {
     const { lightShow, animation } = draft();
     const black = { ...lightShow.custom, accent: '#000000' };
-    expect(() => validateLightShow({ ...lightShow, custom: black }, animation)).toThrow('black');
-    expect(() => validateLightShow({ ...lightShow, theme: 'custom', custom: black }, animation)).toThrow('black');
-    expect(() => validateLightShow({ ...lightShow, theme: 'custom', custom: { ...lightShow.custom, primary: 'red' } }, animation)).toThrow('#RRGGBB');
-    expect(() => validateLightShow({ ...lightShow, theme: 'custom' }, animation)).not.toThrow();
+    expect(() => validateLightShow({ ...lightShow, custom: black }, animation, limits)).toThrow('black');
+    expect(() => validateLightShow({ ...lightShow, theme: 'custom', custom: black }, animation, limits)).toThrow('black');
+    expect(() => validateLightShow({ ...lightShow, theme: 'custom', custom: { ...lightShow.custom, primary: 'red' } }, animation, limits)).toThrow('#RRGGBB');
+    expect(() => validateLightShow({ ...lightShow, theme: 'custom' }, animation, limits)).not.toThrow();
   });
 });

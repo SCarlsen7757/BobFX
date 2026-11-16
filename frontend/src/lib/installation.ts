@@ -1,7 +1,7 @@
 import { computed } from 'vue';
 import { connected, useEffect, useGame, useInstallation } from './session';
 import { maxLeds, wellFormed } from './strips';
-import type { AnimationSettings, Board, IdleSync, LightShowSettings, SavedDevice, Strip } from './contracts';
+import type { AnimationSettings, Board, IdleSync, Limits, LightShowSettings, NumberRange, SavedDevice, Strip } from './contracts';
 
 export { maxLeds, wellFormed };
 
@@ -42,21 +42,28 @@ export function useCanConfigure(duringLightTest = false) {
     (owner.value === null || (duringLightTest && owner.value === 'lightTest')));
 }
 
-// Mirrors the server's limits so a draft is rejected before it is sent to the boards.
-export function validateLightShow(show: LightShowSettings, animation: AnimationSettings) {
-  const between = (value: number, low: number, high: number) => Number.isFinite(value) && value >= low && value <= high;
-  if (!isIntBetween(show.brightness, 20, 100)) throw new Error('Brightness must be 20–100%.');
-  if (!isIntBetween(show.speed, 25, 200)) throw new Error('Drift speed must be 25–200%.');
+/** Whether a number lies in a range the server sent; `whole` also requires a whole number. */
+export function inRange(value: number, range: NumberRange, whole = false) {
+  return (whole ? Number.isInteger(value) : Number.isFinite(value)) && value >= range.min && value <= range.max;
+}
+export function rangeText(range: NumberRange) { return `${range.min}–${range.max}`; }
+/** Checks a light show draft against the server's limits, so it is rejected before it is sent to the boards. */
+export function validateLightShow(show: LightShowSettings, animation: AnimationSettings, limits: Limits) {
+  const check = (value: number, range: NumberRange, name: string, unit = '', whole = false) => {
+    if (!inRange(value, range, whole)) throw new Error(`${name} must be ${rangeText(range)}${unit}.`);
+  };
+  check(show.brightness, limits.brightnessPercent, 'Brightness', '%', true);
+  check(show.speed, limits.driftSpeedPercent, 'Drift speed', '%', true);
   if (!['calm', 'balanced', 'lively'].includes(show.intensity)) throw new Error('Choose an intensity.');
   // Checked whatever the theme: the server stores the custom colors with every save and refuses unusable ones.
   for (const color of [show.custom.primary, show.custom.secondary, show.custom.tertiary, show.custom.accent]) {
     if (!/^#[0-9a-f]{6}$/i.test(color)) throw new Error('Custom colors must be #RRGGBB.');
     if (Math.max(...[1, 3, 5].map(at => parseInt(color.slice(at, at + 2), 16))) < 0x30) throw new Error('Custom colors must not be black or nearly black.');
   }
-  if (!isIntBetween(animation.framesPerSecond, 10, 60)) throw new Error('Frames per second must be 10–60.');
-  if (!between(animation.flashSeconds, 1, 10)) throw new Error('Flare seconds must be 1–10.');
-  if (!between(animation.dotSeconds, 1, 30)) throw new Error('Comet seconds must be 1–30.');
-  if (!between(animation.dotLapsPerSecond, 1, 20)) throw new Error('Comet laps per second must be 1–20.');
+  check(animation.framesPerSecond, limits.framesPerSecond, 'Frames per second', '', true);
+  check(animation.flashSeconds, limits.flareSeconds, 'Flare seconds');
+  check(animation.dotSeconds, limits.cometSeconds, 'Comet seconds');
+  check(animation.dotLapsPerSecond, limits.cometLapsPerSecond, 'Comet laps per second');
 }
 
 /** A standard board: a strip of 51 LEDs down the left side and one down the right. */
@@ -145,9 +152,9 @@ export function describeProblem(problem: BoardProblem, boards: Board[]) {
   return `${name || 'Unnamed board'}: ${problem.message}`;
 }
 /** What is wrong with the idle sync draft; the server refuses the whole layout over any of these. */
-export function idleSyncProblems(idleSync: IdleSync, devices: SavedDevice[]): string[] {
+export function idleSyncProblems(idleSync: IdleSync, devices: SavedDevice[], groups: NumberRange = { min: 1, max: 8 }): string[] {
   const problems: string[] = [];
-  if (!isIntBetween(idleSync.group, 1, 8)) problems.push('Idle sync: the sync group must be a whole number from 1 to 8.');
+  if (!inRange(idleSync.group, groups, true)) problems.push(`Idle sync: the sync group must be a whole number from ${groups.min} to ${groups.max}.`);
   const master = devices.find(d => d.mac === idleSync.masterMac);
   if (idleSync.enabled && !master) problems.push('Idle sync: choose a master, or turn idle sync off.');
   const followers = idleSync.followers.filter(mac => mac !== idleSync.masterMac);

@@ -38,7 +38,7 @@ internal sealed class TestHarness(TimeProvider? time = null, WLedOptions? wled =
     public GameCoordinator Control => field ??= Keep(new GameCoordinator(Countdown, Rgb, Sounds, Time,
         NullLogger<GameCoordinator>.Instance, Store));
     public WLedDiscoveryService Discovery => field ??= Keep(new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, wledOptions, Http,
-        DiscoverySource, Store));
+        DiscoverySource, Store, Time));
     public InstallationOutputService Output => field ??= Keep(new InstallationOutputService(Store, Discovery, Control, Rgb, new WLedIdleSync(Store, Discovery, Http), Time,
         NullLogger<InstallationOutputService>.Instance, Transport, Monitor));
     public WLedRegistryService Registry => field ??= new(Store, Control, Http);

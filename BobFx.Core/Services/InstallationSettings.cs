@@ -22,7 +22,7 @@ public sealed record InstallationSettings
 }
 public sealed record CountdownSettings(int DurationSeconds, int DeviationSeconds)
 {
-    public bool IsValid() => DurationSeconds is >= 1 and <= 86400 && DeviationSeconds >= 0 && DeviationSeconds < DurationSeconds;
+    public bool IsValid() => SettingLimits.Current.AllowsCountdown(DurationSeconds, DeviationSeconds);
 }
 /// <summary>A WLED controller. A simulated one has no network side: its frames go to the live view only.</summary>
 public sealed record DeviceSettings(string Mac, string Name, string Address, int HttpPort, int LedCount, int UdpPort, bool Selected = true, bool Simulated = false);
@@ -177,6 +177,7 @@ public sealed class InstallationSettingsStore
     }
     public static void Validate(InstallationSettings value)
     {
+        var limits = SettingLimits.Current;
         if (value.Version != InstallationSettings.CurrentVersion) throw new ArgumentException("Unsupported settings version; restore a compatible backup.");
         if (value.Devices is null || value.Boards is null || value.Controllers is null || value.Animation is null || value.IdleSync is null || value.LightShow is null)
             throw new ArgumentException("Settings sections cannot be null.");
@@ -185,7 +186,7 @@ public sealed class InstallationSettingsStore
         var devices = new Dictionary<string, DeviceSettings>();
         foreach (var d in value.Devices)
         {
-            if (!ValidMac(d.Mac) || !devices.TryAdd(d.Mac, d) || !LocalAddress(d.Address) || d.HttpPort is < 1 or > 65535 || d.UdpPort is < 1 or > 65535 || d.LedCount is < 1 or > 65535 || string.IsNullOrWhiteSpace(d.Name))
+            if (!ValidMac(d.Mac) || !devices.TryAdd(d.Mac, d) || !LocalAddress(d.Address) || d.HttpPort is < 1 or > 65535 || d.UdpPort is < 1 or > 65535 || d.LedCount < 1 || d.LedCount > limits.MaxLeds || string.IsNullOrWhiteSpace(d.Name))
                 throw new ArgumentException("Devices require unique lowercase MAC identities, a private IPv4 address, valid ports and 1–65535 LEDs.");
         }
         var assigned = value.Boards.Where(b => b.DeviceMac is not null).ToList();
@@ -202,7 +203,7 @@ public sealed class InstallationSettingsStore
             foreach (var (side, strip) in new[] { ("left", b.Left), ("right", b.Right) })
             {
                 if (strip is null) continue;
-                if (strip.Start < 0 || strip.Count < 1 || (long)strip.Start + strip.Count > 65535)
+                if (strip.Start < 0 || strip.Count < 1 || (long)strip.Start + strip.Count > limits.MaxLeds)
                     throw new ArgumentException($"{b.Name}: the {side} strip needs a first LED of 0 or more and at least one LED.");
                 if (d is not null && strip.Start + strip.Count > d.LedCount)
                     throw new ArgumentException($"{b.Name}: the {side} strip uses LEDs {strip.Start}–{strip.Start + strip.Count - 1}, but {d.Name} has {d.LedCount} LEDs (0–{d.LedCount - 1}).");
@@ -211,21 +212,30 @@ public sealed class InstallationSettingsStore
                 throw new ArgumentException($"{b.Name}: the left and right strips use the same LEDs.");
         }
         var idle = value.IdleSync;
-        if (idle.Followers is null || idle.Group is < 1 or > 8 || idle.Followers.Distinct().Count() != idle.Followers.Count || idle.Followers.Contains(idle.MasterMac ?? "") ||
+        if (idle.Followers is null || !limits.SyncGroup.Contains(idle.Group) || idle.Followers.Distinct().Count() != idle.Followers.Count || idle.Followers.Contains(idle.MasterMac ?? "") ||
             (idle.Enabled && (idle.MasterMac is null || !devices.ContainsKey(idle.MasterMac))) || idle.Followers.Any(mac => !devices.ContainsKey(mac)))
-            throw new ArgumentException("Idle sync requires a registered master, distinct registered followers and group 1–8.");
+            throw new ArgumentException($"Idle sync requires a registered master, distinct registered followers and group {limits.SyncGroup}.");
         if (idle.Enabled && idle.Followers.Any(mac => devices[mac].UdpPort != devices[idle.MasterMac!].UdpPort))
             throw new ArgumentException("Idle sync devices must use the same WLED UDP port. Set their ports in WLED first.");
+        // One message per setting, in the words of its field, so the operator is told which one to change.
         var a = value.Animation;
-        if (a.FramesPerSecond is < 10 or > 60 || !double.IsFinite(a.FlashSeconds) || a.FlashSeconds is < 1 or > 10 || !double.IsFinite(a.DotSeconds) || a.DotSeconds is < 1 or > 30 || !double.IsFinite(a.DotLapsPerSecond) || a.DotLapsPerSecond is < 1 or > 20)
-            throw new ArgumentException("Animation timings or frame rate are outside supported limits.");
+        void Within(NumberRange range, double setting, string name, string unit = "")
+        {
+            if (!range.Contains(setting)) throw new ArgumentException($"{name} must be {range}{unit}.");
+        }
+        Within(limits.FramesPerSecond, a.FramesPerSecond, "Frames per second");
+        Within(limits.FlareSeconds, a.FlashSeconds, "Flare seconds");
+        Within(limits.CometSeconds, a.DotSeconds, "Comet seconds");
+        Within(limits.CometLapsPerSecond, a.DotLapsPerSecond, "Comet laps per second");
         var show = value.LightShow;
-        if (!BoardLightShow.KnownTheme(show.Theme) || BoardLightShow.Level(show.Intensity) is null ||
-            show.Brightness is < 20 or > 100 || show.Speed is < 25 or > 200 || show.Custom is null ||
-            !ValidColor(show.Custom.Primary) || !ValidColor(show.Custom.Secondary) || !ValidColor(show.Custom.Tertiary) || !ValidColor(show.Custom.Accent))
-            throw new ArgumentException("Light show needs a known theme and intensity, brightness 20–100%, speed 25–200% and #RRGGBB colors that are not black.");
+        if (!BoardLightShow.KnownTheme(show.Theme)) throw new ArgumentException("Choose a theme.");
+        if (BoardLightShow.Level(show.Intensity) is null) throw new ArgumentException("Choose an intensity.");
+        Within(limits.BrightnessPercent, show.Brightness, "Brightness", "%");
+        Within(limits.DriftSpeedPercent, show.Speed, "Drift speed", "%");
+        if (show.Custom is null || new[] { show.Custom.Primary, show.Custom.Secondary, show.Custom.Tertiary, show.Custom.Accent }.Any(color => !ValidColor(color)))
+            throw new ArgumentException("Custom colors must be #RRGGBB and not black or nearly black.");
         if (value.Countdown is { } countdown && !countdown.IsValid())
-            throw new ArgumentException("Countdown requires 1–86400s duration and a deviation smaller than the duration.");
+            throw new ArgumentException($"Countdown requires a duration of {limits.CountdownSeconds} seconds and a deviation smaller than the duration.");
         if (value.Controllers.Select(c => c.Id).Distinct().Count() != value.Controllers.Count) throw new ArgumentException("Controller IDs must be unique.");
         foreach (var c in value.Controllers)
             if (string.IsNullOrWhiteSpace(c.Id) || string.IsNullOrWhiteSpace(c.Name) || !LocalAddress(c.Address) || c.Port is < 1 or > 65535 || !Regex.IsMatch(c.SecretName ?? "", "^[a-zA-Z0-9_-]{1,64}$"))

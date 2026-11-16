@@ -13,7 +13,7 @@ import StripEditor from '../components/StripEditor.vue';
 import { useCalibrationSession } from '../lib/calibration';
 import { useSectionDraft } from '../lib/draft';
 import { endpoints } from '../lib/endpoints';
-import { command, connected, synchronize } from '../lib/session';
+import { command, connected, limits, synchronize } from '../lib/session';
 import { boardProblems, clone, describeProblem, fitsController, idleSyncProblems, ledCountNotice, newId, resetMapping, reverseStrip,
   swapSides, turnBoard, useCanConfigure, useInstallationState } from '../lib/installation';
 import { usePageStatus } from '../lib/status';
@@ -37,7 +37,7 @@ function selectFirst() { selectedId.value = draft.value?.boards[0]?.id ?? ''; }
 watch(() => !!draft.value, loaded => { if (loaded) selectFirst(); }, { immediate: true });
 
 const problems = computed(() => draft.value ? boardProblems(draft.value.boards, devices.value) : []);
-const syncProblems = computed(() => draft.value ? idleSyncProblems(draft.value.idleSync, devices.value) : []);
+const syncProblems = computed(() => draft.value ? idleSyncProblems(draft.value.idleSync, devices.value, limits.value?.syncGroup) : []);
 const blocking = computed(() => [...problems.value.map(problem => describeProblem(problem, draft.value?.boards ?? [])), ...syncProblems.value]);
 // Everything the row shows about a board that takes looking something up, worked out once per change.
 const tiles = computed(() => (draft.value?.boards ?? []).map((board, position) => ({

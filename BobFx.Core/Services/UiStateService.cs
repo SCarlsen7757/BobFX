@@ -12,13 +12,13 @@ public sealed record GameView(string Phase, long RunId, bool Running, bool PreCo
     int RemainingSeconds, int PreRemainingSeconds, DateTimeOffset? StartedUtc, DateTimeOffset? EndedUtc, bool Opening, bool GameOver);
 public sealed record EffectView(string CurrentEffect, double Speed, int LedCount, bool Streaming, string? Error);
 public sealed record DeviceView(string Mac, string Address, int Port, string Name, string HostName,
-    string Version, DateTime LastSeen, bool IsOnline, string WebUrl);
+    string Version, DateTimeOffset LastSeen, bool IsOnline, string WebUrl);
 public sealed record DiscoveryView(bool Scanning, string? Error, DateTimeOffset? LastScanUtc, DeviceView[] Devices);
 public sealed record InstallationView(InstallationSettings Settings, bool Locating, IReadOnlyDictionary<string, string> OutputErrors,
     IReadOnlyDictionary<string, BusyBarStatus> Controllers, Dictionary<string, bool> PasswordsSaved, CalibrationView? Calibration,
     LightShowTestView? LightShowTest);
 public sealed record UiState(Versioned<GameView> Game, Versioned<EffectView> Effect,
-    Versioned<DiscoveryView> Discovery, Versioned<InstallationView> Installation, CountdownOptions Defaults);
+    Versioned<DiscoveryView> Discovery, Versioned<InstallationView> Installation, CountdownOptions Defaults, SettingLimits Limits);
 public sealed record SoundEvent(string EventId, long RunId, string Key);
 
 /// <summary>One publisher samples shared services, independently of browser count.</summary>
@@ -26,7 +26,7 @@ public sealed class UiStateService(
     CountdownService countdown, GameCoordinator control, ManualEffectRenderer rgb,
     WLedDiscoveryService discovery, SoundService sounds, TimeProvider clock,
     InstallationSettingsStore settings, InstallationOutputService output, BusyBarService busyBars, ControllerCredentials credentials,
-    IHubContext<UiHub> hub, ILogger<UiStateService> logger) : BackgroundService
+    IHubContext<UiHub, IUiClient> hub, ILogger<UiStateService> logger) : BackgroundService
 {
     private readonly string instanceId = Guid.NewGuid().ToString("N");
     private readonly Lock sync = new();
@@ -72,7 +72,8 @@ public sealed class UiStateService(
             if (installation is null || !Same(installation.Value, nextInstallation))
                 installation = new(instanceId, (installation?.Revision ?? 0) + 1, now, nextInstallation);
             return new(game!, effect!, devices!, installation!,
-                new CountdownOptions { DurationSeconds = (int)countdown.CountdownDuration.TotalSeconds, DeviationSeconds = (int)countdown.CountdownDeviation.TotalSeconds });
+                new CountdownOptions { DurationSeconds = (int)countdown.CountdownDuration.TotalSeconds, DeviationSeconds = (int)countdown.CountdownDeviation.TotalSeconds },
+                SettingLimits.Current);
         }
     }
 
@@ -109,33 +110,33 @@ public sealed class UiStateService(
                     var state = GetState();
                     if (state.Game.Revision != gameRevision)
                     {
-                        await hub.Clients.All.SendAsync("GameStateChanged", state.Game, stoppingToken);
+                        await hub.Clients.All.GameStateChanged(state.Game);
                         gameRevision = state.Game.Revision;
                     }
                     if (state.Effect.Revision != effectRevision)
                     {
-                        await hub.Clients.All.SendAsync("EffectStateChanged", state.Effect, stoppingToken);
+                        await hub.Clients.All.EffectStateChanged(state.Effect);
                         effectRevision = state.Effect.Revision;
                     }
                     if (state.Discovery.Revision != discoveryRevision)
                     {
-                        await hub.Clients.All.SendAsync("DevicesChanged", state.Discovery, stoppingToken);
+                        await hub.Clients.All.DevicesChanged(state.Discovery);
                         discoveryRevision = state.Discovery.Revision;
                     }
                     if (state.Installation.Revision != installationRevision)
                     {
-                        await hub.Clients.All.SendAsync("InstallationChanged", state.Installation, stoppingToken);
+                        await hub.Clients.All.InstallationChanged(state.Installation);
                         installationRevision = state.Installation.Revision;
                     }
                     while (audio.Reader.TryRead(out var sound))
-                        await hub.Clients.All.SendAsync("SoundRequested", sound, stoppingToken);
+                        await hub.Clients.All.SoundRequested(sound);
                     if (!previewClients.IsEmpty)
                     {
                         // A strip that shows the same as last time is not sent again, unless a browser just joined.
                         var strip = rgb.GetSnapshot();
                         if (Interlocked.Exchange(ref previewRefresh, 0) == 1 || !strip.AsSpan().SequenceEqual(previewSent))
                         {
-                            await hub.Clients.Group(UiHub.PreviewGroup).SendAsync("LedPreviewChanged", strip.Select(ColorHelper.RgbToHex).ToArray(), stoppingToken);
+                            await hub.Clients.Group(UiHub.PreviewGroup).LedPreviewChanged(strip.Select(ColorHelper.RgbToHex).ToArray());
                             previewSent = strip;
                         }
                     }

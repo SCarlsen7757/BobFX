@@ -12,9 +12,16 @@ export interface Device {
 }
 export interface DiscoveryState { scanning: boolean; error: string | null; lastScanUtc: string | null; devices: Device[] }
 export interface Defaults { durationSeconds: number; deviationSeconds: number }
+export interface NumberRange { min: number; max: number }
+/** The ranges the server accepts, sent with the state so that the forms refuse the same values it would. */
+export interface Limits {
+  effectSpeedMs: NumberRange; countdownSeconds: NumberRange; brightnessPercent: NumberRange; driftSpeedPercent: NumberRange;
+  framesPerSecond: NumberRange; flareSeconds: NumberRange; cometSeconds: NumberRange; cometLapsPerSecond: NumberRange;
+  syncGroup: NumberRange; maxLeds: number;
+}
 export interface UiState {
   game: Versioned<GameState>; effect: Versioned<EffectState>;
-  discovery: Versioned<DiscoveryState>; installation: Versioned<InstallationState>; defaults: Defaults;
+  discovery: Versioned<DiscoveryState>; installation: Versioned<InstallationState>; defaults: Defaults; limits: Limits;
 }
 /** A WLED controller. A simulated one exists only in BobFX: its frames are shown on the Live boards view. */
 export interface SavedDevice { mac: string; name: string; address: string; httpPort: number; ledCount: number; udpPort: number; selected: boolean; simulated: boolean }
@@ -40,7 +47,7 @@ export interface InstallationState {
 export interface CalibrationSession { sessionId: string; activeBoardId: string; expiresUtc: string }
 export interface EffectDescriptor {
   type: string; info: { requiredColors: number; optionalColors: number; totalColors: number;
-    description: string; defaultSpeed: string; colorLabels: string[]; customParameters: Record<string, string> };
+    description: string; defaultSpeedMs: number; colorLabels: string[]; customParameters: Record<string, string> };
 }
 export interface SoundEvent { eventId: string; runId: number; key: string }
 export interface DeviceDetails {

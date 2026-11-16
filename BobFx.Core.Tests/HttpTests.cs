@@ -51,8 +51,7 @@ public sealed class HttpTests
             Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", body, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
             var status = await client.GetFromJsonAsync<JsonElement>("/api/drgb/status", cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(name, status.GetProperty("currentEffect").GetString());
-            Assert.Equal(TimeSpan.Parse(descriptor.GetProperty("info").GetProperty("defaultSpeed").GetString()!,
-                System.Globalization.CultureInfo.InvariantCulture).TotalMilliseconds, status.GetProperty("speed").GetDouble());
+            Assert.Equal(descriptor.GetProperty("info").GetProperty("defaultSpeedMs").GetDouble(), status.GetProperty("speed").GetDouble());
         }
     }
 

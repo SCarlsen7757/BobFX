@@ -7,9 +7,9 @@ using System.Threading.Channels;
 using Zeroconf;
 namespace BobFx.Core.Services;
 
-public record WLedDevice(IPAddress Address, int Port, string Name, string HostName, string Mac, string Version, DateTime LastSeen, bool IsOnline, Models.WLED.Info? Info);
+public record WLedDevice(IPAddress Address, int Port, string Name, string HostName, string Mac, string Version, DateTimeOffset LastSeen, bool IsOnline, Models.WLED.Info? Info);
 
-public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, IOptions<WLedOptions> options, IHttpClientFactory httpFactory, IWLedDiscoverySource discoverySource, InstallationSettingsStore settings) : BackgroundService
+public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, IOptions<WLedOptions> options, IHttpClientFactory httpFactory, IWLedDiscoverySource discoverySource, InstallationSettingsStore settings, TimeProvider clock) : BackgroundService
 {
     private string? lastError;
     private long lastScanUtcTicks;
@@ -64,7 +64,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
         if (!await scanGate.WaitAsync(0, cancellationToken)) return;
         Volatile.Write(ref scanning, 1);
         var scanGeneration = Volatile.Read(ref generation);
-        Volatile.Write(ref lastScanUtcTicks, DateTimeOffset.UtcNow.UtcTicks);
+        Volatile.Write(ref lastScanUtcTicks, clock.GetUtcNow().UtcTicks);
         try
         {
             IReadOnlyList<WLedAdvertisement> hosts;
@@ -93,7 +93,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                         lock (mutation)
                         {
                             if (generation != scanGeneration || (!devices.ContainsKey(key) && devices.Count >= MaxDevices)) return;
-                            devices[key] = new(address, host.Port, info.Name ?? host.HostName, host.HostName, key, info.Ver ?? "", DateTime.UtcNow, true, info);
+                            devices[key] = new(address, host.Port, info.Name ?? host.HostName, host.HostName, key, info.Ver ?? "", clock.GetUtcNow(), true, info);
                             sorted = null;
                         }
                     }
@@ -127,7 +127,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
     }
     private void AgeDevices(long scanGeneration)
     {
-        var now = DateTime.UtcNow;
+        var now = clock.GetUtcNow();
         lock (mutation)
         {
             if (generation != scanGeneration) return;
