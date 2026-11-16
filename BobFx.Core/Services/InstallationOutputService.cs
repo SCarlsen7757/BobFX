@@ -231,9 +231,9 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
                     else
                     {
                         var manual = rgb.GetSnapshot();
-                        foreach (var d in snapshot.Devices.Where(saved => saved.Selected).Where(saved => !discovery.KnownOffline(saved)).Select(discovery.Resolve))
-                            if (Fits(snapshot.Boards.FirstOrDefault(b => b.DeviceMac == d.Mac), d))
-                                await TrySendAsync(d, BoardSceneRenderer.Resample(manual, d.LedCount), stoppingToken);
+                        var targets = snapshot.Devices.Where(saved => saved.Selected && !discovery.KnownOffline(saved)).Select(discovery.Resolve)
+                            .Where(d => Fits(snapshot.Boards.FirstOrDefault(b => b.DeviceMac == d.Mac), d));
+                        foreach (var d in targets) await TrySendAsync(d, BoardSceneRenderer.Resample(manual, d.LedCount), stoppingToken);
                     }
                 }
                 // The time the frame took comes off the wait, so the frame rate does not sink as boards are added.

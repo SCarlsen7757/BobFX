@@ -48,6 +48,7 @@ const busy = computed(() => !connected.value || status.busy.value);
 
 // Only a test started from this page is stopped when the page is left.
 let startedHere = false;
+function started() { startedHere = true; }
 watch(test, value => { if (!value) startedHere = false; });
 onBeforeRouteLeave(async () => {
   if (!startedHere || !test.value) return;
@@ -103,7 +104,7 @@ useOnPageHide(() => {
       <section class="settings-section" aria-label="Test on the boards">
         <h2>Test on the boards</h2>
         <LiveBoards v-if="hasBoards" />
-        <LightShowTestControls :status="status" :show="checked" where=" on the boards" testid="light-test-status" @started="startedHere = true" />
+        <LightShowTestControls :status="status" :show="checked" where=" on the boards" testid="light-test-status" @started="started" />
       </section>
       <SaveBar :dirty="dirty" label="Save light show" :disabled="busy || !lightsFree" reload-label="Reload saved settings" :reload-disabled="busy"
         :note="status.text.value" :failed="status.failed.value" @save="save" @reload="reload" />

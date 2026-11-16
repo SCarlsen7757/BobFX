@@ -12,6 +12,7 @@ public sealed class WLedIdleSync(InstallationSettingsStore settings, WLedDiscove
 {
     // What a follower copies from the master's main segment. Bounds are left out: a follower keeps its own LEDs.
     private static readonly string[] EffectKeys = ["fx", "sx", "ix", "pal", "col", "c1", "c2", "c3", "o1", "o2", "o3"];
+    private static readonly string[] PowerKeys = ["on", "bri"];
     private IdleSyncSettings? applied;
 
     /// <summary>Applies the saved idle sync to its controllers.</summary>
@@ -24,12 +25,10 @@ public sealed class WLedIdleSync(InstallationSettingsStore settings, WLedDiscove
         var sync = saved.IdleSync;
         DeviceSettings? Device(string mac) => saved.Devices.FirstOrDefault(d => d.Mac == mac);
         if (configure)
-            foreach (var removed in Members(applied).Except(Members(sync)))
-            {
-                if (Device(removed) is not { Simulated: false } device) continue;
+            // A member that left the sync is told to stop; a simulated or removed one has nothing to tell.
+            foreach (var device in Members(applied).Except(Members(sync)).Select(Device).OfType<DeviceSettings>().Where(device => !device.Simulated))
                 if (!await TryAsync(() => DisableAsync(discovery.Resolve(device), token), token))
-                    report(removed, "Previous idle sync member could not be disabled.");
-            }
+                    report(device.Mac, "Previous idle sync member could not be disabled.");
         applied = sync;
         if (!sync.Enabled) return;
 
@@ -86,16 +85,19 @@ public sealed class WLedIdleSync(InstallationSettingsStore settings, WLedDiscove
         response.EnsureSuccessStatusCode();
         var state = await response.Content.ReadFromJsonAsync<JsonElement>(token);
         if (state.ValueKind != JsonValueKind.Object) throw new JsonException("Invalid WLED state.");
-        foreach (var key in new[] { "on", "bri" })
-            if (state.TryGetProperty(key, out var value)) idleState[key] = value.Clone();
+        Copy(state, PowerKeys, idleState);
         if (!state.TryGetProperty("seg", out var segments) || segments.ValueKind != JsonValueKind.Array) return;
         var main = state.TryGetProperty("mainseg", out var id) ? id.GetInt32() : 0;
         var segment = segments.EnumerateArray().FirstOrDefault(seg => seg.TryGetProperty("id", out var index) && index.GetInt32() == main);
         if (segment.ValueKind != JsonValueKind.Object) return;
         var effect = new Dictionary<string, object?>();
-        foreach (var key in EffectKeys)
-            if (segment.TryGetProperty(key, out var value)) effect[key] = value.Clone();
+        Copy(segment, EffectKeys, effect);
         idleState["seg"] = effect;
+    }
+    /// <summary>Copies the properties the controller reported; one it left out is left out.</summary>
+    private static void Copy(JsonElement from, string[] keys, Dictionary<string, object?> to)
+    {
+        foreach (var key in keys.Where(key => from.TryGetProperty(key, out _))) to[key] = from.GetProperty(key).Clone();
     }
 
     private async Task ApplyToAsync(DeviceSettings device, bool master, int mask, Dictionary<string, object?> idleState, bool configure, CancellationToken token)
