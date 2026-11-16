@@ -8,11 +8,10 @@ public sealed record BusyBarStatus(string State, string? ApiVersion = null, bool
 
 public sealed class BusyBarService(InstallationSettingsStore settings, RgbAndSoundControlService control,
     IHttpClientFactory clients, IConfiguration configuration, TimeProvider clock, ControllerCredentials credentials,
-    IBusyBarStatusSource? statusSource = null) : BackgroundService
+    IBusyBarStatusSource source) : BackgroundService
 {
     internal const int DisplayLeaseSeconds = 15;
     private readonly ConcurrentDictionary<string, BusyBarStatus> statuses = new();
-    private readonly IBusyBarStatusSource source = statusSource ?? new BusyBarStatusSource();
     public IReadOnlyDictionary<string, BusyBarStatus> Statuses => new Dictionary<string, BusyBarStatus>(statuses);
     public async Task<string> TestConnectionAsync(BusyBarSettings bar, string? password = null, CancellationToken token = default)
     {

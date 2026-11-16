@@ -13,7 +13,7 @@ public sealed record LightShowTestRequest(string Segment, LightShowSettings Ligh
 
 public sealed class InstallationOutputService(InstallationSettingsStore settings, WLedDiscoveryService discovery,
     RgbAndSoundControlService control, DRgbService rgb, IHttpClientFactory httpFactory, TimeProvider clock,
-    ILogger<InstallationOutputService> logger, IWLedFrameTransport transport, BoardFrameMonitor? monitor = null) : BackgroundService
+    ILogger<InstallationOutputService> logger, IWLedFrameTransport transport, BoardFrameMonitor monitor) : BackgroundService
 {
     private readonly ConcurrentDictionary<string, string> errors = new();
     public IReadOnlyDictionary<string, string> Errors => new Dictionary<string, string>(errors);
@@ -188,7 +188,7 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
     private async Task SendAsync(DeviceSettings device, byte[] pixels, CancellationToken token)
     {
         if (!device.Simulated) await transport.SendAsync(device, pixels, token);
-        monitor?.Record(device.Mac, pixels);
+        monitor.Record(device.Mac, pixels);
         Volatile.Write(ref lastSendTicks, clock.GetUtcNow().UtcTicks);
     }
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

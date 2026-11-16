@@ -10,8 +10,8 @@ public sealed class CountdownSnapshotTests
     [Fact]
     public void TimestampsPreserveSchedulerOvershootAndResetForNewRuns()
     {
-        var clock = new FakeTimeProvider();
-        var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
+        var h = new TestHarness();
+        var (clock, countdown) = (h.Clock, h.Countdown);
         var initial = clock.GetUtcNow();
         countdown.Start(true, TimeSpan.FromSeconds(10), TimeSpan.Zero);
         clock.Advance(TimeSpan.FromSeconds(5)); countdown.Advance();

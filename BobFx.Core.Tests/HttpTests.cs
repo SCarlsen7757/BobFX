@@ -18,8 +18,8 @@ public sealed class HttpTests
     [Fact]
     public async Task ControllerPasswordCanBeWrittenOverLocalHttpButNeverReadBack()
     {
-        await using var app = new TestApp();
-        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        await using var app = new BobFxFactory();
+        using var client = app.CreateClient();
         var settings = new InstallationSettings { Controllers = [new BusyBarSettings { Id = "remote", Address = "192.168.1.30" }] };
         Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", settings, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
         var password = Guid.NewGuid().ToString("N");
@@ -40,8 +40,8 @@ public sealed class HttpTests
     [InlineData(true)]
     public async Task OmittedAndNullSpeedsUseEveryEffectDefault(bool explicitNull)
     {
-        await using var app = new TestApp();
-        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        await using var app = new BobFxFactory();
+        using var client = app.CreateClient();
         var effects = await client.GetFromJsonAsync<JsonElement>("/api/drgb/effects", cancellationToken: TestContext.Current.CancellationToken);
         foreach (var descriptor in effects.EnumerateArray())
         {
@@ -61,8 +61,8 @@ public sealed class HttpTests
     [InlineData(60000)]
     public async Task ExplicitSpeedOverridesDefaultAndInvalidSpeedPreservesOutput(int speed)
     {
-        await using var app = new TestApp();
-        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        await using var app = new BobFxFactory();
+        using var client = app.CreateClient();
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Strobe", speedMs = speed }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
         foreach (var invalid in new[] { -1, 0, 9, 60001 })
         {
@@ -76,7 +76,7 @@ public sealed class HttpTests
     [Fact]
     public async Task ProductionRejectsForeignClientsHostsAndOrigins()
     {
-        await using var app = new TestApp();
+        await using var app = new BobFxFactory();
         using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost"), AllowAutoRedirect = false });
         // Hosted workers start asynchronously; allow startup without masking a failure.
         using var startupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -102,8 +102,8 @@ public sealed class HttpTests
     [Fact]
     public async Task JsonCommandsHaveAtomicValidationAndGameOwnership()
     {
-        await using var app = new TestApp();
-        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        await using var app = new BobFxFactory();
+        using var client = app.CreateClient();
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Solid", speedMs = 100 }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
         Assert.True((await client.GetFromJsonAsync<JsonElement>("/api/drgb/status", cancellationToken: TestContext.Current.CancellationToken)).GetProperty("streaming").GetBoolean());
 
@@ -125,28 +125,32 @@ public sealed class HttpTests
     [Fact]
     public async Task EffectsAndPublishedOperatorPagesAndAssetsAreAvailable()
     {
-        await using var app = new TestApp();
-        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        await using var app = new BobFxFactory();
+        using var client = app.CreateClient();
         var effects = await client.GetFromJsonAsync<JsonElement>("/api/drgb/effects", cancellationToken: TestContext.Current.CancellationToken);
         Assert.True(effects.GetArrayLength() >= 10);
-        foreach (var path in new[] { "/", "/game/fullscreen", "/countdown", "/lights", "/drgb", "/wled", "/ui/index.html", "/api/ui/state", "/api/wled/devices", "/sounds/game_over/game-over-yeah.mp3" })
-        {
-            var response = await client.GetAsync(path, TestContext.Current.CancellationToken);
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        }
+        // Every page of the app, and what the pages load. A failure names the path.
+        string[] served = [.. AppRoutes.Pages, "/ui/index.html", "/api/ui/state", "/api/wled/devices", "/sounds/game_over/game-over-yeah.mp3"];
+        Assert.All(await StatusesAsync(client, served), result => Assert.Equal(HttpStatusCode.OK, result.Status));
         var html = await client.GetStringAsync("/", TestContext.Current.CancellationToken);
         Assert.DoesNotContain("blazor", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("/ui/assets/", html);
         Assert.Contains("id=\"app\"", html);
-        foreach (var path in new[] { "/api/missing", "/hubs/missing", "/health/missing", "/ui/assets/missing.js", "/_framework/blazor.web.js" })
-            Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(path, TestContext.Current.CancellationToken)).StatusCode);
+        string[] missing = ["/no-such-page", "/api/missing", "/hubs/missing", "/health/missing", "/ui/assets/missing.js", "/_framework/blazor.web.js"];
+        Assert.All(await StatusesAsync(client, missing), result => Assert.Equal(HttpStatusCode.NotFound, result.Status));
+    }
+    private static async Task<(string Path, HttpStatusCode Status)[]> StatusesAsync(HttpClient client, string[] paths)
+    {
+        var results = new List<(string, HttpStatusCode)>();
+        foreach (var path in paths) results.Add((path, (await client.GetAsync(path, TestContext.Current.CancellationToken)).StatusCode));
+        return [.. results];
     }
 
     [Fact]
     public async Task AdvancedEffectParametersValidateAtomicallyAndReachRenderer()
     {
-        await using var app = new TestApp();
-        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        await using var app = new BobFxFactory();
+        using var client = app.CreateClient();
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/drgb/start", new { effect = "Solid", colors = new[] { "#123456" } }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
         var pixel = app.Services.GetRequiredService<DRgbService>().GetSnapshot()[0];
         Assert.Equal(0x12 / 255f, pixel.X); Assert.Equal(0x34 / 255f, pixel.Y); Assert.Equal(0x56 / 255f, pixel.Z);
@@ -170,8 +174,8 @@ public sealed class HttpTests
     [Fact]
     public async Task UiSnapshotsHaveStableVersionsAndReflectGameTransitions()
     {
-        await using var app = new TestApp();
-        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        await using var app = new BobFxFactory();
+        using var client = app.CreateClient();
         var first = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state", cancellationToken: TestContext.Current.CancellationToken)).GetProperty("game");
         var same = (await client.GetFromJsonAsync<JsonElement>("/api/ui/state", cancellationToken: TestContext.Current.CancellationToken)).GetProperty("game");
         Assert.Equal(first.GetProperty("revision").GetInt64(), same.GetProperty("revision").GetInt64());
@@ -191,8 +195,8 @@ public sealed class HttpTests
     [Fact]
     public async Task SimulatedBoardCanBeAddedMappedAndCalibratedWithoutHardware()
     {
-        await using var app = new TestApp();
-        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        await using var app = new BobFxFactory();
+        using var client = app.CreateClient();
         var added = await client.PostAsync("/api/installation/devices/simulated", null, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, added.StatusCode);
         var device = await added.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: TestContext.Current.CancellationToken);
@@ -216,8 +220,7 @@ public sealed class HttpTests
         var calibration = await client.PostAsJsonAsync("/api/installation/calibration", new { boards = saved.GetProperty("boards"), activeBoardId = "a" }, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, calibration.StatusCode);
         var monitor = app.Services.GetRequiredService<BoardFrameMonitor>();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (monitor.Current(mac) is null) await Task.Delay(10, deadline.Token);
+        await Wait.Until(() => monitor.Current(mac) is not null);
         Assert.Equal(102 * 3, monitor.Current(mac)!.Length);
         var session = (await calibration.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: TestContext.Current.CancellationToken)).GetProperty("sessionId").GetString();
         Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync($"/api/installation/calibration/{session}", TestContext.Current.CancellationToken)).StatusCode);
@@ -231,8 +234,8 @@ public sealed class HttpTests
     [Fact]
     public async Task LightShowSectionSavePreservesOtherSections()
     {
-        await using var app = new TestApp();
-        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        await using var app = new BobFxFactory();
+        using var client = app.CreateClient();
         Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", OneBoard(), cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
         var themes = await client.GetFromJsonAsync<JsonElement>("/api/installation/light-show/themes", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(new[] { "neonSunset", "aurora", "ember" }, themes.EnumerateArray().Select(t => t.GetProperty("id").GetString()));
@@ -258,8 +261,8 @@ public sealed class HttpTests
     [Fact]
     public async Task LightShowPreviewRendersDuringAGameWithoutOwningTheLights()
     {
-        await using var app = new TestApp();
-        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        await using var app = new BobFxFactory();
+        using var client = app.CreateClient();
         Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/installation", OneBoard(), cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
         var response = await client.PostAsJsonAsync("/api/installation/light-show/preview", new { segment = "playing", lightShow = new { theme = "aurora" }, animation = new { } }, cancellationToken: TestContext.Current.CancellationToken);
@@ -276,8 +279,8 @@ public sealed class HttpTests
     [Fact]
     public async Task LightShowTestOwnsTheLightsUntilStoppedAndConflictsReturn409()
     {
-        await using var app = new TestApp();
-        using var client = app.CreateClient(new() { BaseAddress = new Uri("http://localhost") });
+        await using var app = new BobFxFactory();
+        using var client = app.CreateClient();
         var test = new { segment = "playing", lightShow = new { theme = "ember" }, animation = new { } };
         // Nothing to test on before a board is assigned.
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/installation/light-show/test", test, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
@@ -305,45 +308,5 @@ public sealed class HttpTests
         Assert.Equal(JsonValueKind.Null, state.GetProperty("installation").GetProperty("value").GetProperty("lightShowTest").ValueKind);
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/countdown/start", new { durationSeconds = 60, deviationSeconds = 0 }, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/installation/light-show/test", test, cancellationToken: TestContext.Current.CancellationToken)).StatusCode);
-    }
-
-    private sealed class TestApp : WebApplicationFactory<Program>
-    {
-        protected override void ConfigureWebHost(IWebHostBuilder builder)
-        {
-            builder.UseEnvironment("Production");
-            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["AllowedHosts"] = "localhost",
-                ["Security:AllowedClientNetworks:0"] = "127.0.0.0/8",
-                ["Settings:DataPath"] = TestPaths.NewDataPath(),
-            }));
-            builder.ConfigureTestServices(services =>
-            {
-                // Do not open discovery or UDP sockets in HTTP contract tests.
-                services.RemoveAll<IHostedService>();
-                services.AddHostedService(sp => sp.GetRequiredService<DRgbService>());
-                services.AddHostedService(sp => sp.GetRequiredService<RgbAndSoundControlService>());
-                services.AddSingleton<IWLedFrameTransport, NoDeviceTransport>();
-                services.AddHostedService(sp => sp.GetRequiredService<InstallationOutputService>());
-                services.AddSingleton<IStartupFilter, TestClientAddress>();
-            });
-        }
-    }
-
-    private sealed class NoDeviceTransport : IWLedFrameTransport
-    { public Task SendAsync(DeviceSettings device, byte[] pixels, CancellationToken token) => Task.CompletedTask; }
-
-    private sealed class TestClientAddress : IStartupFilter
-    {
-        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
-        {
-            app.Use((context, continuation) =>
-            {
-                context.Connection.RemoteIpAddress = IPAddress.Parse(context.Request.Headers["X-Test-Client-IP"].FirstOrDefault() ?? "127.0.0.1");
-                return continuation(context);
-            });
-            next(app);
-        };
     }
 }

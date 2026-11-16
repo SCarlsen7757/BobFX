@@ -11,14 +11,14 @@ public sealed class RendererTests
     [Fact]
     public async Task RendererFaultStopsStreamingAndValidCommandRecoversReadiness()
     {
-        var clock = new FakeTimeProvider();
-        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), clock);
+        await using var h = new TestHarness();
+        var (clock, rgb) = (h.Clock, h.Rgb);
         await rgb.StartAsync(CancellationToken.None);
-        await Eventually(() => rgb.IsReady);
+        await Wait.Until(() => rgb.IsReady);
         await rgb.StartEffectAsync(new FaultingEffect());
         rgb.IsUdpActive = true;
         clock.Advance(TimeSpan.FromMilliseconds(10));
-        await Eventually(() => rgb.LastError is not null && !rgb.IsUdpActive);
+        await Wait.Until(() => rgb.LastError is not null && !rgb.IsUdpActive);
         Assert.False(rgb.IsUdpActive);
         Assert.All(rgb.GetSnapshot(), color => Assert.Equal(Vector3.Zero, color));
         await rgb.StartEffectAsync(new SolidEffect { Color = Vector3.One });
@@ -30,44 +30,38 @@ public sealed class RendererTests
     [Fact]
     public async Task SpeedChangeKeepsTheEffectOnTheInjectedClock()
     {
-        var clock = new FakeTimeProvider();
-        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions { Led = new() { LedCount = 1 } }), new RgbEffectFactory(), clock);
+        await using var h = new TestHarness(wled: new WLedOptions { Led = new() { LedCount = 1 } });
+        var (clock, rgb) = (h.Clock, h.Rgb);
         await rgb.StartAsync(CancellationToken.None);
-        await Eventually(() => rgb.IsReady);
+        await Wait.Until(() => rgb.IsReady);
         await rgb.StartEffectAsync(new FadeInEffect { TargetColor = Vector3.One, FadeDuration = TimeSpan.FromSeconds(2) });
         rgb.SetSpeed(TimeSpan.FromMilliseconds(10)); // Restarts the fade; it must keep following the renderer's clock.
         clock.Advance(TimeSpan.FromSeconds(2));
-        await Eventually(() => rgb.GetSnapshot()[0] == Vector3.One);
+        await Wait.Until(() => rgb.GetSnapshot()[0] == Vector3.One);
         await rgb.StopAsync(CancellationToken.None);
     }
 
     [Fact]
-    public async Task NaturalGameEndEmitsOneSoundAndReturnsToIdleAfterFiveSeconds()
+    public async Task NaturalGameEndEmitsOneSoundAndReturnsToIdleAfterTheEnding()
     {
-        var clock = new FakeTimeProvider();
-        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), clock);
-        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
-        var sounds = new SoundService(NullLogger<SoundService>.Instance);
+        await using var h = new TestHarness();
+        var (clock, rgb, control) = (h.Clock, h.Rgb, h.Control);
         var requests = new System.Collections.Concurrent.ConcurrentQueue<string>();
-        sounds.SoundRequested += requests.Enqueue;
-        using var control = new RgbAndSoundControlService(timer, rgb, sounds, clock, NullLogger<RgbAndSoundControlService>.Instance);
+        h.Sounds.SoundRequested += requests.Enqueue;
         await control.StartAsync(CancellationToken.None);
-        await Eventually(() => control.IsReady);
+        await Wait.Until(() => control.IsReady);
         await control.StartGameAsync(false, duration: TimeSpan.FromSeconds(10), deviation: TimeSpan.Zero);
         Assert.Empty(requests);
         clock.Advance(TimeSpan.FromSeconds(10));
-        await Eventually(() => control.Phase == GamePhase.Ending && requests.Count == 1);
+        await Wait.Until(() => control.Phase == GamePhase.Ending && requests.Count == 1);
         Assert.Single(requests);
-        clock.Advance(TimeSpan.FromSeconds(5));
-        await Eventually(() => control.Phase == GamePhase.Idle);
+        // The ending lasts as long as the flares and the comet together.
+        var animation = h.Store.Snapshot.Animation;
+        clock.Advance(TimeSpan.FromSeconds(animation.FlashSeconds + animation.DotSeconds));
+        await Wait.Until(() => control.Phase == GamePhase.Idle);
         Assert.False(rgb.IsUdpActive);
         Assert.Single(requests);
         await control.StopAsync(CancellationToken.None);
-    }
-    private static async Task Eventually(Func<bool> condition)
-    {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        while (!condition()) await Task.Delay(1, timeout.Token);
     }
     private sealed class FaultingEffect : RgbEffectBase
     {

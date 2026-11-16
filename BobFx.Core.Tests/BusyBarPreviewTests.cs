@@ -16,7 +16,8 @@ public sealed class BusyBarPreviewTests
     public void WritesContactSheetsAndPlayerWhenRequested()
     {
         var directory = Environment.GetEnvironmentVariable("BOBFX_BUSYBAR_PREVIEW");
-        if (string.IsNullOrWhiteSpace(directory)) return;
+        // A tool rather than a check: it is reported as skipped, not passed, when it has nowhere to write.
+        Assert.SkipWhen(string.IsNullOrWhiteSpace(directory), "Set BOBFX_BUSYBAR_PREVIEW to a folder to write the BUSY Bar preview there.");
         Directory.CreateDirectory(directory);
         var timing = new AnimationSettings();
         var preparation = (int)CountdownService.PreCountdownDuration.TotalSeconds;

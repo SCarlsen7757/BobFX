@@ -1,18 +1,11 @@
 using BobFx.Core.Services;
-using BobFx.Core.Services.Effects;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
-using System.Collections.Concurrent;
 using System.Net;
-using System.Runtime.CompilerServices;
-using System.Threading.Channels;
+using System.Text;
 
 namespace BobFx.Core.Tests;
 
 public sealed class BusyBarModeTests
 {
-    private static byte[] Selector(int position) => [0x12, 6, 0x5a, 4, 0x12, 2, 8, (byte)position];
     [Theory]
     [InlineData(0, BusyBarSelector.Busy)]
     [InlineData(1, BusyBarSelector.Custom)]
@@ -22,11 +15,16 @@ public sealed class BusyBarModeTests
     [InlineData(99, BusyBarSelector.Unknown)]
     public void DecodeSelectorPositionsAndPreserveEventOrder(int position, BusyBarSelector expected)
     {
-        var events = BusyBarInputDecoder.Events(Selector(position).Concat(new byte[] { 0x12, 6, 0x5a, 4, 0x0a, 2, 8, 2 }).ToArray());
+        var events = BusyBarInputDecoder.Events([.. BusyBarFrames.Selector(position), .. BusyBarFrames.StartPressed]);
         Assert.Equal(2, events.Count); Assert.Equal(expected, events[0].Selector); Assert.Equal(2, events[1].Button);
+        Assert.Empty(BusyBarInputDecoder.Presses(BusyBarFrames.Selector(position)));
+    }
+    [Fact]
+    public void SelectorWithoutAPositionIsBusyAndATruncatedMessageIsRejected()
+    {
+        // Position 0 is the protobuf default and is left out of the message.
         Assert.Equal(BusyBarSelector.Busy, Assert.Single(BusyBarInputDecoder.Events([0x12, 4, 0x5a, 2, 0x12, 0])).Selector);
-        Assert.Empty(BusyBarInputDecoder.Presses(Selector(position)));
-        Assert.Throws<InvalidDataException>(() => BusyBarInputDecoder.Events(Selector(3).Concat(new byte[] { 0x12, 99 }).ToArray()));
+        Assert.Throws<InvalidDataException>(() => BusyBarInputDecoder.Events([.. BusyBarFrames.Selector(3), 0x12, 99]));
     }
     [Fact]
     public async Task GateAllowsOnlyAppsAndRevokesWhenSelectorBecomesUnknown()
@@ -43,6 +41,9 @@ public sealed class BusyBarModeTests
         }
         Assert.Equal(1, sent);
     }
+
+    // These run on real time: the service paces itself with the clock, and the tests check what it does not do
+    // while that time passes.
     [Theory]
     [InlineData(false, false, "27.14.0")]
     [InlineData(true, false, "27.14.0")]
@@ -50,168 +51,131 @@ public sealed class BusyBarModeTests
     [InlineData(true, false, "27.5.0")]
     public async Task ServiceMonitorsSelectorWithoutRemoteControlsAndPausesOnLeaveOrStreamLoss(bool remoteEnabled, bool failedHeartbeat, string api)
     {
-        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        { ["Settings:DataPath"] = TestPaths.NewDataPath() }).Build();
-        var settings = new InstallationSettingsStore(config);
-        var credentials = new ControllerCredentials(settings);
-        var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30", Enabled = true, RemoteEnabled = remoteEnabled };
-        await settings.SaveAsync(new() { Controllers = [bar] }, TestContext.Current.CancellationToken);
-        await credentials.SetAsync(bar.Id, Guid.NewGuid().ToString("N"), TestContext.Current.CancellationToken);
-        var source = new StatusSource(); var clients = new Clients { Api = api };
-        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), TimeProvider.System);
-        var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), TimeProvider.System);
-        using var control = new RgbAndSoundControlService(countdown, rgb, new SoundService(NullLogger<SoundService>.Instance), TimeProvider.System, NullLogger<RgbAndSoundControlService>.Instance);
-        using var service = new BusyBarService(settings, control, clients, config, TimeProvider.System, credentials, source);
-        await service.StartAsync(CancellationToken.None);
-        try
+        await using var bar = await Bar.StartAsync(api, remoteEnabled);
+        var (control, service, source) = (bar.Harness.Control, bar.Harness.BusyBars, bar.Harness.BusyBarStatus);
+        await Wait.Until(() => source.Connected);
+        await Task.Delay(150, TestContext.Current.CancellationToken);
+        Assert.Empty(bar.Display());
+        Assert.Empty(bar.Uploads());
+        // Buttons outside APPS must leave the native device's controls alone.
+        source.Messages.Writer.TryWrite(BusyBarFrames.StartPressed);
+        source.Messages.Writer.TryWrite(BusyBarFrames.Selector(3));
+        await Wait.Until(() => bar.Draws().Length > 0);
+        Assert.Equal(5, bar.Uploads().Length);
+        var posts = bar.Draws().Length;
+        await Task.Delay(350, TestContext.Current.CancellationToken);
+        Assert.InRange(bar.Draws().Length - posts, 0, 1);
+        Assert.Equal(5, bar.Uploads().Length); // Animation frames never trigger uploads.
+        if (failedHeartbeat)
         {
-            await Eventually(() => source.Connected);
-            await Task.Delay(150, TestContext.Current.CancellationToken);
-            Assert.Empty(clients.DisplayRequests);
-            Assert.Empty(clients.AssetRequests);
-            // Buttons outside APPS must leave the native device's controls alone.
-            source.Messages.Writer.TryWrite([0x12, 6, 0x5a, 4, 0x0a, 2, 8, 2]);
-            source.Messages.Writer.TryWrite(Selector(3));
-            await Eventually(() => clients.DisplayRequests.Contains(HttpMethod.Post));
-            Assert.Equal(5, clients.AssetRequests.Count);
-            var posts = clients.DisplayRequests.Count(m => m == HttpMethod.Post);
-            await Task.Delay(350, TestContext.Current.CancellationToken);
-            Assert.InRange(clients.DisplayRequests.Count(m => m == HttpMethod.Post) - posts, 0, 1);
-            Assert.Equal(5, clients.AssetRequests.Count); // Animation frames never trigger uploads.
-            if (failedHeartbeat)
-            {
-                Interlocked.Exchange(ref clients.FailNextDisplay, 1);
-                var beforeFailure = clients.DisplayRequests.Count;
-                await Eventually(() => clients.DisplayRequests.Count >= beforeFailure + 2);
-                Assert.Equal(5, clients.AssetRequests.Count); // A failed heartbeat must not re-upload assets.
-            }
-            Assert.Equal(GamePhase.Idle, control.Phase);
-            Assert.Equal(BusyBarSelector.Apps, service.Statuses[bar.Id].Selector);
-            source.Messages.Writer.TryWrite(Selector(1));
-            await Eventually(() => service.Statuses[bar.Id].Selector == BusyBarSelector.Custom);
-            var paused = clients.DisplayRequests.Count;
-            await Task.Delay(200, TestContext.Current.CancellationToken);
-            Assert.Equal(paused, clients.DisplayRequests.Count);
-            Assert.Equal(5, clients.AssetRequests.Count);
-            source.Messages.Writer.TryWrite(Selector(3));
-            await Eventually(() => clients.DisplayRequests.Count > paused);
-            Assert.Equal(5, clients.AssetRequests.Count); // Re-enter APPS using the preloaded files.
-            if (remoteEnabled)
-            {
-                var beforeStart = clients.DisplayRequests.Count;
-                source.Messages.Writer.TryWrite([0x12, 6, 0x5a, 4, 0x0a, 2, 8, 2]);
-                await Eventually(() => control.Phase == GamePhase.PreCountdown);
-                await Eventually(() => clients.DisplayRequests.Count > beforeStart);
-                Assert.Contains("-countdown3-", clients.Paths.Last());
-                // The bar counts down by itself: no command per second while the clip plays.
-                var duringCountdown = clients.DisplayRequests.Count;
-                await Task.Delay(1300, TestContext.Current.CancellationToken);
-                Assert.Equal(duringCountdown, clients.DisplayRequests.Count);
-                // BACK is ignored; pressing the wheel (OK, the protobuf default button) stops the game.
-                source.Messages.Writer.TryWrite([0x12, 6, 0x5a, 4, 0x0a, 2, 8, 1]);
-                await Task.Delay(400, TestContext.Current.CancellationToken);
-                Assert.Equal(GamePhase.PreCountdown, control.Phase);
-                source.Messages.Writer.TryWrite([0x12, 4, 0x5a, 2, 0x0a, 0]);
-                await Eventually(() => control.Phase == GamePhase.Idle);
-                await Eventually(() => clients.DisplayRequests.Count > duringCountdown);
-                Assert.Contains("-idle-", clients.Paths.Last()); // The countdown is replaced in one draw.
-            }
-            source.Messages.Writer.Complete();
-            await Eventually(() => service.Statuses[bar.Id].Selector == BusyBarSelector.Unknown);
-            var disconnected = clients.DisplayRequests.Count;
-            await Task.Delay(200, TestContext.Current.CancellationToken);
-            Assert.Equal(disconnected, clients.DisplayRequests.Count);
-            Assert.DoesNotContain(HttpMethod.Delete, clients.DisplayRequests); // No gap exposing the clock.
+            Interlocked.Exchange(ref bar.FailNextDraw, 1);
+            var beforeFailure = bar.Display().Length;
+            await Wait.Until(() => bar.Display().Length >= beforeFailure + 2);
+            Assert.Equal(5, bar.Uploads().Length); // A failed heartbeat must not re-upload assets.
         }
-        finally { await service.StopAsync(CancellationToken.None); }
+        Assert.Equal(GamePhase.Idle, control.Phase);
+        Assert.Equal(BusyBarSelector.Apps, service.Statuses[Bar.Id].Selector);
+        source.Messages.Writer.TryWrite(BusyBarFrames.Selector(1));
+        await Wait.Until(() => service.Statuses[Bar.Id].Selector == BusyBarSelector.Custom);
+        var paused = bar.Display().Length;
+        await Task.Delay(200, TestContext.Current.CancellationToken);
+        Assert.Equal(paused, bar.Display().Length);
+        Assert.Equal(5, bar.Uploads().Length);
+        source.Messages.Writer.TryWrite(BusyBarFrames.Selector(3));
+        await Wait.Until(() => bar.Display().Length > paused);
+        Assert.Equal(5, bar.Uploads().Length); // Re-enter APPS using the preloaded files.
+        if (remoteEnabled)
+        {
+            var beforeStart = bar.Display().Length;
+            source.Messages.Writer.TryWrite(BusyBarFrames.StartPressed);
+            await Wait.Until(() => control.Phase == GamePhase.PreCountdown);
+            await Wait.Until(() => bar.Display().Length > beforeStart);
+            Assert.Contains("-countdown3-", bar.DrawnPaths().Last());
+            // The bar counts down by itself: no command per second while the clip plays.
+            var duringCountdown = bar.Display().Length;
+            await Task.Delay(1300, TestContext.Current.CancellationToken);
+            Assert.Equal(duringCountdown, bar.Display().Length);
+            // BACK is ignored; pressing the wheel (OK, the protobuf default button) stops the game.
+            source.Messages.Writer.TryWrite(BusyBarFrames.BackPressed);
+            await Task.Delay(400, TestContext.Current.CancellationToken);
+            Assert.Equal(GamePhase.PreCountdown, control.Phase);
+            source.Messages.Writer.TryWrite(BusyBarFrames.WheelPressed);
+            await Wait.Until(() => control.Phase == GamePhase.Idle);
+            await Wait.Until(() => bar.Display().Length > duringCountdown);
+            Assert.Contains("-idle-", bar.DrawnPaths().Last()); // The countdown is replaced in one draw.
+        }
+        source.Messages.Writer.Complete();
+        await Wait.Until(() => service.Statuses[Bar.Id].Selector == BusyBarSelector.Unknown);
+        var disconnected = bar.Display().Length;
+        await Task.Delay(200, TestContext.Current.CancellationToken);
+        Assert.Equal(disconnected, bar.Display().Length);
+        Assert.DoesNotContain(bar.Display(), request => request.Method == HttpMethod.Delete); // No gap exposing the clock.
+        bar.AssertEveryRequestIsWellFormed();
     }
     [Theory]
     [InlineData("27.9.0")]
     [InlineData("28.0.0")]
     public async Task UnreviewedApiVersionsGetNoUploadsDrawsOrInputStream(string api)
     {
-        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        { ["Settings:DataPath"] = TestPaths.NewDataPath() }).Build();
-        var settings = new InstallationSettingsStore(config);
-        var credentials = new ControllerCredentials(settings);
-        var bar = new BusyBarSettings { Id = "remote", Address = "192.168.1.30", Enabled = true, RemoteEnabled = true };
-        await settings.SaveAsync(new() { Controllers = [bar] }, TestContext.Current.CancellationToken);
-        await credentials.SetAsync(bar.Id, Guid.NewGuid().ToString("N"), TestContext.Current.CancellationToken);
-        var source = new StatusSource(); var clients = new Clients { Api = api };
-        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), TimeProvider.System);
-        var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), TimeProvider.System);
-        using var control = new RgbAndSoundControlService(countdown, rgb, new SoundService(NullLogger<SoundService>.Instance), TimeProvider.System, NullLogger<RgbAndSoundControlService>.Instance);
-        using var service = new BusyBarService(settings, control, clients, config, TimeProvider.System, credentials, source);
-        await service.StartAsync(CancellationToken.None);
-        try
+        await using var bar = await Bar.StartAsync(api, remoteEnabled: true);
+        var service = bar.Harness.BusyBars;
+        await Wait.Until(() => service.Statuses.TryGetValue(Bar.Id, out var status) && status.ApiVersion == api);
+        await Task.Delay(150, TestContext.Current.CancellationToken);
+        var paused = service.Statuses[Bar.Id];
+        Assert.Contains("output paused", paused.State);
+        Assert.False(paused.InputSupported);
+        Assert.False(bar.Harness.BusyBarStatus.Connected);
+        Assert.Empty(bar.Uploads());
+        Assert.Empty(bar.Display());
+    }
+
+    /// <summary>One enabled BUSY Bar with a saved password, answering with the given API version, and the service
+    /// that drives it already started.</summary>
+    private sealed class Bar(TestHarness harness, string api) : IAsyncDisposable
+    {
+        public const string Id = "remote";
+        public TestHarness Harness => harness;
+        /// <summary>Set to 1 to have the bar refuse the next draw once.</summary>
+        public int FailNextDraw;
+
+        public static async Task<Bar> StartAsync(string api, bool remoteEnabled)
         {
-            await Eventually(() => service.Statuses.TryGetValue(bar.Id, out var status) && status.ApiVersion == api);
-            await Task.Delay(150, TestContext.Current.CancellationToken);
-            var paused = service.Statuses[bar.Id];
-            Assert.Contains("output paused", paused.State);
-            Assert.False(paused.InputSupported);
-            Assert.False(source.Connected);
-            Assert.Empty(clients.AssetRequests);
-            Assert.Empty(clients.DisplayRequests);
+            var harness = new TestHarness(TimeProvider.System);
+            var bar = new Bar(harness, api);
+            await harness.Store.SaveAsync(new() { Controllers = [new BusyBarSettings { Id = Id, Address = "192.168.1.30", Enabled = true, RemoteEnabled = remoteEnabled }] },
+                TestContext.Current.CancellationToken);
+            await harness.Credentials.SetAsync(Id, Guid.NewGuid().ToString("N"), TestContext.Current.CancellationToken);
+            harness.Http.Respond = request => request.Path == "/api/version" ? FakeHttp.Json($$"""{"api_semver":"{{api}}"}""")
+                : IsDraw(request) && Interlocked.Exchange(ref bar.FailNextDraw, 0) == 1 ? new(HttpStatusCode.ServiceUnavailable)
+                : FakeHttp.Json("{}");
+            await harness.BusyBars.StartAsync(CancellationToken.None);
+            return bar;
         }
-        finally { await service.StopAsync(CancellationToken.None); }
-    }
-    private static async Task Eventually(Func<bool> condition)
-    {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(4));
-        while (!condition()) await Task.Delay(5, deadline.Token);
-    }
-    private sealed class StatusSource : IBusyBarStatusSource
-    {
-        private int connected;
-        public bool Connected => Volatile.Read(ref connected) != 0;
-        public Channel<byte[]> Messages { get; } = Channel.CreateUnbounded<byte[]>();
-        public async IAsyncEnumerable<byte[]> ReadAsync(BusyBarSettings bar, string password, [EnumeratorCancellation] CancellationToken token)
+        private static bool IsDraw(SentRequest request) => request.Method == HttpMethod.Post && request.Path == "/api/display/draw";
+
+        public SentRequest[] Uploads() => [.. harness.Http.Requests.Where(request => request.Path == "/api/assets/upload")];
+        /// <summary>Everything sent to the display, whatever the method.</summary>
+        public SentRequest[] Display() => [.. harness.Http.Requests.Where(request => request.Path is not ("/api/version" or "/api/assets/upload"))];
+        public SentRequest[] Draws() => [.. Display().Where(request => request.Method == HttpMethod.Post)];
+        public string[] DrawnPaths() => [.. Draws().Select(request => request.Json.GetProperty("elements")[0].GetProperty("path").GetString()!)];
+
+        /// <summary>Uploads are animation files in the format this API plays; a draw shows exactly one uploaded
+        /// animation, and a looping one renews its lease.</summary>
+        public void AssertEveryRequestIsWellFormed()
         {
-            Volatile.Write(ref connected, 1);
-            await foreach (var message in Messages.Reader.ReadAllAsync(token)) yield return message;
-        }
-    }
-    private sealed class Clients : IHttpClientFactory
-    {
-        public ConcurrentQueue<HttpMethod> DisplayRequests { get; } = new();
-        public ConcurrentQueue<string> AssetRequests { get; } = new();
-        public ConcurrentQueue<string> Paths { get; } = new();
-        public int FailNextDisplay;
-        public string Api { get; init; } = "27.14.0";
-        public HttpClient CreateClient(string name) => new(new Handler(this));
-    }
-    private sealed class Handler(Clients owner) : HttpMessageHandler
-    {
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
-        {
-            var version = request.RequestUri!.AbsolutePath == "/api/version";
-            if (request.RequestUri.AbsolutePath == "/api/assets/upload")
+            Assert.All(Uploads(), upload =>
             {
-                var bytes = await request.Content!.ReadAsByteArrayAsync(token);
-                Assert.Equal("application/octet-stream", request.Content.Headers.ContentType!.MediaType);
-                Assert.Equal(owner.Api == "27.5.0" ? "bicycle0" : "bicycle1", System.Text.Encoding.ASCII.GetString(bytes[..8]));
-                owner.AssetRequests.Enqueue(request.RequestUri.Query);
-            }
-            else if (!version)
+                Assert.Equal("application/octet-stream", upload.ContentType);
+                Assert.Equal(api == "27.5.0" ? "bicycle0" : "bicycle1", Encoding.ASCII.GetString(upload.Body[..8]));
+            });
+            Assert.All(Draws(), draw =>
             {
-                if (request.Method == HttpMethod.Post)
-                {
-                    using var json = System.Text.Json.JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
-                    var elements = json.RootElement.GetProperty("elements");
-                    Assert.Equal(1, elements.GetArrayLength());
-                    Assert.Equal("animation", elements[0].GetProperty("type").GetString());
-                    Assert.Contains(owner.AssetRequests, q => q.EndsWith(elements[0].GetProperty("path").GetString()!, StringComparison.Ordinal));
-                    var finiteFlash = !elements[0].GetProperty("loop").GetBoolean();
-                    if (!finiteFlash) Assert.Equal(15, elements[0].GetProperty("timeout").GetInt32());
-                    owner.Paths.Enqueue(elements[0].GetProperty("path").GetString()!);
-                }
-                owner.DisplayRequests.Enqueue(request.Method);
-                if (request.Method == HttpMethod.Post && Interlocked.Exchange(ref owner.FailNextDisplay, 0) == 1)
-                    return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
-            }
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            { Content = new StringContent(version ? $$"""{"api_semver":"{{owner.Api}}"}""" : "{}", System.Text.Encoding.UTF8, "application/json") };
+                var element = Assert.Single(draw.Json.GetProperty("elements").EnumerateArray());
+                Assert.Equal("animation", element.GetProperty("type").GetString());
+                Assert.Contains(Uploads(), upload => upload.Uri.Query.EndsWith(element.GetProperty("path").GetString()!, StringComparison.Ordinal));
+                if (element.GetProperty("loop").GetBoolean()) Assert.Equal(BusyBarService.DisplayLeaseSeconds, element.GetProperty("timeout").GetInt32());
+            });
         }
+        public ValueTask DisposeAsync() => harness.DisposeAsync();
     }
 }

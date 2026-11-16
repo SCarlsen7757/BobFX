@@ -5,7 +5,7 @@ public enum GamePhase { Idle, PreCountdown, Running, Ending }
 /// <summary>Serializes game and manual commands and owns streaming transitions.</summary>
 public sealed class RgbAndSoundControlService(
     CountdownService countdown, DRgbService rgb, SoundService sounds, TimeProvider clock,
-    ILogger<RgbAndSoundControlService> logger, InstallationSettingsStore? settings = null) : BackgroundService
+    ILogger<RgbAndSoundControlService> logger, InstallationSettingsStore settings) : BackgroundService
 {
     private readonly SemaphoreSlim commands = new(1, 1);
     private static readonly TimeSpan ShutdownWait = TimeSpan.FromSeconds(5);
@@ -161,6 +161,8 @@ public sealed class RgbAndSoundControlService(
         if (Phase != GamePhase.Idle) throw new InvalidOperationException("The game owns the lights until its ending sequence completes.");
     }
     private const string LightTestMessage = "A light show test is playing on the boards.";
+    /// <summary>The ending is the flares followed by the comet.</summary>
+    private static TimeSpan EndingDuration(AnimationSettings animation) => TimeSpan.FromSeconds(animation.FlashSeconds + animation.DotSeconds);
     private Task EnterEndingAsync()
     {
         SetPhase(GamePhase.Ending);
@@ -184,7 +186,7 @@ public sealed class RgbAndSoundControlService(
                     countdown.Advance();
                     if (Phase == GamePhase.PreCountdown && countdown.IsRunning) SetPhase(GamePhase.Running);
                     else if (Phase == GamePhase.Running && !countdown.IsRunning) await EnterEndingAsync();
-                    else if (Phase == GamePhase.Ending && clock.GetElapsedTime(phaseStarted) >= TimeSpan.FromSeconds(settings is null ? 5 : settings.Read().Animation.FlashSeconds + settings.Read().Animation.DotSeconds)) EnterIdle();
+                    else if (Phase == GamePhase.Ending && clock.GetElapsedTime(phaseStarted) >= EndingDuration(settings.Read().Animation)) EnterIdle();
                 }
                 finally { commands.Release(); }
             }

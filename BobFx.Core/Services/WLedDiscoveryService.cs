@@ -9,13 +9,12 @@ namespace BobFx.Core.Services;
 
 public record WLedDevice(IPAddress Address, int Port, string Name, string HostName, string Mac, string Version, DateTime LastSeen, bool IsOnline, Models.WLED.Info? Info);
 
-public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, IOptions<WLedOptions> options, IHttpClientFactory httpFactory, IWLedDiscoverySource? source = null, InstallationSettingsStore? settings = null) : BackgroundService
+public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, IOptions<WLedOptions> options, IHttpClientFactory httpFactory, IWLedDiscoverySource discoverySource, InstallationSettingsStore settings) : BackgroundService
 {
     private string? lastError;
     private long lastScanUtcTicks;
     public string? LastError => Volatile.Read(ref lastError);
     public DateTimeOffset? LastScanUtc => Volatile.Read(ref lastScanUtcTicks) is var ticks && ticks > 0 ? new DateTimeOffset(ticks, TimeSpan.Zero) : null;
-    private readonly IWLedDiscoverySource discoverySource = source ?? new MdnsWLedDiscoverySource();
     private readonly ConcurrentDictionary<string, WLedDevice> devices = new();
     private readonly Lock mutation = new();
     private long generation;
@@ -56,11 +55,10 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
             {
                 logger.LogDebug(ex, "mDNS resolution failed");
                 Volatile.Write(ref lastError, "mDNS resolution failed");
-                if (settings is null || settings.Read().Devices.Count == 0) { AgeDevices(scanGeneration); throw; }
+                if (settings.Read().Devices.Count == 0) { AgeDevices(scanGeneration); throw; }
                 hosts = [];
             }
-            if (settings is not null)
-                hosts = hosts.Concat(settings.Snapshot.Devices.Where(d => !d.Simulated).Select(d => new WLedAdvertisement(d.Address, d.HttpPort, d.Name))).DistinctBy(h => (h.Address, h.Port)).ToArray();
+            hosts = hosts.Concat(settings.Snapshot.Devices.Where(d => !d.Simulated).Select(d => new WLedAdvertisement(d.Address, d.HttpPort, d.Name))).DistinctBy(h => (h.Address, h.Port)).ToArray();
             using var http = httpFactory.CreateClient("wled");
             await Parallel.ForEachAsync(hosts.Take(MaxDevices), new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
                 async (host, token) =>
@@ -98,25 +96,28 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                     { logger.LogDebug(ex, "WLED enrichment failed for {Address}", address); }
                 });
             AgeDevices(scanGeneration);
-            if (settings is not null)
-            {
-                var online = Devices.Where(d => d.IsOnline && d.Info?.Leds?.Count is > 0 and <= 65535 && d.Info.Udpport is > 0 and <= 65535).ToDictionary(d => d.Mac);
-                DeviceSettings Refresh(DeviceSettings saved, InstallationSettings s)
-                {
-                    if (!online.TryGetValue(saved.Mac, out var found)) return saved;
-                    var count = found.Info!.Leds!.Count;
-                    if (s.Boards.Any(b => b.DeviceMac == saved.Mac && !BoardMapping.Fits(b, count))) count = saved.LedCount;
-                    return saved with { Address = found.Address.ToString(), HttpPort = found.Port, LedCount = count, UdpPort = found.Info.Udpport };
-                }
-                var snapshot = settings.Read();
-                if (snapshot.Devices.Any(d => Refresh(d, snapshot) != d))
-                    await settings.UpdateAsync(s => s with { Devices = s.Devices.Select(d => Refresh(d, s)).ToList() }, cancellationToken);
-            }
+            await RefreshSavedDevicesAsync(cancellationToken);
             Volatile.Write(ref lastError, null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex) { Volatile.Write(ref lastError, "WLED discovery scan failed"); logger.LogWarning(ex, "WLED discovery failed"); throw; }
         finally { Volatile.Write(ref scanning, 0); scanGate.Release(); }
+    }
+    /// <summary>Saves the address, ports and LED count a registered device reports now, so output follows a device
+    /// that moved. An LED count that an existing board mapping would not fit is not taken over.</summary>
+    private async Task RefreshSavedDevicesAsync(CancellationToken cancellationToken)
+    {
+        var online = Devices.Where(d => d.IsOnline && d.Info?.Leds?.Count is > 0 and <= 65535 && d.Info.Udpport is > 0 and <= 65535).ToDictionary(d => d.Mac);
+        DeviceSettings Refresh(DeviceSettings saved, InstallationSettings s)
+        {
+            if (!online.TryGetValue(saved.Mac, out var found)) return saved;
+            var count = found.Info!.Leds!.Count;
+            if (s.Boards.Any(b => b.DeviceMac == saved.Mac && !BoardMapping.Fits(b, count))) count = saved.LedCount;
+            return saved with { Address = found.Address.ToString(), HttpPort = found.Port, LedCount = count, UdpPort = found.Info.Udpport };
+        }
+        var snapshot = settings.Read();
+        if (snapshot.Devices.Any(d => Refresh(d, snapshot) != d))
+            await settings.UpdateAsync(s => s with { Devices = s.Devices.Select(d => Refresh(d, s)).ToList() }, cancellationToken);
     }
     private void AgeDevices(long scanGeneration)
     {

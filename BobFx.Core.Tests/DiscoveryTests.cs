@@ -10,28 +10,24 @@ public sealed class DiscoveryTests
     [Fact]
     public async Task RegisteredEndpointsRefreshOnDiskAndManualProbingSurvivesMdnsFailure()
     {
-        var path = TestPaths.NewDataPath();
-        var store = new InstallationSettingsStore(new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
-            new Dictionary<string, string?> { ["Settings:DataPath"] = path }).Build());
+        await using var h = new TestHarness();
+        var (store, source, service) = (h.Store, h.DiscoverySource, h.Discovery);
         await store.SaveAsync(new() { Devices = [new("aabbccddeeff", "lamp", "192.168.1.5", 80, 16, 21324)] }, TestContext.Current.CancellationToken);
-        var source = new Source { Advertisements = [new("192.168.1.6", 81, "lamp")] };
-        var clients = new Factory(new Handler(request => request.RequestUri!.Host == "192.168.1.5" ? new(HttpStatusCode.NotFound) :
-            new(HttpStatusCode.OK) { Content = new StringContent("""{"brand":"WLED","name":"lamp","ver":"test","mac":"aabbccddeeff","leds":{"count":20},"udpport":21324}""") }));
-        using var service = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, Options.Create(new WLedOptions()), clients, source, store);
+        source.Advertisements = [new("192.168.1.6", 81, "lamp")];
+        h.Http.Respond = request => request.Uri.Host == "192.168.1.5" ? new(HttpStatusCode.NotFound)
+            : FakeHttp.Json("""{"brand":"WLED","name":"lamp","ver":"test","mac":"aabbccddeeff","leds":{"count":20},"udpport":21324}""");
         await service.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Equal("192.168.1.6", store.Snapshot.Devices.Single().Address);
         Assert.Equal(20, store.Snapshot.Devices.Single().LedCount);
         source.BeforeResolve = _ => throw new IOException("mDNS unavailable");
         await service.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Single(service.Devices, d => d.IsOnline);
-        var reloaded = new InstallationSettingsStore(new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
-            new Dictionary<string, string?> { ["Settings:DataPath"] = path }).Build());
-        Assert.Equal("192.168.1.6", reloaded.Snapshot.Devices.Single().Address);
+        Assert.Equal("192.168.1.6", TestData.Store(h.DataPath).Snapshot.Devices.Single().Address);
     }
     [Fact]
     public async Task SameMacTracksChangedAddressAndPort()
     {
-        var source = new Source { Advertisements = [new("192.168.1.5", 80, "lamp")] };
+        var source = new FakeDiscovery { Advertisements = [new("192.168.1.5", 80, "lamp")] };
         using var service = Create(source, _ => Info());
         await service.ScanAsync(TestContext.Current.CancellationToken);
         source.Advertisements = [new("192.168.1.6", 81, "lamp")];
@@ -46,7 +42,7 @@ public sealed class DiscoveryTests
     {
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var source = new Source { Advertisements = [new("192.168.1.5", 80, "lamp")], BeforeResolve = async token =>
+        var source = new FakeDiscovery { Advertisements = [new("192.168.1.5", 80, "lamp")], BeforeResolve = async token =>
             { entered.SetResult(); await release.Task.WaitAsync(token); } };
         using var service = Create(source, _ => Info());
         var pending = service.ScanAsync(TestContext.Current.CancellationToken);
@@ -66,7 +62,7 @@ public sealed class DiscoveryTests
     [InlineData("invalid", 80)]
     public async Task UntrustedAdvertisementsDoNotIssueHttpRequests(string address, int port)
     {
-        var source = new Source { Advertisements = [new(address, port, "untrusted")] };
+        var source = new FakeDiscovery { Advertisements = [new(address, port, "untrusted")] };
         var requests = 0;
         using var service = Create(source, _ => { requests++; return Info(); });
         await service.ScanAsync(TestContext.Current.CancellationToken);
@@ -77,7 +73,7 @@ public sealed class DiscoveryTests
     [Fact]
     public async Task OversizedAndRedirectResponsesAreIgnored()
     {
-        var source = new Source { Advertisements = [new("192.168.1.5", 80, "lamp")] };
+        var source = new FakeDiscovery { Advertisements = [new("192.168.1.5", 80, "lamp")] };
         using var service = Create(source, _ => new(HttpStatusCode.OK) { Content = new StringContent(new string('x', 70 * 1024)) });
         await service.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Empty(service.Devices);
@@ -90,7 +86,7 @@ public sealed class DiscoveryTests
     public async Task CancellationPropagatesAndReleasesScanGate()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var source = new Source { BeforeResolve = async token => { entered.SetResult(); await Task.Delay(Timeout.InfiniteTimeSpan, token); } };
+        var source = new FakeDiscovery { BeforeResolve = async token => { entered.SetResult(); await Task.Delay(Timeout.InfiniteTimeSpan, token); } };
         using var service = Create(source, _ => Info());
         using var cancellation = new CancellationTokenSource();
         var pending = service.ScanAsync(cancellation.Token);
@@ -106,7 +102,7 @@ public sealed class DiscoveryTests
     [Fact]
     public async Task MalformedDeviceJsonIsIsolatedButUnexpectedHttpFailuresAreVisible()
     {
-        var source = new Source { Advertisements = [new("192.168.1.5", 80, "lamp")] };
+        var source = new FakeDiscovery { Advertisements = [new("192.168.1.5", 80, "lamp")] };
         using var malformed = Create(source, _ => new(HttpStatusCode.OK) { Content = new StringContent("{invalid") });
         await malformed.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Empty(malformed.Devices);
@@ -118,7 +114,7 @@ public sealed class DiscoveryTests
     [Fact]
     public async Task ResolverFailureIsVisibleAndNextSuccessfulScanClearsDiagnostic()
     {
-        var source = new Source { BeforeResolve = _ => throw new InvalidOperationException("test scan failure") };
+        var source = new FakeDiscovery { BeforeResolve = _ => throw new InvalidOperationException("test scan failure") };
         using var service = Create(source, _ => Info());
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.ScanAsync(TestContext.Current.CancellationToken));
         Assert.NotNull(service.LastError);
@@ -134,7 +130,7 @@ public sealed class DiscoveryTests
         var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var second = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var source = new Source();
+        var source = new FakeDiscovery();
         source.BeforeResolve = async token =>
         {
             if (source.Calls == 1) { first.TrySetResult(); await release.Task.WaitAsync(token); }
@@ -146,8 +142,7 @@ public sealed class DiscoveryTests
         service.RequestScan(); service.RequestScan();
         Assert.True(service.IsScanning); Assert.Equal(1, source.Calls);
         release.SetResult();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        while (service.IsScanning) await Task.Delay(10, deadline.Token);
+        await Wait.Until(() => !service.IsScanning);
         service.RequestScan();
         await second.Task.WaitAsync(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken);
         Assert.Equal(2, source.Calls);
@@ -158,7 +153,7 @@ public sealed class DiscoveryTests
     [Fact]
     public async Task OfflineRemovalCannotRemoveAnOnlineDevice()
     {
-        var source = new Source { Advertisements = [new("192.168.1.5", 80, "lamp")] };
+        var source = new FakeDiscovery { Advertisements = [new("192.168.1.5", 80, "lamp")] };
         using var service = Create(source, _ => Info());
         await service.ScanAsync(TestContext.Current.CancellationToken);
         Assert.Throws<InvalidOperationException>(() => service.RemoveOffline("aabbccddeeff"));
@@ -166,30 +161,9 @@ public sealed class DiscoveryTests
         Assert.False(service.RemoveOffline("missing"));
     }
 
-    private static HttpResponseMessage Info() => new(HttpStatusCode.OK)
-    {
-        Content = new StringContent("""{"brand":"WLED","name":"lamp","ver":"test","mac":"aabbccddeeff"}""")
-    };
-    private static WLedDiscoveryService Create(Source source, Func<HttpRequestMessage, HttpResponseMessage> response) =>
-        new(NullLogger<WLedDiscoveryService>.Instance, Options.Create(new WLedOptions()), new Factory(new Handler(response)), source);
-    private sealed class Source : IWLedDiscoverySource
-    {
-        public IReadOnlyList<WLedAdvertisement> Advertisements { get; set; } = [];
-        public Func<CancellationToken, Task>? BeforeResolve { get; set; }
-        public int Calls { get; private set; }
-        public async Task<IReadOnlyList<WLedAdvertisement>> ResolveAsync(CancellationToken cancellationToken)
-        {
-            Calls++;
-            if (BeforeResolve is not null) await BeforeResolve(cancellationToken);
-            return Advertisements;
-        }
-    }
-    private sealed class Factory(HttpMessageHandler handler) : IHttpClientFactory
-    {
-        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(2) };
-    }
-    private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => Task.FromResult(response(request));
-    }
+    private static HttpResponseMessage Info() => FakeHttp.Json("""{"brand":"WLED","name":"lamp","ver":"test","mac":"aabbccddeeff"}""");
+    /// <summary>A discovery service that finds what <paramref name="source"/> advertises and reads each device's
+    /// info from <paramref name="response"/>. Nothing is registered, so only discovery itself is exercised.</summary>
+    private static WLedDiscoveryService Create(FakeDiscovery source, Func<SentRequest, HttpResponseMessage> response) =>
+        new(NullLogger<WLedDiscoveryService>.Instance, Options.Create(new WLedOptions()), new FakeHttp(response), source, TestData.Store());
 }

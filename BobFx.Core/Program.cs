@@ -28,6 +28,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<BoardMonitorServic
 builder.Services.AddSingleton<InstallationOutputService>();
 builder.Services.AddSingleton<IWLedFrameTransport, WLedFrameTransport>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<InstallationOutputService>());
+builder.Services.AddSingleton<IWLedDiscoverySource, MdnsWLedDiscoverySource>();
 builder.Services.AddSingleton<WLedDiscoveryService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<WLedDiscoveryService>());
 builder.Services.AddSignalR();
@@ -93,7 +94,7 @@ app.MapGet("/api/installation/status", (InstallationOutputService output) => Res
 app.MapGet("/api/installation/controllers/status", (BusyBarService busy) => Results.Ok(busy.Statuses));
 app.MapControllers();
 app.MapHub<UiHub>("/hubs/ui");
-foreach (var route in new[] { "/", "/game/fullscreen", "/countdown", "/lights", "/drgb", "/wled", "/layout", "/boards", "/controllers" })
+foreach (var route in AppRoutes.Pages)
     app.MapGet(route, async (HttpContext context) =>
     {
         context.Response.Headers.CacheControl = "no-cache";
@@ -102,3 +103,10 @@ foreach (var route in new[] { "/", "/game/fullscreen", "/countdown", "/lights", 
     });
 app.Run();
 public partial class Program;
+
+public static class AppRoutes
+{
+    /// <summary>The paths that serve the app. They are listed, not matched by a fallback, so that any other path
+    /// is a real 404. The frontend has the same list in frontend/src/lib/routes.ts.</summary>
+    public static readonly IReadOnlyList<string> Pages = ["/", "/game/fullscreen", "/countdown", "/lights", "/drgb", "/wled", "/layout", "/boards", "/controllers"];
+}

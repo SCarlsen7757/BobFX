@@ -11,14 +11,10 @@ using System.Text.Json;
 
 namespace BobFx.Core.Tests;
 
+using static TestData;
+
 public sealed class InstallationTests
 {
-    private static DeviceSettings Device(string mac = "001122334455") => new(mac, "Board", "192.168.1.20", 80, 16, 21324);
-    private static BoardSettings Board(string mac = "001122334455", string id = "a") => new() { Id = id, Name = id, DeviceMac = mac,
-        Left = new(0, 8), Right = new(8, 8) };
-    private static InstallationSettings Installation() => new() { Devices = [Device()], Boards = [Board()] };
-    private static InstallationSettingsStore Store(string path) => new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Settings:DataPath"] = path }).Build());
-
     [Fact]
     public async Task UnassignedSlotsPersistAndOnlyAssignedDevicesMustBeUnique()
     {
@@ -76,21 +72,14 @@ public sealed class InstallationTests
     [Fact]
     public async Task CalibrationPreviewsDraftOwnsOutputRenewsExpiresAndReleasesOnShutdown()
     {
-        var store = Store(TestPaths.NewDataPath());
+        await using var h = new TestHarness();
+        var store = h.Store;
         var saved = Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }],
             Boards = [Board(), new(), Board("aabbccddeeff", "b")] };
         await store.SaveAsync(saved, TestContext.Current.CancellationToken);
-        var clock = new FakeTimeProvider();
-        var options = Options.Create(new WLedOptions());
-        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
-        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
-        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
-        var clients = new DummyClients();
-        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery());
-        var transport = new RecordingTransport();
-        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, transport);
+        var (clock, control, transport, output) = (h.Clock, h.Control, h.Transport, h.Output);
         await output.StartAsync(CancellationToken.None);
-        await Eventually(() => output.IsReady);
+        await Wait.Until(() => output.IsReady);
         await Assert.ThrowsAsync<ArgumentException>(() => output.StartCalibrationAsync(new(saved.Boards, saved.Boards[1].Id)));
         Assert.False(control.IsCalibrating);
         var initialDraft = saved.Boards.ToList();
@@ -106,7 +95,7 @@ public sealed class InstallationTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => output.StopCalibrationAsync("other-session"));
         await Assert.ThrowsAsync<InvalidOperationException>(() => output.UpdateCalibrationAsync("other-session", new(saved.Boards, "b")));
         clock.Advance(TimeSpan.FromSeconds(1));
-        await Eventually(() => transport.Frames.Count >= 2);
+        await Wait.Until(() => transport.Frames.Count >= 2);
         Assert.Contains(transport.Frames, f => f.Mac == "001122334455" && f.Pixels.Any(p => p != 0));
         Assert.Contains(transport.Frames, f => f.Mac == "aabbccddeeff" && f.Pixels.All(p => p == 0));
         var reordered = new List<BoardSettings> { saved.Boards[2] with { Left = new(8, 8), Right = new(0, 8) }, saved.Boards[0], saved.Boards[1] };
@@ -119,12 +108,12 @@ public sealed class InstallationTests
         transport.FailMac = "001122334455";
         var count = transport.Frames.Count;
         clock.Advance(TimeSpan.FromSeconds(6));
-        await Eventually(() => transport.Frames.Count > count);
+        await Wait.Until(() => transport.Frames.Count > count);
         Assert.True(control.IsCalibrating);
         Assert.Contains("001122334455", output.Errors.Keys);
         Assert.Contains(transport.Frames, f => f.Mac == "aabbccddeeff" && f.Pixels.Any(p => p != 0));
         clock.Advance(TimeSpan.FromSeconds(10));
-        await Eventually(() => output.Calibration is null);
+        await Wait.Until(() => output.Calibration is null);
         Assert.False(control.IsCalibrating);
         await control.ConfigureAsync(() => Task.CompletedTask);
         await control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid));
@@ -142,25 +131,18 @@ public sealed class InstallationTests
     [Fact]
     public async Task GameOutputUsesOnlyAssignedBoardsWhileManualOutputStillUsesAllSelectedDevices()
     {
-        var store = Store(TestPaths.NewDataPath());
+        await using var h = new TestHarness();
+        var store = h.Store;
         await store.SaveAsync(Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }], Boards = [new(), Board(), new()] }, TestContext.Current.CancellationToken);
-        var clock = new FakeTimeProvider();
-        var options = Options.Create(new WLedOptions());
-        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
-        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
-        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
-        var clients = new DummyClients();
-        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery());
-        var transport = new RecordingTransport();
-        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, transport);
+        var (clock, control, transport, output) = (h.Clock, h.Control, h.Transport, h.Output);
         await control.StartGameAsync(TimeSpan.FromSeconds(60), TimeSpan.Zero);
         await output.StartAsync(CancellationToken.None);
-        await Eventually(() => transport.Sent.Contains("001122334455"));
+        await Wait.Until(() => transport.Sent.Contains("001122334455"));
         Assert.DoesNotContain("aabbccddeeff", transport.Sent);
         await control.StopGameAsync();
         await control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid));
         clock.Advance(TimeSpan.FromSeconds(1));
-        await Eventually(() => transport.Sent.Contains("aabbccddeeff"));
+        await Wait.Until(() => transport.Sent.Contains("aabbccddeeff"));
         await output.StopAsync(CancellationToken.None);
     }
 
@@ -256,16 +238,10 @@ public sealed class InstallationTests
     [Fact]
     public async Task SimulatedControllersShowTheirFramesWithoutTouchingTheNetwork()
     {
-        var store = Store(TestPaths.NewDataPath());
-        var clock = new FakeTimeProvider();
-        var options = Options.Create(new WLedOptions());
-        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
-        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
-        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
-        var clients = new SyncClients();
-        var registry = new WLedRegistryService(store, control, clients);
-        var first = await registry.AddSimulatedAsync(TestContext.Current.CancellationToken);
-        var second = await registry.AddSimulatedAsync(TestContext.Current.CancellationToken);
+        await using var h = new TestHarness();
+        var (store, clock, monitor, output) = (h.Store, h.Clock, h.Monitor, h.Output);
+        var first = await h.Registry.AddSimulatedAsync(TestContext.Current.CancellationToken);
+        var second = await h.Registry.AddSimulatedAsync(TestContext.Current.CancellationToken);
         Assert.Equal(("02b0bf000001", "Simulated board 1", BoardMapping.LedsPerBoard, true, true), (first.Mac, first.Name, first.LedCount, first.Simulated, first.Selected));
         Assert.Equal("02b0bf000002", second.Mac);
         Assert.Equal([first, second], store.Snapshot.Devices);
@@ -273,16 +249,12 @@ public sealed class InstallationTests
         await store.UpdateAsync(s => s with { Boards = [board],
             IdleSync = new IdleSyncSettings { Enabled = true, MasterMac = first.Mac, Followers = [second.Mac] } }, TestContext.Current.CancellationToken);
 
-        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery(), store);
-        var transport = new RecordingTransport();
-        var monitor = new BoardFrameMonitor(clock);
-        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, transport, monitor);
         await output.StartAsync(CancellationToken.None);
-        await Eventually(() => output.IsReady);
+        await Wait.Until(() => output.IsReady);
         Assert.Null(monitor.Current(first.Mac));
         await output.StartCalibrationAsync(new([board], "a"));
         clock.Advance(TimeSpan.FromSeconds(1));
-        await Eventually(() => monitor.Current(first.Mac) is not null);
+        await Wait.Until(() => monitor.Current(first.Mac) is not null);
         // The monitor holds what a real board would show: left strip blue, right strip amber.
         var frame = monitor.Current(first.Mac)!;
         Assert.Equal(BoardMapping.LedsPerBoard * 3, frame.Length);
@@ -296,13 +268,13 @@ public sealed class InstallationTests
         // Locate and a manual effect reach it the same way.
         using var locateCancel = new CancellationTokenSource();
         var locating = output.LocateAsync(second.Mac, locateCancel.Token);
-        await Eventually(() => monitor.Current(second.Mac) is not null);
+        await Wait.Until(() => monitor.Current(second.Mac) is not null);
         locateCancel.Cancel(); await Assert.ThrowsAnyAsync<OperationCanceledException>(() => locating);
 
         // Nothing went out over UDP or HTTP, discovery does not probe it, and no device error is reported.
         await output.ApplyIdleSyncAsync(TestContext.Current.CancellationToken);
-        await discovery.ScanAsync(TestContext.Current.CancellationToken);
-        Assert.Empty(transport.Sent); Assert.Empty(clients.Requests); Assert.Empty(clients.Gets); Assert.Empty(output.Errors);
+        await h.Discovery.ScanAsync(TestContext.Current.CancellationToken);
+        Assert.Empty(h.Transport.Sent); Assert.Empty(h.Http.Requests); Assert.Empty(output.Errors);
         await output.StopAsync(CancellationToken.None);
     }
     [Fact]
@@ -417,10 +389,8 @@ public sealed class InstallationTests
     [Fact]
     public async Task LocateOwnsOutputAndRejectsGameManualAndOtherLocate()
     {
-        var clock = new FakeTimeProvider();
-        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, Options.Create(new WLedOptions()), new RgbEffectFactory(), clock);
-        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
-        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance);
+        await using var h = new TestHarness();
+        var (clock, timer, control) = (h.Clock, h.Countdown, h.Control);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var locating = control.LocateAsync(() => release.Task);
         Assert.True(control.IsLocating);
@@ -432,26 +402,19 @@ public sealed class InstallationTests
         Assert.False(timer.IsRunning); Assert.Equal(GamePhase.PreCountdown, control.Phase);
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.LocateAsync(() => Task.CompletedTask));
         await control.StartAsync(CancellationToken.None);
-        await Eventually(() => control.IsReady);
+        await Wait.Until(() => control.IsReady);
         clock.Advance(CountdownService.PreCountdownDuration);
-        await Eventually(() => control.Phase == GamePhase.Running);
+        await Wait.Until(() => control.Phase == GamePhase.Running);
         Assert.True(timer.IsRunning); Assert.Equal(TimeSpan.FromSeconds(60), timer.Remaining);
         await control.StopAsync(CancellationToken.None);
     }
     [Fact]
     public async Task DeviceFailureDoesNotPreventOtherFramesAndLocateUsesOnlyTarget()
     {
-        var store = Store(TestPaths.NewDataPath());
+        await using var h = new TestHarness();
+        var store = h.Store;
         await store.SaveAsync(Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }], Boards = [Board(), Board("aabbccddeeff", "b")] }, TestContext.Current.CancellationToken);
-        var clock = new FakeTimeProvider();
-        var options = Options.Create(new WLedOptions());
-        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
-        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
-        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
-        var clients = new DummyClients();
-        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery());
-        var transport = new RecordingTransport();
-        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, transport);
+        var (control, transport, output) = (h.Control, h.Transport, h.Output);
         using var locateCancel = new CancellationTokenSource();
         var locating = output.LocateAsync("aabbccddeeff", locateCancel.Token);
         Assert.Single(transport.Sent); Assert.Equal("aabbccddeeff", transport.Sent.Single());
@@ -460,7 +423,7 @@ public sealed class InstallationTests
         transport.Sent.Clear(); transport.FailMac = "001122334455";
         await control.StartGameAsync(false, duration: TimeSpan.FromSeconds(60), deviation: TimeSpan.Zero);
         await output.StartAsync(CancellationToken.None);
-        await Eventually(() => transport.Sent.Contains("aabbccddeeff"));
+        await Wait.Until(() => transport.Sent.Contains("aabbccddeeff"));
         Assert.Contains("001122334455", output.Errors.Keys);
         await output.StopAsync(CancellationToken.None);
     }
@@ -493,36 +456,27 @@ public sealed class InstallationTests
     [Fact]
     public async Task SavedCountdownSurvivesReloadOverridesConfigurationAndIsValidated()
     {
-        var path = TestPaths.NewDataPath();
-        var store = Store(path);
-        var countdown = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions { DurationSeconds = 600, DeviationSeconds = 120 }),
-            new FakeTimeProvider(), store);
+        await using var h = new TestHarness(countdown: new CountdownOptions { DurationSeconds = 600, DeviationSeconds = 120 });
+        var (store, countdown) = (h.Store, h.Countdown);
         Assert.Null(store.Snapshot.Countdown);
         Assert.Equal((600, 120), ((int)countdown.CountdownDuration.TotalSeconds, (int)countdown.CountdownDeviation.TotalSeconds)); // Configuration until saved.
         await store.UpdateAsync(s => s with { Countdown = new(720, 30) }, TestContext.Current.CancellationToken);
         Assert.Equal((720, 30), ((int)countdown.CountdownDuration.TotalSeconds, (int)countdown.CountdownDeviation.TotalSeconds));
-        Assert.Equal(new CountdownSettings(720, 30), Store(path).Snapshot.Countdown); // A restart reads the file again.
+        Assert.Equal(new CountdownSettings(720, 30), Store(h.DataPath).Snapshot.Countdown); // A restart reads the file again.
         foreach (var invalid in new CountdownSettings[] { new(0, 0), new(86401, 0), new(60, -1), new(60, 60) })
             Assert.Throws<ArgumentException>(() => InstallationSettingsStore.Validate(store.Snapshot with { Countdown = invalid }));
     }
     [Fact]
     public async Task LightTestPlaysUnsavedDraftEndsByItselfAndConflictsCleanly()
     {
-        var store = Store(TestPaths.NewDataPath());
+        await using var h = new TestHarness();
+        var store = h.Store;
         var saved = Installation() with { Devices = [Device(), Device("aabbccddeeff") with { Address = "192.168.1.21" }],
             Boards = [Board(), new(), Board("aabbccddeeff", "b")] };
         await store.SaveAsync(saved, TestContext.Current.CancellationToken);
-        var clock = new FakeTimeProvider();
-        var options = Options.Create(new WLedOptions());
-        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
-        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
-        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
-        var clients = new DummyClients();
-        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery());
-        var transport = new RecordingTransport();
-        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, transport);
+        var (clock, control, transport, output) = (h.Clock, h.Control, h.Transport, h.Output);
         await output.StartAsync(CancellationToken.None);
-        await Eventually(() => output.IsReady);
+        await Wait.Until(() => output.IsReady);
         var red = new LightShowSettings { Theme = "custom", Custom = new() { Primary = "#ff0000", Secondary = "#ff0000", Tertiary = "#ff0000", Accent = "#ff0000" } };
         LightShowTestRequest Request(string segment) => new(segment, red, new());
 
@@ -543,7 +497,7 @@ public sealed class InstallationTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid)));
         await Assert.ThrowsAsync<InvalidOperationException>(() => output.StartCalibrationAsync(new(saved.Boards, "a")));
         clock.Advance(TimeSpan.FromSeconds(1));
-        await Eventually(() => transport.Sent.Contains("001122334455") && transport.Sent.Contains("aabbccddeeff"));
+        await Wait.Until(() => transport.Sent.Contains("001122334455") && transport.Sent.Contains("aabbccddeeff"));
         // Both boards show the draft's colours: red only.
         Assert.All(transport.Frames, frame =>
         {
@@ -556,7 +510,7 @@ public sealed class InstallationTests
         Assert.Equal("gameOver", output.LightShowTest!.Segment);
         Assert.True(control.IsTestingLights);
         clock.Advance(TimeSpan.FromSeconds(6));
-        await Eventually(() => output.LightShowTest is null && !control.IsTestingLights);
+        await Wait.Until(() => output.LightShowTest is null && !control.IsTestingLights);
         await control.ConfigureAsync(() => Task.CompletedTask);
 
         // Whoever owns the lights keeps them.
@@ -589,20 +543,13 @@ public sealed class InstallationTests
     [Fact]
     public async Task GameWithoutBoardsSendsNoFramesButManualOutputStillDoes()
     {
-        var store = Store(TestPaths.NewDataPath());
+        await using var h = new TestHarness();
+        var store = h.Store;
         await store.SaveAsync(Installation() with { Boards = [new()] }, TestContext.Current.CancellationToken);
-        var clock = new FakeTimeProvider();
-        var options = Options.Create(new WLedOptions());
-        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
-        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
-        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
-        var clients = new DummyClients();
-        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery());
-        var transport = new RecordingTransport();
-        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, transport);
+        var (clock, control, transport, output) = (h.Clock, h.Control, h.Transport, h.Output);
         await control.StartGameAsync(TimeSpan.FromSeconds(60), TimeSpan.Zero);
         await output.StartAsync(CancellationToken.None);
-        await Eventually(() => output.IsReady);
+        await Wait.Until(() => output.IsReady);
         for (var pass = 0; pass < 5; pass++)
         {
             clock.Advance(TimeSpan.FromMilliseconds(100));
@@ -613,73 +560,34 @@ public sealed class InstallationTests
         await control.StopGameAsync();
         await control.StartManualEffectAsync(b => b.WithEffect(RgbEffect.Solid));
         clock.Advance(TimeSpan.FromSeconds(1));
-        await Eventually(() => transport.Sent.Contains("001122334455"));
+        await Wait.Until(() => transport.Sent.Contains("001122334455"));
         await output.StopAsync(CancellationToken.None);
     }
-    private static async Task Eventually(Func<bool> condition)
-    {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        while (!condition()) await Task.Delay(1, deadline.Token);
-    }
-    private sealed class RecordingTransport : IWLedFrameTransport
-    {
-        public ConcurrentQueue<string> Sent { get; } = new();
-        public ConcurrentQueue<(string Mac, byte[] Pixels)> Frames { get; } = new();
-        public string? FailMac { get; set; }
-        public Task SendAsync(DeviceSettings device, byte[] pixels, CancellationToken token)
-        {
-            if (device.Mac == FailMac) throw new IOException("Test device offline.");
-            Sent.Enqueue(device.Mac); Frames.Enqueue((device.Mac, pixels.ToArray())); return Task.CompletedTask;
-        }
-    }
-    private sealed class DummyClients : IHttpClientFactory { public HttpClient CreateClient(string name) => new(new DummyHandler()); }
     [Fact]
     public async Task IdleSyncUsesNativeConfigKeysAndMirrorsEffectsWithoutCopyingBoundsOrTurningOnMaster()
     {
-        var store = Store(TestPaths.NewDataPath());
+        await using var h = new TestHarness();
+        var (store, output) = (h.Store, h.Output);
         await store.SaveAsync(Installation() with { Devices = [Device(), Device("aabbccddeeff")], Boards = [],
             IdleSync = new IdleSyncSettings { Enabled = true, MasterMac = "001122334455", Followers = ["aabbccddeeff"], Group = 2 } }, TestContext.Current.CancellationToken);
-        var clock = new FakeTimeProvider(); var options = Options.Create(new WLedOptions());
-        using var rgb = new DRgbService(NullLogger<DRgbService>.Instance, options, new RgbEffectFactory(), clock);
-        var timer = new CountdownService(NullLogger<CountdownService>.Instance, Options.Create(new CountdownOptions()), clock);
-        using var control = new RgbAndSoundControlService(timer, rgb, new SoundService(NullLogger<SoundService>.Instance), clock, NullLogger<RgbAndSoundControlService>.Instance, store);
-        var clients = new SyncClients();
-        using var discovery = new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, options, clients, new EmptyDiscovery());
-        using var output = new InstallationOutputService(store, discovery, control, rgb, clients, clock, NullLogger<InstallationOutputService>.Instance, new RecordingTransport());
+        // Every controller reports this state when it is read, and accepts whatever it is sent.
+        h.Http.Respond = request => FakeHttp.Json(request.Method == HttpMethod.Get
+            ? """{"on":false,"bri":100,"mainseg":0,"seg":[{"id":0,"start":0,"stop":16,"fx":7,"col":[[0,0,255]]}]}""" : """{"success":true}""");
+        SentRequest[] Posted(string path) => h.Http.Requests.Where(r => r.Method == HttpMethod.Post && r.Path == path).ToArray();
         await output.ApplyIdleSyncAsync(TestContext.Current.CancellationToken);
-        var config = clients.Requests.First(r => r.Path == "/json/cfg").Body;
+        var config = Posted("/json/cfg")[0].Json;
         Assert.True(config.GetProperty("if").GetProperty("sync").GetProperty("send").GetProperty("en").GetBoolean());
         Assert.Equal(2, config.GetProperty("if").GetProperty("sync").GetProperty("send").GetProperty("grp").GetInt32());
-        var states = clients.Requests.Where(r => r.Path == "/json/state").ToArray();
-        Assert.False(states[0].Body.TryGetProperty("on", out _)); // Never force the master on.
-        Assert.False(states[1].Body.GetProperty("on").GetBoolean());
-        Assert.Equal(7, states[1].Body.GetProperty("seg").GetProperty("fx").GetInt32());
-        Assert.False(states[1].Body.GetProperty("seg").TryGetProperty("start", out _));
-        clients.Requests.Clear();
+        var states = Posted("/json/state");
+        Assert.False(states[0].Json.TryGetProperty("on", out _)); // Never force the master on.
+        Assert.False(states[1].Json.GetProperty("on").GetBoolean());
+        Assert.Equal(7, states[1].Json.GetProperty("seg").GetProperty("fx").GetInt32());
+        Assert.False(states[1].Json.GetProperty("seg").TryGetProperty("start", out _));
+        h.Http.Requests.Clear();
         await output.ApplyIdleSyncAsync(TestContext.Current.CancellationToken, configure: false);
-        Assert.DoesNotContain(clients.Requests, r => r.Path == "/json/cfg"); // Avoid flash writes every game.
+        Assert.Empty(Posted("/json/cfg")); // Avoid flash writes every game.
         await store.UpdateAsync(s => s with { IdleSync = s.IdleSync with { Enabled = false } }, TestContext.Current.CancellationToken);
-        clients.Requests.Clear(); await output.ApplyIdleSyncAsync(TestContext.Current.CancellationToken);
-        Assert.All(clients.Requests.Where(r => r.Path == "/json/cfg"), r => Assert.False(r.Body.GetProperty("if").GetProperty("sync").GetProperty("send").GetProperty("en").GetBoolean()));
+        h.Http.Requests.Clear(); await output.ApplyIdleSyncAsync(TestContext.Current.CancellationToken);
+        Assert.All(Posted("/json/cfg"), r => Assert.False(r.Json.GetProperty("if").GetProperty("sync").GetProperty("send").GetProperty("en").GetBoolean()));
     }
-    private sealed class SyncClients : IHttpClientFactory
-    {
-        public List<(string Path, JsonElement Body)> Requests { get; } = [];
-        public ConcurrentQueue<string> Gets { get; } = new();
-        public HttpClient CreateClient(string name) => new(new SyncHandler(Requests, Gets));
-    }
-    private sealed class SyncHandler(List<(string Path, JsonElement Body)> requests, ConcurrentQueue<string> gets) : HttpMessageHandler
-    {
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
-        {
-            if (request.Method == HttpMethod.Get) gets.Enqueue(request.RequestUri!.AbsolutePath);
-            if (request.Method == HttpMethod.Get) return new(HttpStatusCode.OK) { Content = new StringContent("""{"on":false,"bri":100,"mainseg":0,"seg":[{"id":0,"start":0,"stop":16,"fx":7,"col":[[0,0,255]]}]}""", System.Text.Encoding.UTF8, "application/json") };
-            requests.Add((request.RequestUri!.AbsolutePath, await request.Content!.ReadFromJsonAsync<JsonElement>(token)));
-            return new(HttpStatusCode.OK) { Content = JsonContent.Create(new { success = true }) };
-        }
-    }
-    private sealed class DummyHandler : HttpMessageHandler
-    { protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new { }) }); }
-    private sealed class EmptyDiscovery : IWLedDiscoverySource
-    { public Task<IReadOnlyList<WLedAdvertisement>> ResolveAsync(CancellationToken token) => Task.FromResult<IReadOnlyList<WLedAdvertisement>>([]); }
 }
