@@ -233,7 +233,7 @@ public sealed class InstallationSettingsStore
     }
     public static bool LocalAddress(string address) => IPAddress.TryParse(address, out var ip) && WLedDiscoveryService.IsLocalDeviceAddress(ip);
     /// <summary>#RRGGBB with at least one channel bright enough to light a board.</summary>
-    public static bool ValidColor(string? color) => color is { Length: 7 } && color[0] == '#' && color.Skip(1).All(char.IsAsciiHexDigit) &&
-        Enumerable.Range(0, 3).Max(i => Convert.ToInt32(color.Substring(1 + i * 2, 2), 16)) >= 0x30;
+    public static bool ValidColor(string? color) =>
+        Effects.ColorHelper.TryParseHex(color, out var red, out var green, out var blue) && Math.Max(red, Math.Max(green, blue)) >= 0x30;
     public static bool ValidMac(string mac) => mac is { Length: 12 } && mac.All(c => char.IsAsciiHexDigit(c) && !char.IsUpper(c));
 }

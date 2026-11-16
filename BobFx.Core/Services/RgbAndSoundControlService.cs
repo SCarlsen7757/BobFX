@@ -137,7 +137,6 @@ public sealed class RgbAndSoundControlService(
     }
     public async Task SetManualSpeedAsync(TimeSpan speed)
     {
-        if (speed < TimeSpan.FromMilliseconds(10) || speed > TimeSpan.FromSeconds(60)) throw new ArgumentException("Speed must be 10–60000 milliseconds.");
         await commands.WaitAsync();
         try { EnsureManual(); rgb.SetSpeed(speed); }
         finally { commands.Release(); }

@@ -1,64 +1,40 @@
 namespace BobFx.Core.Services.Effects;
 
-/// <summary>
-/// Factory for creating RGB effects.
-/// </summary>
 public interface IRgbEffectFactory
 {
-    /// <summary>
-    /// Create an effect instance by type.
-    /// </summary>
+    /// <summary>A new effect of this type at its default speed.</summary>
     IRgbEffect Create(RgbEffect effectType);
-
-    /// <summary>
-    /// Get all registered effect types.
-    /// </summary>
+    RgbEffectInfo Info(RgbEffect effectType);
     IEnumerable<RgbEffect> GetRegisteredEffects();
 }
 
-/// <summary>
-/// Registry and factory for RGB effects.
-/// </summary>
-public class RgbEffectFactory : IRgbEffectFactory
+/// <summary>The effects there are. A new effect class is added here and nowhere else.</summary>
+public sealed class RgbEffectFactory : IRgbEffectFactory
 {
-    private readonly Dictionary<RgbEffect, Func<IRgbEffect>> _factories = [];
-
-    public RgbEffectFactory()
+    private static readonly Dictionary<RgbEffect, Func<IRgbEffect>> Effects = new()
     {
-        // Register all built-in effects
-        RegisterDefaults();
-    }
-
-    private void Register<T>() where T : IRgbEffect, new() => _factories[new T().EffectType] = () => new T();
+        [RgbEffect.Off] = () => new OffEffect(),
+        [RgbEffect.Rainbow] = () => new RainbowEffect(),
+        [RgbEffect.Solid] = () => new SolidEffect(),
+        [RgbEffect.Strobe] = () => new StrobeEffect(),
+        [RgbEffect.Scanner] = () => new ScannerEffect(),
+        [RgbEffect.FadeIn] = () => new FadeInEffect(),
+        [RgbEffect.FadeOut] = () => new FadeOutEffect(),
+        [RgbEffect.Breathing] = () => new BreathingEffect(),
+        [RgbEffect.Twinkle] = () => new TwinkleEffect(),
+        [RgbEffect.Blink] = () => new BlinkEffect(),
+    };
+    private static readonly Dictionary<RgbEffect, RgbEffectInfo> Infos = Effects.ToDictionary(entry => entry.Key, entry => entry.Value().GetInfo());
 
     public IRgbEffect Create(RgbEffect effectType)
     {
-        if (_factories.TryGetValue(effectType, out var factory))
-        {
-            var effect = factory();
-            effect.Speed = effect.GetInfo().DefaultSpeed;
-            return effect;
-        }
-
-        throw new InvalidOperationException($"No factory registered for effect type: {effectType}");
+        if (!Effects.TryGetValue(effectType, out var create)) throw new InvalidOperationException($"No effect of type {effectType}.");
+        var effect = create();
+        effect.Speed = effect.GetInfo().DefaultSpeed;
+        return effect;
     }
 
-    public IEnumerable<RgbEffect> GetRegisteredEffects()
-    {
-        return _factories.Keys;
-    }
+    public RgbEffectInfo Info(RgbEffect effectType) => Infos[effectType];
 
-    private void RegisterDefaults()
-    {
-        Register<OffEffect>();
-        Register<RainbowEffect>();
-        Register<SolidEffect>();
-        Register<StrobeEffect>();
-        Register<ScannerEffect>();
-        Register<FadeInEffect>();
-        Register<FadeOutEffect>();
-        Register<BreathingEffect>();
-        Register<TwinkleEffect>();
-        Register<BlinkEffect>();
-    }
+    public IEnumerable<RgbEffect> GetRegisteredEffects() => Effects.Keys;
 }

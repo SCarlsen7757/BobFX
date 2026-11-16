@@ -143,10 +143,10 @@ public sealed class BackendTests
         effect.Initialize(1, clock);
         var leds = new Vector3[1];
         clock.Advance(TimeSpan.FromSeconds(1));
-        Assert.False(effect.Apply(leds, CancellationToken.None));
+        Assert.False(effect.Apply(leds));
         Assert.Equal(new Vector3(0.5f), leds[0]);
         clock.Advance(TimeSpan.FromSeconds(1));
-        Assert.True(effect.Apply(leds, CancellationToken.None));
+        Assert.True(effect.Apply(leds));
     }
 
     [Fact]

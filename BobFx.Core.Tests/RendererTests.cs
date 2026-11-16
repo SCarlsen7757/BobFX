@@ -68,12 +68,11 @@ public sealed class RendererTests
         private bool initialized;
         public FaultingEffect() => Speed = TimeSpan.FromMilliseconds(10);
         public override RgbEffect EffectType => RgbEffect.Solid;
-        public override bool Apply(Span<Vector3> leds, CancellationToken token)
+        public override bool Apply(Span<Vector3> leds)
         {
             if (initialized) throw new InvalidOperationException("test renderer failure");
             initialized = true; leds.Fill(Vector3.One); return false;
         }
         public override RgbEffectInfo GetInfo() => new() { DefaultSpeed = TimeSpan.FromMilliseconds(10) };
-        public override IRgbEffect Clone() => new FaultingEffect();
     }
 }

@@ -2,29 +2,33 @@ using System.Numerics;
 
 namespace BobFx.Core.Services.Effects;
 
-/// <summary>
-/// Base class for all RGB effects providing common functionality.
-/// </summary>
-public abstract class RgbEffectBase : IRgbEffect
+/// <summary>What every effect shares: its speed and colors, the clock it runs on, and the checks all effects pass.</summary>
+public abstract class RgbEffectBase(params Vector3[] colors) : IRgbEffect
 {
+    public const int MinSpeedMilliseconds = 10, MaxSpeedMilliseconds = 60000;
+
+    /// <summary>The effect's colors; subclasses name them through properties.</summary>
+    protected Vector3[] Palette { get; private set; } = colors;
+
     public abstract RgbEffect EffectType { get; }
     public TimeSpan Speed { get; set; } = TimeSpan.FromMilliseconds(100);
+    public IReadOnlyList<Vector3> Colors => Palette;
+    public void SetColor(int index, Vector3 color) => Palette[index] = color;
 
     protected int Step { get; set; }
-    protected long StartTimestamp { get; set; }
+    protected long StartTimestamp { get; private set; }
     protected TimeProvider Clock { get; private set; } = TimeProvider.System;
-    protected int LedCount { get; private set; }
 
     public virtual void Initialize(int ledCount, TimeProvider clock)
     {
         Clock = clock;
-        LedCount = ledCount;
         Reset();
     }
 
-    public abstract bool Apply(Span<Vector3> leds, CancellationToken token);
+    public abstract bool Apply(Span<Vector3> leds);
 
-    public virtual void Reset()
+    /// <summary>Back to the first frame.</summary>
+    protected virtual void Reset()
     {
         Step = 0;
         StartTimestamp = Clock.GetTimestamp();
@@ -32,33 +36,27 @@ public abstract class RgbEffectBase : IRgbEffect
 
     public abstract RgbEffectInfo GetInfo();
 
-    public virtual ValidationResult Validate()
+    public void EnsureValid()
     {
-        return ValidationResult.Success();
+        if (Speed < TimeSpan.FromMilliseconds(MinSpeedMilliseconds) || Speed > TimeSpan.FromMilliseconds(MaxSpeedMilliseconds))
+            throw new ArgumentException($"Effect speed must be {MinSpeedMilliseconds}–{MaxSpeedMilliseconds} milliseconds.");
+        if (Palette.Any(color => !IsUnit(color.X) || !IsUnit(color.Y) || !IsUnit(color.Z)))
+            throw new ArgumentException("Color channels must be finite values between 0 and 1.");
+        var info = GetInfo();
+        // A required color that is black would show nothing at all.
+        var problems = Enumerable.Range(0, Math.Min(info.RequiredColors, Palette.Length)).Where(index => Palette[index] == Vector3.Zero)
+            .Select(index => $"{info.ColorLabels.ElementAtOrDefault(index) ?? "Color"} must be set").Concat(Problems()).ToList();
+        if (problems.Count > 0) throw new ArgumentException(string.Join("; ", problems));
     }
+    /// <summary>What is wrong with the settings only this effect has.</summary>
+    protected virtual IEnumerable<string> Problems() => [];
+    protected static bool IsUnit(float value) => float.IsFinite(value) && value is >= 0 and <= 1;
 
-    public abstract IRgbEffect Clone();
-
-    protected void ClearLeds(Span<Vector3> leds)
+    public IRgbEffect Clone()
     {
-        for (int i = 0; i < leds.Length; i++)
-            leds[i] = Vector3.Zero;
-    }
-
-    protected static Vector3 HsvToRgb(float h, float s, float v)
-    {
-        float c = v * s;
-        float x = c * (1 - MathF.Abs((h / 60) % 2 - 1));
-        float m = v - c;
-        float r1, g1, b1;
-
-        if (h < 60) { r1 = c; g1 = x; b1 = 0; }
-        else if (h < 120) { r1 = x; g1 = c; b1 = 0; }
-        else if (h < 180) { r1 = 0; g1 = c; b1 = x; }
-        else if (h < 240) { r1 = 0; g1 = x; b1 = c; }
-        else if (h < 300) { r1 = x; g1 = 0; b1 = c; }
-        else { r1 = c; g1 = 0; b1 = x; }
-
-        return new Vector3(r1 + m, g1 + m, b1 + m);
+        // Settings are values; the colors are the one array a copy must not share.
+        var copy = (RgbEffectBase)MemberwiseClone();
+        copy.Palette = [.. Palette];
+        return copy;
     }
 }

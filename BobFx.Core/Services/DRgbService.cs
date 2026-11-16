@@ -33,11 +33,11 @@ public sealed class DRgbService : BackgroundService
     }
     internal Task StartEffectAsync(IRgbEffect effect)
     {
-        Validate(effect);
+        effect.EnsureValid();
         lock (sync)
         {
             effect.Initialize(leds.Length, clock);
-            completed = effect.Apply(leds, CancellationToken.None);
+            completed = effect.Apply(leds);
             Volatile.Write(ref lastError, null);
             currentEffect = effect; lastFrame = clock.GetTimestamp();
         }
@@ -53,13 +53,12 @@ public sealed class DRgbService : BackgroundService
         lock (sync)
         {
             if (currentEffect is null) return;
-            var candidate = currentEffect.Clone(); update(candidate); Validate(candidate);
+            var candidate = currentEffect.Clone(); update(candidate); candidate.EnsureValid();
             candidate.Initialize(leds.Length, clock); currentEffect = candidate; completed = false;
         }
     }
     public RgbStatus GetStatus() { lock (sync) return new(currentEffect?.EffectType ?? RgbEffect.Off, currentEffect?.Speed ?? TimeSpan.FromMilliseconds(100), leds.Length, IsUdpActive, LastError); }
     public Vector3[] GetSnapshot() { lock (sync) return (Vector3[])leds.Clone(); }
-    private static void Validate(IRgbEffect effect) => EffectValidation.EnsureValid(effect);
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(10), clock);
@@ -70,7 +69,7 @@ public sealed class DRgbService : BackgroundService
                 lock (sync)
                 {
                     if (currentEffect is null || completed || clock.GetElapsedTime(lastFrame) < currentEffect.Speed) continue;
-                    try { completed = currentEffect.Apply(leds, stoppingToken); lastFrame = clock.GetTimestamp(); }
+                    try { completed = currentEffect.Apply(leds); lastFrame = clock.GetTimestamp(); }
                     catch (Exception ex) when (ExceptionPolicy.IsRecoverable(ex)) { Volatile.Write(ref lastError, "LED renderer failed"); logger.LogError(ex, "LED renderer failed"); currentEffect = null; leds.AsSpan().Clear(); IsUdpActive = false; }
                 }
         }

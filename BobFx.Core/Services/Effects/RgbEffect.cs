@@ -1,16 +1,15 @@
-﻿namespace BobFx.Core.Services.Effects
+namespace BobFx.Core.Services.Effects;
+
+public enum RgbEffect
 {
-    public enum RgbEffect
-    {
-        Off,
-        Rainbow,
-        Strobe,
-        Scanner,
-        Solid,
-        FadeIn,
-        FadeOut,
-        Breathing,
-        Twinkle,
-        Blink,
-    }
+    Off,
+    Rainbow,
+    Strobe,
+    Scanner,
+    Solid,
+    FadeIn,
+    FadeOut,
+    Breathing,
+    Twinkle,
+    Blink,
 }

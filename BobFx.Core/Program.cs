@@ -35,7 +35,7 @@ builder.Services.AddSignalR();
 builder.Services.AddSingleton<UiStateService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<UiStateService>());
 builder.Services.AddProblemDetails();
-builder.Services.AddControllers();
+builder.Services.AddControllers(options => options.Filters.Add<BobFx.Core.Controllers.ApiExceptionFilter>());
 builder.Services.AddHttpClient("wled", client => { client.Timeout = TimeSpan.FromSeconds(2); client.MaxResponseContentBufferSize = 64 * 1024; })
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false });
 builder.Services.AddSingleton<WLedRegistryService>();
@@ -90,8 +90,6 @@ app.MapGet("/health/status", (RgbAndSoundControlService control, DRgbService rgb
     udp = new { active = rgb.IsUdpActive, lastSendUtc = output.LastSendUtc, error = output.LastError, devices = output.Errors },
     discovery = new { lastScanUtc = discovery.LastScanUtc, error = discovery.LastError, devices = discovery.Devices.Count }
 }));
-app.MapGet("/api/installation/status", (InstallationOutputService output) => Results.Ok(new { output.LastSendUtc, output.Errors }));
-app.MapGet("/api/installation/controllers/status", (BusyBarService busy) => Results.Ok(busy.Statuses));
 app.MapControllers();
 app.MapHub<UiHub>("/hubs/ui");
 foreach (var route in AppRoutes.Pages)

@@ -2,45 +2,23 @@ using System.Numerics;
 
 namespace BobFx.Core.Services.Effects;
 
-public class StrobeEffect : RgbEffectBase
+/// <summary>Like <see cref="BlinkEffect"/>, but it starts on its second color, which may be left black for a flash.</summary>
+public sealed class StrobeEffect() : RgbEffectBase(new Vector3(1, 0, 0), new Vector3(0, 1, 0))
 {
-    public override RgbEffect EffectType => RgbEffect.Strobe;
-
-    public Vector3 PrimaryColor { get; set; } = new(1, 0, 0); // Red
-    public Vector3 SecondaryColor { get; set; } = new(0, 1, 0); // Green
-
-    public override bool Apply(Span<Vector3> leds, CancellationToken token)
+    private static readonly RgbEffectInfo Info = new()
     {
-        Vector3 color = (Step % 2 == 0) ? SecondaryColor : PrimaryColor;
-
-        for (int i = 0; i < leds.Length; i++)
-            leds[i] = color;
-
-        Step = (Step + 1) % 2;
-        return false; // Never completes
-    }
-
-    public override RgbEffectInfo GetInfo() => new()
-    {
-        RequiredColors = 1,
-        OptionalColors = 1,
-        Description = "Alternates between two colors",
-        DefaultSpeed = TimeSpan.FromMilliseconds(250),
+        RequiredColors = 1, OptionalColors = 1, Description = "Alternates between two colors", DefaultSpeed = TimeSpan.FromMilliseconds(250),
         ColorLabels = ["Primary Color", "Secondary Color"]
     };
+    public override RgbEffect EffectType => RgbEffect.Strobe;
+    public Vector3 PrimaryColor { get => Palette[0]; set => Palette[0] = value; }
+    public Vector3 SecondaryColor { get => Palette[1]; set => Palette[1] = value; }
+    public override RgbEffectInfo GetInfo() => Info;
 
-    public override ValidationResult Validate()
+    public override bool Apply(Span<Vector3> leds)
     {
-        var result = new ValidationResult();
-        if (PrimaryColor == Vector3.Zero)
-            result.AddError("Primary color must be set");
-        return result;
+        leds.Fill(Step == 0 ? SecondaryColor : PrimaryColor);
+        Step = 1 - Step;
+        return false;
     }
-
-    public override IRgbEffect Clone() => new StrobeEffect
-    {
-        Speed = Speed,
-        PrimaryColor = PrimaryColor,
-        SecondaryColor = SecondaryColor
-    };
 }

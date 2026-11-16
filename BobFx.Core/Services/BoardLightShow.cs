@@ -42,8 +42,8 @@ internal sealed class LightPalette
     /// <summary>A theme colour sets hue only: it is scaled to full level, then gamma-corrected.</summary>
     private static Rgb Led(string hex)
     {
-        double red = Convert.ToInt32(hex.Substring(1, 2), 16), green = Convert.ToInt32(hex.Substring(3, 2), 16), blue = Convert.ToInt32(hex.Substring(5, 2), 16);
-        var peak = Math.Max(red, Math.Max(green, blue));
+        if (!Effects.ColorHelper.TryParseHex(hex, out var red, out var green, out var blue)) return default;
+        double peak = Math.Max(red, Math.Max(green, blue));
         if (peak <= 0) return default;
         double Channel(double value) => 255 * Math.Pow(value / peak, Gamma);
         return new(Channel(red), Channel(green), Channel(blue));

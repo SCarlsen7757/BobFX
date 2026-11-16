@@ -13,8 +13,7 @@ public sealed class WLedController(WLedDiscoveryService discovery) : ControllerB
     [HttpGet("devices/{mac}")]
     public IActionResult Device(string mac)
     {
-        var device = discovery.Devices.FirstOrDefault(d => d.Mac == mac);
-        if (device is null) return NotFound();
+        if (discovery.Find(mac) is not { } device) return NotFound();
         var info = device.Info;
         return Ok(new { device = UiStateService.ToView(device), details = info is null ? null : new
         {
@@ -31,9 +30,5 @@ public sealed class WLedController(WLedDiscoveryService discovery) : ControllerB
     public IActionResult Clear() { discovery.Clear(); return NoContent(); }
 
     [HttpDelete("devices/{mac}")]
-    public IActionResult Remove(string mac)
-    {
-        try { return discovery.RemoveOffline(mac) ? NoContent() : NotFound(); }
-        catch (InvalidOperationException ex) { return Problem(statusCode: 409, title: ex.Message); }
-    }
+    public IActionResult Remove(string mac) => discovery.RemoveOffline(mac) ? NoContent() : NotFound();
 }

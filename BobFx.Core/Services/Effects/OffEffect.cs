@@ -2,23 +2,15 @@ using System.Numerics;
 
 namespace BobFx.Core.Services.Effects;
 
-public class OffEffect : RgbEffectBase
+public sealed class OffEffect : RgbEffectBase
 {
+    private static readonly RgbEffectInfo Info = new() { Description = "Turn off all LEDs", DefaultSpeed = TimeSpan.FromMilliseconds(100) };
     public override RgbEffect EffectType => RgbEffect.Off;
+    public override RgbEffectInfo GetInfo() => Info;
 
-    public override bool Apply(Span<Vector3> leds, CancellationToken token)
+    public override bool Apply(Span<Vector3> leds)
     {
-        ClearLeds(leds);
-        return true; // Always runs (does nothing)
+        leds.Clear();
+        return true;
     }
-
-    public override RgbEffectInfo GetInfo() => new()
-    {
-        RequiredColors = 0,
-        OptionalColors = 0,
-        Description = "Turn off all LEDs",
-        DefaultSpeed = TimeSpan.FromMilliseconds(100)
-    };
-
-    public override IRgbEffect Clone() => new OffEffect { Speed = Speed };
 }
