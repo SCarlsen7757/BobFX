@@ -24,9 +24,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
     private readonly Channel<bool> requestedScans = Channel.CreateBounded<bool>(1);
     public void RequestScan() { if (!IsScanning) requestedScans.Writer.TryWrite(true); }
     private readonly TimeSpan interval = TimeSpan.FromSeconds(options.Value.Discovery.UpdateIntervalSeconds);
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private const int MaxDevices = 256;
-    private const int MaxResponseBytes = 64 * 1024;
     private WLedDevice[]? sorted;
     /// <summary>The discovered devices by name. The list is kept until a device is found, lost or changed, so it
     /// is the same instance for as long as nothing changed.</summary>
@@ -40,6 +38,14 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
     }
     /// <summary>The discovered device with this MAC, if there is one.</summary>
     public WLedDevice? Find(string mac) => devices.GetValueOrDefault(mac);
+    /// <summary>A registered device with the address, ports and LED count it reports now, while it is online;
+    /// as saved otherwise.</summary>
+    public DeviceSettings Resolve(DeviceSettings saved) =>
+        Find(saved.Mac) is { IsOnline: true, Info: { Leds.Count: > 0 and <= 65535, Udpport: > 0 and <= 65535 } info } found
+            ? saved with { Address = found.Address.ToString(), HttpPort = found.Port, LedCount = info.Leds.Count, UdpPort = info.Udpport } : saved;
+    /// <summary>True for a device that was found before and has stopped answering. One that was never found
+    /// may still be there, so frames are sent to it.</summary>
+    public bool KnownOffline(DeviceSettings device) => Find(device.Mac) is { IsOnline: false };
     public void Clear() { lock (mutation) { generation++; devices.Clear(); sorted = null; } }
     public bool RemoveOffline(string mac)
     {
@@ -81,23 +87,9 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                     if (host.Port is < 1 or > 65535) return;
                     try
                     {
-                        using var response = await http.GetAsync($"http://{address}:{host.Port}/json/info", HttpCompletionOption.ResponseHeadersRead, token);
-                        if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > MaxResponseBytes) return;
-                        // ResponseHeadersRead does not apply HttpClient.Timeout to body reads.
-                        using var readDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-                        readDeadline.CancelAfter(TimeSpan.FromSeconds(2));
-                        await using var stream = await response.Content.ReadAsStreamAsync(readDeadline.Token);
-                        using var buffer = new MemoryStream();
-                        var chunk = new byte[4096];
-                        int read;
-                        while ((read = await stream.ReadAsync(chunk, readDeadline.Token)) != 0)
-                        {
-                            if (buffer.Length + read > MaxResponseBytes) return;
-                            buffer.Write(chunk, 0, read);
-                        }
-                        var info = JsonSerializer.Deserialize<Models.WLED.Info>(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), JsonOptions);
-                        if (info is not { Brand: "WLED", Mac: { } mac } || !ValidMac(mac)) return;
-                        var key = mac.Replace(":", "").ToLowerInvariant();
+                        // Anything that is not a WLED controller, or does not answer like one, is left out.
+                        var info = await WLedInfo.ReadAsync(http, address.ToString(), host.Port, token);
+                        if (info is null || !WLedInfo.TryIdentify(info, out var key)) return;
                         lock (mutation)
                         {
                             if (generation != scanGeneration || (!devices.ContainsKey(key) && devices.Count >= MaxDevices)) return;
@@ -106,7 +98,7 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
                         }
                     }
                     catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-                    catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or OperationCanceledException)
+                    catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or JsonException or OperationCanceledException)
                     { logger.LogDebug(ex, "WLED enrichment failed for {Address}", address); }
                 });
             AgeDevices(scanGeneration);
@@ -159,11 +151,6 @@ public sealed class WLedDiscoveryService(ILogger<WLedDiscoveryService> logger, I
             169 => bytes[1] == 254,
             _ => false
         };
-    }
-    private static bool ValidMac(string? mac)
-    {
-        var normalized = mac?.Replace(":", "");
-        return normalized is { Length: 12 } && normalized.All(Uri.IsHexDigit);
     }
     private async Task TryScanAsync(CancellationToken token)
     {

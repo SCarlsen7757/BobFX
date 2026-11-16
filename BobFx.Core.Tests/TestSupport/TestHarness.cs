@@ -39,7 +39,7 @@ internal sealed class TestHarness(TimeProvider? time = null, WLedOptions? wled =
         NullLogger<RgbAndSoundControlService>.Instance, Store));
     public WLedDiscoveryService Discovery => field ??= Keep(new WLedDiscoveryService(NullLogger<WLedDiscoveryService>.Instance, wledOptions, Http,
         DiscoverySource, Store));
-    public InstallationOutputService Output => field ??= Keep(new InstallationOutputService(Store, Discovery, Control, Rgb, Http, Time,
+    public InstallationOutputService Output => field ??= Keep(new InstallationOutputService(Store, Discovery, Control, Rgb, new WLedIdleSync(Store, Discovery, Http), Time,
         NullLogger<InstallationOutputService>.Instance, Transport, Monitor));
     public WLedRegistryService Registry => field ??= new(Store, Control, Http);
     public BusyBarService BusyBars => field ??= Keep(new BusyBarService(Store, Control, Http, Configuration, Time, Credentials, BusyBarStatus));

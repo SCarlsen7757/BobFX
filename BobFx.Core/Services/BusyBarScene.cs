@@ -1,11 +1,6 @@
-namespace BobFx.Core.Services;
+using static BobFx.Core.Services.ShowMath;
 
-internal readonly record struct Rgb(double R, double G, double B)
-{
-    public static Rgb operator *(Rgb color, double gain) => new(color.R * gain, color.G * gain, color.B * gain);
-    public static Rgb operator +(Rgb a, Rgb b) => new(a.R + b.R, a.G + b.G, a.B + b.B);
-    public static Rgb Mix(Rgb a, Rgb b, double amount) => a * (1 - amount) + b * amount;
-}
+namespace BobFx.Core.Services;
 
 /// <summary>72x16 floating-point frame. Out-of-range coordinates are ignored so layers can overhang.</summary>
 internal sealed class BusyBarCanvas
@@ -44,23 +39,10 @@ internal static class BusyBarScene
     internal const double Centre = 35.5;
 
     internal static readonly Rgb Ink = new(16, 9, 30), Purple = new(48, 16, 68), Pink = new(255, 79, 173),
-        Orange = new(255, 173, 102), Violet = new(140, 80, 255), Mint = new(150, 237, 223), White = new(255, 255, 255),
+        Orange = new(255, 173, 102), Violet = new(140, 80, 255), Mint = new(150, 237, 223),
         Magenta = new(224, 26, 138), Cyan = new(31, 148, 217), SunYellow = new(255, 245, 31), SunAmber = new(255, 204, 32),
         SunRed = new(255, 77, 31), SunPink = new(255, 56, 150);
     private static readonly Rgb Haze = new(0, 18, 22), Star = new(255, 230, 250), SunGlow = new(255, 20, 64), Rock = new(20, 8, 30);
-
-    internal static double Clamp01(double value) => Math.Clamp(value, 0, 1);
-    internal static double Smooth(double value) { var v = Clamp01(value); return v * v * (3 - 2 * v); }
-    internal static double Frac(double value) => value - Math.Floor(value);
-
-    internal static Rgb Ramp(double at, params (double At, Rgb Color)[] stops)
-    {
-        if (at <= stops[0].At) return stops[0].Color;
-        for (var i = 1; i < stops.Length; i++)
-            if (at <= stops[i].At)
-                return Rgb.Mix(stops[i - 1].Color, stops[i].Color, (at - stops[i - 1].At) / (stops[i].At - stops[i - 1].At));
-        return stops[^1].Color;
-    }
 
     internal static Rgb SunColor(double v) => Ramp(v, (0.10, SunYellow), (0.30, SunAmber), (0.52, SunRed), (0.85, SunPink));
 

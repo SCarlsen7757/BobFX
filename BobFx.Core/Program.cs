@@ -1,7 +1,8 @@
+using BobFx.Core;
+using BobFx.Core.Controllers;
 using BobFx.Core.Hubs;
 using BobFx.Core.Services;
 using BobFx.Core.Services.Effects;
-using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
@@ -17,35 +18,27 @@ builder.Services.AddOptions<SecurityOptions>().BindConfiguration("Security")
     .Validate(options => builder.Environment.IsDevelopment() || options.IsValid(), "Production requires explicit Security:AllowedClientNetworks CIDRs.").ValidateOnStart();
 builder.Services.AddSingleton<IRgbEffectFactory, RgbEffectFactory>();
 builder.Services.AddSingleton<CountdownService>();
-builder.Services.AddSingleton<DRgbService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<DRgbService>());
 builder.Services.AddSingleton<SoundService>();
-builder.Services.AddSingleton<RgbAndSoundControlService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<RgbAndSoundControlService>());
 builder.Services.AddSingleton<BoardFrameMonitor>();
-builder.Services.AddSingleton<BoardMonitorService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<BoardMonitorService>());
-builder.Services.AddSingleton<InstallationOutputService>();
-builder.Services.AddSingleton<IWLedFrameTransport, WLedFrameTransport>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<InstallationOutputService>());
-builder.Services.AddSingleton<IWLedDiscoverySource, MdnsWLedDiscoverySource>();
-builder.Services.AddSingleton<WLedDiscoveryService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<WLedDiscoveryService>());
-builder.Services.AddSignalR();
-builder.Services.AddSingleton<UiStateService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<UiStateService>());
-builder.Services.AddProblemDetails();
-builder.Services.AddControllers(options => options.Filters.Add<BobFx.Core.Controllers.ApiExceptionFilter>());
-builder.Services.AddHttpClient("wled", client => { client.Timeout = TimeSpan.FromSeconds(2); client.MaxResponseContentBufferSize = 64 * 1024; })
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false });
 builder.Services.AddSingleton<WLedRegistryService>();
-builder.Services.AddHttpClient("busybar", client => { client.Timeout = TimeSpan.FromSeconds(2); client.MaxResponseContentBufferSize = 64 * 1024; })
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false });
-builder.Services.AddHttpClient("busybar-assets", client => { client.Timeout = TimeSpan.FromSeconds(30); client.MaxResponseContentBufferSize = 64 * 1024; })
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false });
-builder.Services.AddSingleton<BusyBarService>();
+builder.Services.AddSingleton<WLedIdleSync>();
+builder.Services.AddSingleton<IWLedFrameTransport, WLedFrameTransport>();
+builder.Services.AddSingleton<IWLedDiscoverySource, MdnsWLedDiscoverySource>();
 builder.Services.AddSingleton<IBusyBarStatusSource, BusyBarStatusSource>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<BusyBarService>());
+builder.Services.AddDeviceHttpClient("wled", TimeSpan.FromSeconds(2));
+builder.Services.AddDeviceHttpClient("busybar", TimeSpan.FromSeconds(2));
+builder.Services.AddDeviceHttpClient("busybar-assets", TimeSpan.FromSeconds(30));
+// Background services start in this order.
+builder.Services.AddHostedSingleton<DRgbService>();
+builder.Services.AddHostedSingleton<RgbAndSoundControlService>();
+builder.Services.AddHostedSingleton<BoardMonitorService>();
+builder.Services.AddHostedSingleton<InstallationOutputService>();
+builder.Services.AddHostedSingleton<WLedDiscoveryService>();
+builder.Services.AddHostedSingleton<UiStateService>();
+builder.Services.AddHostedSingleton<BusyBarService>();
+builder.Services.AddSignalR();
+builder.Services.AddProblemDetails();
+builder.Services.AddControllers(options => options.Filters.Add<ApiExceptionFilter>());
 
 var app = builder.Build();
 if (!app.Environment.IsDevelopment())
@@ -56,22 +49,7 @@ if (!app.Environment.IsDevelopment())
 }
 
 if (!app.Environment.IsDevelopment()) app.UseExceptionHandler();
-app.Use(async (context, next) =>
-{
-    if (!app.Environment.IsDevelopment() &&
-        !context.RequestServices.GetRequiredService<IOptions<SecurityOptions>>().Value.Allows(context.Connection.RemoteIpAddress))
-    {
-        context.Response.StatusCode = StatusCodes.Status403Forbidden; return;
-    }
-    if (!SecurityOptions.IsSameOrigin(context.Request))
-    {
-        context.Response.StatusCode = StatusCodes.Status403Forbidden; return;
-    }
-    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-    context.Response.Headers["Referrer-Policy"] = "same-origin";
-    context.Response.Headers["X-Frame-Options"] = "DENY";
-    await next();
-});
+app.UseMiddleware<ClientPolicyMiddleware>();
 app.UseStaticFiles(new StaticFileOptions
 {
     OnPrepareResponse = context =>

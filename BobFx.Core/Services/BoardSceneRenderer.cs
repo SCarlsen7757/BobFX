@@ -154,7 +154,7 @@ public static class BoardSceneRenderer
                 {
                     if (pixel < 0 || pixel >= count) continue;
                     // An interior board is on the path twice; each pixel keeps its position nearest the head.
-                    var behind = BusyBarScene.Frac(head - step / (double)pathLength);
+                    var behind = ShowMath.Frac(head - step / (double)pathLength);
                     if (behind < tail && behind < trail[pixel]) trail[pixel] = behind;
                 }
             }

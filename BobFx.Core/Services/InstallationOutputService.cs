@@ -1,7 +1,5 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Net.Sockets;
-using System.Text.Json;
 using System.Collections.Concurrent;
 
 namespace BobFx.Core.Services;
@@ -12,7 +10,7 @@ public sealed record LightShowTestView(string Segment, DateTimeOffset EndsUtc);
 public sealed record LightShowTestRequest(string Segment, LightShowSettings LightShow, AnimationSettings Animation);
 
 public sealed class InstallationOutputService(InstallationSettingsStore settings, WLedDiscoveryService discovery,
-    RgbAndSoundControlService control, DRgbService rgb, IHttpClientFactory httpFactory, TimeProvider clock,
+    RgbAndSoundControlService control, DRgbService rgb, WLedIdleSync idleSync, TimeProvider clock,
     ILogger<InstallationOutputService> logger, IWLedFrameTransport transport, BoardFrameMonitor monitor) : BackgroundService
 {
     private readonly ConcurrentDictionary<string, string> errors = new();
@@ -24,7 +22,6 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
     private string? lastError;
     /// <summary>Written by the output loop and read by health requests on other threads.</summary>
     public string? LastError { get => Volatile.Read(ref lastError); private set => Volatile.Write(ref lastError, value); }
-    private IdleSyncSettings? appliedSync;
     private readonly CancellationTokenSource locateStop = new();
     private Task? locateTask;
     private int disposed;
@@ -131,38 +128,16 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
             var scene = BoardSceneRenderer.Scene(current.Settings);
             foreach (var board in scene.Boards)
             {
-                var device = Resolve(scene.Device(board));
-                try
-                {
-                    if (KnownOffline(device)) throw new ArgumentException("Device is offline.");
-                    var pixels = board.Id == current.View.ActiveBoardId
+                var device = discovery.Resolve(scene.Device(board));
+                // During a check the operator is looking at the boards, so a board that stays dark is explained.
+                if (discovery.KnownOffline(device)) errors[device.Mac] = "Device is offline.";
+                else if (Fits(board, device))
+                    await TrySendAsync(device, board.Id == current.View.ActiveBoardId
                         ? BoardSceneRenderer.Calibration(board, device.LedCount, clock.GetElapsedTime(current.Started).TotalSeconds)
-                        : new byte[device.LedCount * 3];
-                    await SendAsync(device, pixels, token);
-                    errors.TryRemove(device.Mac, out _);
-                }
-                catch (Exception ex) when (ex is SocketException or ArgumentException or IOException)
-                { errors[device.Mac] = ex.Message; }
+                        : new byte[device.LedCount * 3], token);
             }
         }
         finally { calibrationFrames.Release(); }
-    }
-    /// <summary>The saved device with the address, ports and LED count it reports now, while it is online.</summary>
-    public DeviceSettings Resolve(DeviceSettings saved) =>
-        discovery.Find(saved.Mac) is { IsOnline: true, Info: { Leds.Count: > 0 and <= 65535, Udpport: > 0 and <= 65535 } info } found
-            ? saved with { Address = found.Address.ToString(), HttpPort = found.Port, LedCount = info.Leds.Count, UdpPort = info.Udpport } : saved;
-    private bool KnownOffline(DeviceSettings d) => discovery.Find(d.Mac) is { IsOnline: false };
-    public static IEnumerable<byte[]> Packets(byte[] pixels)
-    {
-        // DNRGB permits larger strips without IP fragmentation: <= 489 pixels per packet.
-        for (var start = 0; start < pixels.Length / 3; start += 489)
-        {
-            var length = Math.Min(489, pixels.Length / 3 - start) * 3;
-            var packet = new byte[length + 4];
-            packet[0] = 4; packet[1] = 1; packet[2] = (byte)(start >> 8); packet[3] = (byte)start;
-            pixels.AsSpan(start * 3, length).CopyTo(packet.AsSpan(4));
-            yield return packet;
-        }
     }
     /// <summary>Sends one frame of the game scene to every assigned board that is not known to be offline.</summary>
     private async Task SendSceneAsync(InstallationSettings source, GamePhase phase, double elapsed, double preparation, CancellationToken token)
@@ -171,17 +146,30 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
         foreach (var board in scene.Boards)
         {
             var saved = scene.Device(board);
-            if (KnownOffline(saved)) continue;
-            var device = Resolve(saved);
-            try
-            {
-                if (!BoardMapping.Fits(board, device.LedCount)) throw new ArgumentException(BoardSceneRenderer.MappingChanged);
-                await SendAsync(device, scene.Render(board, device.LedCount, phase, elapsed, preparation), token);
-                errors.TryRemove(device.Mac, out _);
-            }
-            catch (Exception ex) when (ex is SocketException or ArgumentException or IOException)
-            { errors[device.Mac] = ex.Message; }
+            if (discovery.KnownOffline(saved)) continue;
+            var device = discovery.Resolve(saved);
+            if (Fits(board, device)) await TrySendAsync(device, scene.Render(board, device.LedCount, phase, elapsed, preparation), token);
         }
+    }
+    /// <summary>Whether the controller still has the LEDs its board is mapped onto. A controller that reports
+    /// fewer than when the board was mapped gets no frame and an error that says what to do.</summary>
+    private bool Fits(BoardSettings? board, DeviceSettings device)
+    {
+        if (board is null || BoardMapping.Fits(board, device.LedCount)) return true;
+        errors[device.Mac] = BoardSceneRenderer.MappingChanged;
+        return false;
+    }
+    /// <summary>Sends a frame to one controller and records how it went. A failure is that controller's alone:
+    /// the others still get their frames, and its error is cleared by its next good frame.</summary>
+    private async Task TrySendAsync(DeviceSettings device, byte[] pixels, CancellationToken token)
+    {
+        try
+        {
+            await SendAsync(device, pixels, token);
+            errors.TryRemove(device.Mac, out _);
+        }
+        catch (Exception ex) when (ex is SocketException or ArgumentException or IOException)
+        { errors[device.Mac] = ex.Message; }
     }
     /// <summary>Every frame leaves through here. A simulated controller has no network side, so its frame
     /// goes to the monitor only; a real controller's frame is sent and mirrored there.</summary>
@@ -243,18 +231,9 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
                     else
                     {
                         var manual = rgb.GetSnapshot();
-                        foreach (var d in snapshot.Devices.Where(saved => saved.Selected).Where(saved => !KnownOffline(saved)).Select(Resolve))
-                        {
-                            try
-                            {
-                                if (snapshot.Boards.FirstOrDefault(b => b.DeviceMac == d.Mac) is { } board && !BoardMapping.Fits(board, d.LedCount))
-                                    throw new ArgumentException(BoardSceneRenderer.MappingChanged);
-                                await SendAsync(d, BoardSceneRenderer.Resample(manual, d.LedCount), stoppingToken);
-                                errors.TryRemove(d.Mac, out _);
-                            }
-                            catch (Exception ex) when (ex is SocketException or ArgumentException or IOException)
-                            { errors[d.Mac] = ex.Message; }
-                        }
+                        foreach (var d in snapshot.Devices.Where(saved => saved.Selected).Where(saved => !discovery.KnownOffline(saved)).Select(discovery.Resolve))
+                            if (Fits(snapshot.Boards.FirstOrDefault(b => b.DeviceMac == d.Mac), d))
+                                await TrySendAsync(d, BoardSceneRenderer.Resample(manual, d.LedCount), stoppingToken);
                     }
                 }
                 // The time the frame took comes off the wait, so the frame rate does not sink as boards are added.
@@ -280,8 +259,8 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, locateStop.Token);
             var locateToken = linked.Token;
             InstallationSettingsStore.Validate(new InstallationSettings { Devices = [device] });
-            var d = Resolve(device);
-            if (KnownOffline(d)) throw new ArgumentException("Device is offline.");
+            var d = discovery.Resolve(device);
+            if (discovery.KnownOffline(d)) throw new ArgumentException("Device is offline.");
             var started = clock.GetTimestamp();
             while (clock.GetElapsedTime(started) < TimeSpan.FromSeconds(5))
             {
@@ -317,91 +296,7 @@ public sealed class InstallationOutputService(InstallationSettingsStore settings
         Volatile.Write(ref stopping, 1);
         locateStop.Cancel(); locateStop.Dispose(); base.Dispose();
     }
-    public async Task ApplyIdleSyncAsync(CancellationToken token = default, bool configure = true)
-    {
-        var s = settings.Snapshot;
-        var oldMembers = appliedSync is { Enabled: true } old ? old.Followers.Prepend(old.MasterMac!).ToArray() : [];
-        var newMembers = s.IdleSync.Enabled ? s.IdleSync.Followers.Prepend(s.IdleSync.MasterMac!).ToArray() : [];
-        if (configure)
-            foreach (var removed in oldMembers.Except(newMembers))
-            {
-                var saved = s.Devices.FirstOrDefault(d => d.Mac == removed);
-                if (saved is null || saved.Simulated) continue;
-                var d = Resolve(saved);
-                try
-                {
-                    using var client = httpFactory.CreateClient("wled");
-                    using var config = await client.PostAsJsonAsync($"http://{d.Address}:{d.HttpPort}/json/cfg", new
-                    { @if = new { sync = new { send = new { en = false, dir = false, grp = 0 }, recv = new { grp = 0 } } } }, token);
-                    config.EnsureSuccessStatusCode();
-                    using var response = await client.PostAsJsonAsync($"http://{d.Address}:{d.HttpPort}/json/state", new { udpn = new { send = false, recv = false } }, token);
-                    response.EnsureSuccessStatusCode();
-                }
-                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-                { if (token.IsCancellationRequested) throw; errors[removed] = "Previous idle sync member could not be disabled."; }
-            }
-        appliedSync = s.IdleSync;
-        if (!s.IdleSync.Enabled) return;
-        var mask = 1 << (s.IdleSync.Group - 1);
-        var masterDevice = Resolve(s.Devices.First(d => d.Mac == s.IdleSync.MasterMac));
-        var idleState = new Dictionary<string, object?> { ["live"] = false };
-        var masterRead = false;
-        // A simulated controller has no WLED to ask or configure; its followers get the plain idle state.
-        if (!masterDevice.Simulated) try
-        {
-            using var client = httpFactory.CreateClient("wled");
-            using var response = await client.GetAsync($"http://{masterDevice.Address}:{masterDevice.HttpPort}/json/state", token);
-            response.EnsureSuccessStatusCode();
-            var state = await response.Content.ReadFromJsonAsync<JsonElement>(token);
-            if (state.ValueKind != JsonValueKind.Object) throw new JsonException("Invalid WLED state.");
-            foreach (var key in new[] { "on", "bri" }.Where(k => state.TryGetProperty(k, out _))) idleState[key] = state.GetProperty(key).Clone();
-            if (state.TryGetProperty("seg", out var segments) && segments.ValueKind == JsonValueKind.Array)
-            {
-                var main = state.TryGetProperty("mainseg", out var id) ? id.GetInt32() : 0;
-                var segment = segments.EnumerateArray().FirstOrDefault(seg => seg.TryGetProperty("id", out var index) && index.GetInt32() == main);
-                if (segment.ValueKind == JsonValueKind.Object)
-                {
-                    var effect = new Dictionary<string, object?>();
-                    foreach (var key in new[] { "fx", "sx", "ix", "pal", "col", "c1", "c2", "c3", "o1", "o2", "o3" }.Where(k => segment.TryGetProperty(k, out _)))
-                        effect[key] = segment.GetProperty(key).Clone();
-                    idleState["seg"] = effect;
-                }
-            }
-            masterRead = true;
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
-        { if (token.IsCancellationRequested) throw; errors[masterDevice.Mac] = "Master idle state could not be read."; }
-        var members = s.IdleSync.Followers.Prepend(s.IdleSync.MasterMac!);
-        foreach (var mac in members)
-        {
-            var saved = s.Devices.First(d => d.Mac == mac);
-            if (saved.Simulated) { errors.TryRemove(mac, out _); continue; }
-            if (KnownOffline(saved)) continue;
-            var d = Resolve(saved);
-            var master = mac == s.IdleSync.MasterMac;
-            try
-            {
-                using var client = httpFactory.CreateClient("wled");
-                // Persist native sync behavior; master transmits, followers only receive.
-                if (configure)
-                {
-                    using var config = await client.PostAsJsonAsync($"http://{d.Address}:{d.HttpPort}/json/cfg", new
-                    {
-                        @if = new { sync = new { send = new { en = master, dir = master, grp = master ? mask : 0 }, recv = new { grp = master ? 0 : mask, bri = true, col = true, fx = true, pal = true } } }
-                    }, token);
-                    config.EnsureSuccessStatusCode();
-                }
-                var payload = master ? new Dictionary<string, object?> { ["live"] = false } : new Dictionary<string, object?>(idleState);
-                payload["udpn"] = new { send = master, sgrp = master ? mask : 0, rgrp = master ? 0 : mask };
-                using var state = await client.PostAsJsonAsync($"http://{d.Address}:{d.HttpPort}/json/state", payload, token);
-                state.EnsureSuccessStatusCode();
-                if (!master || masterRead) errors.TryRemove(mac, out _);
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-            { if (token.IsCancellationRequested) throw; errors[mac] = "Idle sync could not be applied."; }
-        }
-        // WLED emits subsequent native effect/playlist changes through its notifier.
-        // Mirroring current parameters gets followers into the right state immediately
-        // without toggling the master's power or restarting its playlist.
-    }
+    /// <summary>Sets up WLED's own sync for the idle boards; what goes wrong is reported per controller.</summary>
+    public Task ApplyIdleSyncAsync(CancellationToken token = default, bool configure = true) => idleSync.ApplyAsync(
+        (mac, problem) => { if (problem is null) errors.TryRemove(mac, out _); else errors[mac] = problem; }, configure, token);
 }

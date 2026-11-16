@@ -1,4 +1,5 @@
-using static BobFx.Core.Services.BusyBarScene;
+using static BobFx.Core.Services.ShowMath;
+using static BobFx.Core.Services.ShowTiming;
 
 namespace BobFx.Core.Services;
 
@@ -67,7 +68,7 @@ internal static class BoardLightShow
     internal static double? Level(string? intensity) => intensity switch { "calm" => 0, "balanced" => 0.5, "lively" => 1, _ => null };
 
     // Countdown: stage boundaries and the per-second pop match the BUSY Bar's countdown clip.
-    private const double ScannerUntil = 0.6, PlayerEndsUntil = 0.8, PopSeconds = 0.3;
+    private const double PopSeconds = 0.3;
     // GO: the burst reaches the row ends at BurstSeconds, then settles and blends into play.
     internal const double GoSeconds = BusyBarAnimations.GoSeconds, BlendSeconds = 0.75;
     private const double BurstSeconds = 0.3;
@@ -160,13 +161,11 @@ internal static class BoardLightShow
     /// centre of the row, lit on the same sixths of <paramref name="flashSeconds"/> as the BUSY Bar.</summary>
     internal static Rgb Flare(LightPalette colors, Spot at, double elapsed, double flashSeconds)
     {
-        var sixth = flashSeconds / 6;
-        var interval = (int)(elapsed / sixth);
-        var strength = 1 - 0.25 * (int)(elapsed / (sixth * 2));
+        var (number, lit, since, spread) = ShowTiming.Flare(elapsed, flashSeconds);
+        // Each flare is a quarter weaker than the one before.
+        var strength = 1 - 0.25 * number;
         var ember = colors.Primary * (0.05 * strength);
-        if (interval % 2 != 0) return ember;
-        var local = elapsed - interval * sixth;
-        var spread = Clamp01(local / sixth);
+        if (!lit) return ember;
         var flare = Math.Pow(1 - spread, 1.5) * strength;
         var half = at.Total / 2;
         var distance = Math.Abs(at.X - half);
@@ -174,7 +173,7 @@ internal static class BoardLightShow
         var color = ember + colors.Primary * (0.30 * flare);
         if (distance <= radius) color += colors.Flare(spread) * (0.45 * flare);
         color = Rgb.Mix(color, colors.Flare(spread), 0.9 * Clamp01(1 - Math.Abs(distance - radius) / Math.Max(0.15, 0.09 * at.Total)) * flare);
-        return Rgb.Mix(color, White, 0.8 * Clamp01(1 - local / 0.08) * strength);
+        return Rgb.Mix(color, White, 0.8 * Clamp01(1 - since / 0.08) * strength);
     }
 
     /// <summary>Glow left by the flares, cooling from primary to tertiary and sinking to black.</summary>
@@ -208,7 +207,7 @@ internal static class BoardLightShow
             "countdown" when elapsed < preparation => (GamePhase.PreCountdown, elapsed),
             "countdown" when elapsed < preparation + TestGoSeconds => (GamePhase.Running, elapsed - preparation),
             "playing" when elapsed < TestPlaySeconds => (GamePhase.Running, elapsed + GoSeconds + BlendSeconds),
-            "gameOver" when elapsed < timing.FlashSeconds + timing.DotSeconds => (GamePhase.Ending, elapsed),
+            "gameOver" when elapsed < EndingSeconds(timing) => (GamePhase.Ending, elapsed),
             _ => null
         };
     }
@@ -218,7 +217,7 @@ internal static class BoardLightShow
     {
         "countdown" => CountdownService.PreCountdownDuration.TotalSeconds + TestGoSeconds,
         "playing" => TestPlaySeconds,
-        "gameOver" => timing.FlashSeconds + timing.DotSeconds,
+        "gameOver" => EndingSeconds(timing),
         _ => null
     };
 }

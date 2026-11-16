@@ -334,7 +334,7 @@ public sealed class InstallationTests
     public void LargeStripsProduceBoundedPacketsWithOffsets()
     {
         var data = Enumerable.Range(0, 1000 * 3).Select(i => (byte)(i % 256)).ToArray();
-        var packets = InstallationOutputService.Packets(data).ToArray();
+        var packets = WLedFrameTransport.Packets(data).ToArray();
         Assert.Equal(3, packets.Length);
         Assert.All(packets, packet => Assert.InRange(packet.Length, 7, 1471));
         Assert.Equal(new byte[] { 4, 1, 1, 233 }, packets[1][..4]);
