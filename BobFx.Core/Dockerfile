@@ -7,7 +7,7 @@ COPY frontend/ ./
 # The out dir is given here, so this stage does not depend on the repository layout that vite.config.ts assumes.
 RUN npm run build -- --outDir /out --emptyOutDir
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0.404-noble@sha256:fe0fd4e93bd2fbb47c883b7a6369e5c8d3db8bf01cdc5981f6ee35fbdf3ff4fb AS build
+FROM mcr.microsoft.com/dotnet/sdk:11.0.100-resolute@sha256:65f3c7c6a25a239ab3e6719f2896147e7b68242ff2d8818dd70498bde6ef8bea AS build
 WORKDIR /src
 COPY global.json Directory.Build.props Directory.Packages.props ./
 COPY BobFx.Core/BobFx.Core.csproj BobFx.Core/
