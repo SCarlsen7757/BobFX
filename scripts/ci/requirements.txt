@@ -1,2 +1,2 @@
 # Needed only by the tests of the CI scripts; the scripts themselves use the standard library.
-PyYAML==6.0.3
+PyYAML==6.0.4
